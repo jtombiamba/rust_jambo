@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: jambo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
+      REDIS_URL: redis://redis:6379
+      HOST: 0.0.0.0
+      PORT: 8080
+      LOG_LEVEL: info
+      MAX_RABBITMQ_CONNECTION_RETRIES: 10
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../backend/migrations:/app/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8080
+
+  ai-worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: ["ai-worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
+      REDIS_URL: redis://redis:6379
+      HOST: 0.0.0.0
+      PORT: 8080
+      LOG_LEVEL: info
+      MAX_RABBITMQ_CONNECTION_RETRIES: 10
+    volumes:
+      - ../backend/migrations:/app/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x ai-worker || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:

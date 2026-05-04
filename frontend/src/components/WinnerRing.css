@@ -1,0 +1,157 @@
+/* WinnerRing.css - Styles for round winner visualization */
+
+.winner-ring {
+  position: absolute;
+  top: -12px;
+  left: -12px;
+  right: -12px;
+  bottom: -12px;
+  border-radius: 16px;
+  pointer-events: none;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.winner-ring-border {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 3px solid gold;
+  border-radius: 16px;
+  animation: pulse 0.5s infinite alternate;
+}
+
+/* Normal win - gold ring */
+.winner-ring:not(.winner-ring-kora):not(.winner-ring-double-kora) .winner-ring-border {
+  border-color: gold;
+  box-shadow: 0 0 15px rgba(255, 215, 0, 0.7);
+}
+
+/* Kora win - orange/red ring with faster pulse */
+.winner-ring-kora .winner-ring-border {
+  border-color: #ff6b35;
+  border-width: 4px;
+  animation: pulse-fast 0.3s infinite alternate;
+  box-shadow: 0 0 20px rgba(255, 107, 53, 0.8);
+}
+
+/* Double Kora - rainbow gradient ring */
+.winner-ring-double-kora .winner-ring-border {
+  border-width: 4px;
+  border-style: solid;
+  border-image: linear-gradient(90deg, red, orange, yellow, green, blue, indigo, violet) 1;
+  animation: rainbow-pulse 1s infinite;
+  box-shadow: 0 0 25px rgba(255, 0, 0, 0.5);
+}
+
+/* Label styling */
+.winner-ring-label {
+  position: absolute;
+  top: -40px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-weight: bold;
+  font-size: 14px;
+  text-align: center;
+  white-space: nowrap;
+  z-index: 21;
+  animation: fade-in 0.3s ease-out;
+}
+
+.winner-ring-player-name {
+  font-size: 12px;
+  opacity: 0.9;
+  margin-bottom: 2px;
+}
+
+.winner-ring-win-type {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+/* Position-specific adjustments */
+.winner-ring-north .winner-ring-label {
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.winner-ring-south .winner-ring-label {
+  bottom: -40px;
+  top: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.winner-ring-east .winner-ring-label {
+  right: -120px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.winner-ring-west .winner-ring-label {
+  left: -120px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Animations */
+@keyframes pulse {
+  from {
+    opacity: 0.7;
+    box-shadow: 0 0 10px gold;
+  }
+  to {
+    opacity: 1;
+    box-shadow: 0 0 20px gold;
+  }
+}
+
+@keyframes pulse-fast {
+  from {
+    opacity: 0.6;
+    box-shadow: 0 0 15px #ff6b35;
+  }
+  to {
+    opacity: 1;
+    box-shadow: 0 0 30px #ff6b35;
+  }
+}
+
+@keyframes rainbow-pulse {
+  0% {
+    filter: hue-rotate(0deg);
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.7);
+  }
+  25% {
+    box-shadow: 0 0 25px rgba(255, 165, 0, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(0, 128, 0, 0.7);
+  }
+  75% {
+    box-shadow: 0 0 25px rgba(0, 0, 255, 0.7);
+  }
+  100% {
+    filter: hue-rotate(360deg);
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.7);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-jambo}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jambo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    # No external ports, internal network only
+    networks:
+      - internal
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/%2f
+      REDIS_URL: redis://redis:6379
+      HOST: 0.0.0.0
+      PORT: 8080
+      RUST_LOG: ${RUST_LOG:-info}
+      MAX_RABBITMQ_CONNECTION_RETRIES: 10
+    networks:
+      - internal
+    # Expose port internally (Coolify will proxy)
+    expose:
+      - "8080"
+    # Optional: labels for Coolify
+    labels:
+      - "coolify.service.name=jambo-backend"
+      - "coolify.service.port=8080"
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://backend:8080}
+    networks:
+      - internal
+    expose:
+      - "80"
+    labels:
+      - "coolify.service.name=jambo-frontend"
+      - "coolify.service.port=80"
+
+  ai-worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: ["ai-worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/%2f
+      REDIS_URL: redis://redis:6379
+      RUST_LOG: ${RUST_LOG:-info}
+      MAX_RABBITMQ_CONNECTION_RETRIES: 10
+    networks:
+      - internal
+    volumes:
+      - ../backend/migrations:/app/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "coolify.service.name=jambo-ai-worker"
+      - "coolify.service.port=0"
+
+volumes:
+  postgres_data:
+
+networks:
+  internal:
+    driver: bridge

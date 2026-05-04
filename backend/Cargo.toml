@@ -1,0 +1,51 @@
+[package]
+name = "jambo-backend"
+version = "0.1.0"
+edition = "2021"
+authors = ["Developer"]
+description = "Rust Actix Web backend for the FapFap card game"
+license = "MIT"
+repository = ""
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = "4.6"
+actix-http = "3"
+actix-ws = "0.3"
+actix-rt = "2.9"
+migration = { path = "migration" }
+sea-orm = { version = "2.0.0-rc.38", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "debug-print"] }
+lapin = { version = "4.0", features = ["tokio"] }
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+rand = "0.8"
+futures = "0.3"
+futures-util = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dotenv = "0.15"
+config = "0.13"
+chrono = { version = "0.4", features = ["serde"] }
+num_cpus = "1.16"
+
+[[bin]]
+name = "ai-worker"
+path = "src/bin/ai_worker.rs"
+
+[dev-dependencies]
+actix-rt = "2.9"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
