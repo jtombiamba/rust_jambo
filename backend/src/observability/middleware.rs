@@ -41,9 +41,8 @@ where
 {
     type Response = ServiceResponse<B>;
     type Error = Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>>>,
-    >;
+    type Future =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>>>>;
 
     forward_ready!(service);
 
@@ -55,7 +54,7 @@ where
             .and_then(|v| v.to_str().ok())
             .and_then(|s| Uuid::parse_str(s).ok())
             .map(CorrelationId::from)
-            .unwrap_or_else(CorrelationId::new);
+            .unwrap_or_default();
 
         let method = req.method().clone();
         let path = req.path().to_string();

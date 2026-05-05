@@ -1,6 +1,6 @@
 use sea_orm::DatabaseConnection;
+use tracing::{debug, info};
 use uuid::Uuid;
-use tracing::{info, debug};
 
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::error::GameError;
@@ -45,8 +45,7 @@ pub async fn execute_bot_move(
         .collect::<Vec<i32>>();
 
     if bot_cards.is_empty() {
-        return Err(GameError::Internal(Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(GameError::Internal(Box::new(std::io::Error::other(
             "No cards available for bot",
         ))));
     }
@@ -81,19 +80,19 @@ pub async fn execute_bot_move(
         .update_card_play(game_id, player_id, chosen, None)
         .await
         .map_err(|e| {
-            GameError::Internal(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to play card: {}", e),
-            )))
+            GameError::Internal(Box::new(std::io::Error::other(format!(
+                "Failed to play card: {}",
+                e
+            ))))
         })?;
 
     info!("Bot {} played card {}", player_id, chosen);
 
     let next_player = service.next_player(game_id).await.map_err(|e| {
-        GameError::Internal(Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to determine next player: {}", e),
-        )))
+        GameError::Internal(Box::new(std::io::Error::other(format!(
+            "Failed to determine next player: {}",
+            e
+        ))))
     })?;
 
     let players = player_repo.list_by_game(game_id).await?;
@@ -101,10 +100,12 @@ pub async fn execute_bot_move(
     let next_player_type = players
         .iter()
         .find(|p| p.id == next_player)
-        .map(|p| p.player_type.clone());
+        .map(|p| p.player_type);
 
-    let should_continue =
-        matches!(next_player_type, Some(crate::database::models::PlayerType::Bot));
+    let should_continue = matches!(
+        next_player_type,
+        Some(crate::database::models::PlayerType::Bot)
+    );
 
     Ok(BotMoveResult {
         game_id,
@@ -116,14 +117,11 @@ pub async fn execute_bot_move(
 }
 
 /// Execute a bot move using AITask (no database queries needed)
-pub async fn execute_bot_move_from_task(
-    task: &AITask,
-) -> Result<BotMoveResult, GameError> {
+pub async fn execute_bot_move_from_task(task: &AITask) -> Result<BotMoveResult, GameError> {
     let bot_cards = task.bot_hand_cards.clone();
 
     if bot_cards.is_empty() {
-        return Err(GameError::Internal(Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(GameError::Internal(Box::new(std::io::Error::other(
             "No cards available for bot",
         ))));
     }
@@ -191,9 +189,7 @@ pub async fn create_ai_task_from_game(
         .map(|gc| gc.card_index)
         .collect::<Vec<i32>>();
 
-    let round_game_cards = game_card_repo
-        .list_by_game_and_round(game_id, roll)
-        .await?;
+    let round_game_cards = game_card_repo.list_by_game_and_round(game_id, roll).await?;
 
     let round_cards: Vec<i32> = round_game_cards.iter().map(|gc| gc.card_index).collect();
 

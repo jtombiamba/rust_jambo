@@ -87,14 +87,14 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
     <>
       {/* Backdrop */}
       <div className="game-over-backdrop" onClick={onClose} />
-      
+
       {/* Modal */}
       <div className={modalClass} role="dialog" aria-labelledby="game-over-title">
         <div className="game-over-content">
           {/* Header with trophy icon */}
           <div className="result-header">
             <div className="trophy-icon">
-              {gameResult.status === 'doubleKora' ? '🏆🏆' : 
+              {gameResult.status === 'doubleKora' ? '🏆🏆' :
                gameResult.status === 'kora' ? '🏆' : '🎯'}
             </div>
             <h2 id="game-over-title" className="result-title">
@@ -102,7 +102,7 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
             </h2>
             <p className="result-description">{getResultDescription()}</p>
           </div>
-          
+
           {/* Winner announcement */}
           <div className="winner-announcement winner-declare">
             {winner ? (
@@ -115,7 +115,7 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
               <div className="no-winner">No winner determined</div>
             )}
           </div>
-          
+
           {/* Game statistics */}
           <div className="game-stats stats-animate">
             <div className="stat-item">
@@ -131,35 +131,35 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
             <div className="stat-item">
               <div className="stat-label">Game Type</div>
               <div className="stat-value">
-                {gameResult.status === 'finished' ? 'Standard' : 
+                {gameResult.status === 'finished' ? 'Standard' :
                  gameResult.status === 'kora' ? 'Kora' : 'Double Kora'}
               </div>
             </div>
           </div>
-          
+
           {/* Action buttons */}
           <div className="action-buttons buttons-animate">
-            <button 
-              className="btn-primary" 
+            <button
+              className="btn-primary"
               onClick={onPlayAgain}
               autoFocus
             >
               Play Again
             </button>
-            <button 
-              className="btn-secondary" 
+            <button
+              className="btn-secondary"
               onClick={onReturnToLobby}
             >
               Return to Lobby
             </button>
-            <button 
-              className="btn-tertiary" 
+            <button
+              className="btn-tertiary"
               onClick={onClose}
             >
               Close
             </button>
           </div>
-          
+
           {/* Auto-close notice */}
           <div className="auto-close-notice">
             This modal will auto-close in 10 seconds

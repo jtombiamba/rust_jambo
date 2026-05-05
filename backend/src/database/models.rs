@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use sea_orm::DeriveActiveEnum;
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 pub mod game {
     use super::*;
@@ -107,11 +107,7 @@ pub mod round {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
-#[sea_orm(
-    rs_type = "String",
-    db_type = "Enum",
-    enum_name = "player_type"
-)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "player_type")]
 pub enum PlayerType {
     #[sea_orm(string_value = "human")]
     Human,
@@ -120,11 +116,7 @@ pub enum PlayerType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
-#[sea_orm(
-    rs_type = "String",
-    db_type = "Enum",
-    enum_name = "game_status"
-)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "game_status")]
 pub enum GameStatus {
     #[sea_orm(string_value = "pending")]
     Pending,
@@ -142,6 +134,7 @@ pub enum GameStatus {
 
 // Re-export the Model types as the original names for convenience
 pub use game::Model as Game;
-pub use player::Model as Player;
 pub use game_card::Model as GameCard;
-#[allow(unused_imports)] pub use round::Model as Round;
+pub use player::Model as Player;
+#[allow(unused_imports)]
+pub use round::Model as Round;

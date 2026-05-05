@@ -16,6 +16,6 @@ mod tests {
         assert_eq!(MAX_CARDS_PER_PLAYER, 5);
         assert_eq!(TOTAL_CARDS, 32);
         assert_eq!(SUITS.len(), 4);
-        assert!(RANK_START <= RANK_END);
+        const _: () = assert!(RANK_START <= RANK_END);
     }
 }

@@ -28,7 +28,7 @@ pub struct AITask {
 
     // Cards information
     pub played_cards_this_round: Vec<i32>, // Card indices already played in current round
-    pub bot_hand_cards: Vec<i32>, // Bot's unplayed card indices
+    pub bot_hand_cards: Vec<i32>,          // Bot's unplayed card indices
 
     // Players information
     pub players: Vec<PlayerInfo>, // All players in the game
@@ -43,6 +43,7 @@ pub struct AITask {
 }
 
 impl AITask {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         game_id: Uuid,
         player_id: Uuid,
@@ -106,5 +107,4 @@ impl AITask {
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }
-
 }

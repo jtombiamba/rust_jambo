@@ -337,16 +337,16 @@
     width: 95%;
     max-width: none;
   }
-  
+
   .game-stats {
     flex-direction: column;
     gap: 15px;
   }
-  
+
   .result-title {
     font-size: 28px;
   }
-  
+
   .winner-name {
     font-size: 24px;
   }

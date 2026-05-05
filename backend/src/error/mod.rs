@@ -42,7 +42,9 @@ impl ResponseError for AppError {
                 GameError::NotYourTurn | GameError::InvalidCard => StatusCode::FORBIDDEN,
                 GameError::GameFinished => StatusCode::CONFLICT,
                 GameError::RoundNotComplete => StatusCode::BAD_REQUEST,
-                GameError::Database(_) | GameError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                GameError::Database(_) | GameError::Internal(_) => {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
             },
             AppError::Validation(_) => StatusCode::BAD_REQUEST,
             AppError::Config(_) | AppError::Serialization(_) | AppError::Io(_) => {

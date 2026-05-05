@@ -1,13 +1,13 @@
 use sea_orm::DatabaseConnection;
+use tracing::{error, info};
 use uuid::Uuid;
-use tracing::{info, error};
 
-use crate::database::models::{PlayerType, GameStatus};
-use crate::database::repositories::{GameRepository, PlayerRepository, GameCardRepository};
+use crate::database::models::{GameStatus, PlayerType};
+use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::constants::BOT_THINKING_DELAY_SECS;
 use crate::game::service::GameService;
 use crate::game::strategy::compute_strategy;
-use crate::messaging::{RabbitMQClient, RedisClient, AITask};
+use crate::messaging::{AITask, RabbitMQClient, RedisClient};
 use crate::observability::CorrelationId;
 
 /// Handles scheduling and execution of bot moves, either via RabbitMQ (async)
@@ -25,7 +25,11 @@ impl BotScheduler {
         rabbitmq: Option<RabbitMQClient>,
         redis: Option<RedisClient>,
     ) -> Self {
-        Self { db, rabbitmq, redis }
+        Self {
+            db,
+            rabbitmq,
+            redis,
+        }
     }
 
     /// Called after a human plays. If the next player is a bot, dispatch an AI
@@ -180,16 +184,14 @@ impl BotScheduler {
             }
 
             // Fetch played cards this round
-            let round_cards: Vec<i32> = match game_card_repo
-                .list_by_game_and_round(game_id, round)
-                .await
-            {
-                Ok(cards) => cards.into_iter().map(|gc| gc.card_index).collect(),
-                Err(_) => {
-                    error!("Failed to fetch round cards for game {}", game_id);
-                    break;
-                }
-            };
+            let round_cards: Vec<i32> =
+                match game_card_repo.list_by_game_and_round(game_id, round).await {
+                    Ok(cards) => cards.into_iter().map(|gc| gc.card_index).collect(),
+                    Err(_) => {
+                        error!("Failed to fetch round cards for game {}", game_id);
+                        break;
+                    }
+                };
 
             let chosen = compute_strategy(&bot_cards, &round_cards, game.current_winning_card);
             info!("Bot {} selected card index {}", current_player, chosen);
@@ -225,10 +227,7 @@ impl BotScheduler {
                         current_player = next_player;
                         continue;
                     } else {
-                        info!(
-                            "Next player {} is human, stopping bot chain",
-                            next_player
-                        );
+                        info!("Next player {} is human, stopping bot chain", next_player);
                         break;
                     }
                 }

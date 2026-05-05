@@ -5,8 +5,8 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::api::dto::requests::PlayCardRequest;
-use crate::api::dto::responses::{PlayCardResponse, GameListItem};
-use crate::error::{AppError, GameError};
+use crate::api::dto::responses::{GameListItem, PlayCardResponse};
+use crate::error::AppError;
 use crate::game::orchestrator::GameOrchestratorTrait;
 use crate::observability::CorrelationId;
 
@@ -34,24 +34,26 @@ pub async fn play_card(
     payload: web::Json<PlayCardRequest>,
 ) -> impl Responder {
     let game_id = id.into_inner();
-    let correlation_id = req
-        .extensions()
-        .get::<CorrelationId>()
-        .copied();
+    let correlation_id = req.extensions().get::<CorrelationId>().copied();
 
     if let Err(e) = payload.validate() {
         return AppError::from(e).error_response();
     }
 
     match orchestrator
-        .play_card(game_id, payload.player_id, payload.card_index, correlation_id)
+        .play_card(
+            game_id,
+            payload.player_id,
+            payload.card_index,
+            correlation_id,
+        )
         .await
     {
         Ok(outcome) => {
             let response: PlayCardResponse = outcome.into();
             HttpResponse::Ok().json(response)
         }
-        Err(e) => AppError::from(GameError::from(e)).error_response(),
+        Err(e) => AppError::from(e).error_response(),
     }
 }
 
@@ -63,10 +65,10 @@ pub async fn start_game(_id: web::Path<Uuid>) -> impl Responder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, web, App};
-    use crate::game::orchestrator::QuickGameOutcome;
-    use crate::game::orchestrator::mock::MockGameOrchestrator;
     use crate::error::GameError;
+    use crate::game::orchestrator::mock::MockGameOrchestrator;
+    use crate::game::orchestrator::QuickGameOutcome;
+    use actix_web::{test, web, App};
     use std::sync::Arc;
 
     async fn make_app(
@@ -76,11 +78,7 @@ mod tests {
         Response = actix_web::dev::ServiceResponse,
         Error = actix_web::Error,
     > {
-        test::init_service(
-            App::new()
-                .app_data(web::Data::new(mock))
-                .service(play_card),
-        ).await
+        test::init_service(App::new().app_data(web::Data::new(mock)).service(play_card)).await
     }
 
     // ── validation tests ──
@@ -120,7 +118,10 @@ mod tests {
         assert_eq!(resp.status(), 400);
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("out of valid range"));
+        assert!(body["error"]
+            .as_str()
+            .unwrap()
+            .contains("out of valid range"));
     }
 
     #[actix_web::test]
@@ -221,7 +222,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 404);
@@ -244,7 +245,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 404);
@@ -267,7 +268,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 404);
@@ -290,7 +291,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 403);
@@ -313,7 +314,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 403);
@@ -336,7 +337,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 409);
@@ -359,7 +360,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 400);
@@ -368,7 +369,9 @@ mod tests {
     #[actix_web::test]
     async fn play_card_database_error() {
         let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::Database(sea_orm::DbErr::Custom("db down".into()))),
+            Err(GameError::Database(sea_orm::DbErr::Custom(
+                "db down".into(),
+            ))),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
                 players: vec![],
@@ -382,7 +385,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 500);
@@ -391,8 +394,7 @@ mod tests {
     #[actix_web::test]
     async fn play_card_internal_error() {
         let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::Internal(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(GameError::Internal(Box::new(std::io::Error::other(
                 "internal kaboom",
             )))),
             Ok(QuickGameOutcome {
@@ -408,7 +410,7 @@ mod tests {
         let player_id = Uuid::new_v4();
         let req = test::TestRequest::post()
             .uri(&format!("/game/{}/play", game_id))
-            .set_json(&serde_json::json!({ "player_id": player_id, "card_index": 0 }))
+            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 500);
@@ -419,9 +421,7 @@ mod tests {
     #[actix_web::test]
     async fn test_list_games() {
         let app = test::init_service(App::new().service(list_games)).await;
-        let req = test::TestRequest::get()
-            .uri("/games")
-            .to_request();
+        let req = test::TestRequest::get().uri("/games").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
         let body: serde_json::Value = test::read_body_json(resp).await;
@@ -467,4 +467,3 @@ mod tests {
         assert_eq!(body["status"], "started");
     }
 }
-

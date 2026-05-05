@@ -1,13 +1,13 @@
+use crate::messaging::RedisClient;
+use crate::observability::CorrelationId;
+use anyhow::Context;
+use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::time;
 use uuid::Uuid;
-use anyhow::Context;
-use futures_util::StreamExt;
-use crate::messaging::RedisClient;
-use crate::observability::CorrelationId;
 
 /// A single WebSocket connection is represented by a sender that can forward messages.
 pub type WsSender = tokio::sync::mpsc::UnboundedSender<String>;
@@ -28,10 +28,17 @@ impl ConnectionId {
     }
 }
 
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Represents a tracked WebSocket connection.
 struct TrackedConnection {
     sender: WsSender,
     id: ConnectionId,
+    #[allow(dead_code)]
     correlation_id: CorrelationId,
     last_activity: Instant,
 }
@@ -73,12 +80,16 @@ impl WebSocketManager {
         let connection_id = ConnectionId::new();
         let cid_display = correlation_id.to_string();
         let conn_uuid = connection_id.uuid();
-        inner.connections.entry(game_id).or_default().push(TrackedConnection {
-            sender,
-            id: connection_id,
-            correlation_id,
-            last_activity: Instant::now(),
-        });
+        inner
+            .connections
+            .entry(game_id)
+            .or_default()
+            .push(TrackedConnection {
+                sender,
+                id: connection_id,
+                correlation_id,
+                last_activity: Instant::now(),
+            });
         tracing::info!(
             "New WebSocket connection {} for game {} (correlation_id={})",
             conn_uuid,
@@ -108,15 +119,23 @@ impl WebSocketManager {
             let before = connections.len();
             connections.retain(|c| c.id != connection_id);
             let after = connections.len();
-            tracing::debug!("Removed connection {} for game {}, connections before: {}, after: {}",
-                connection_id.uuid(), game_id, before, after);
+            tracing::debug!(
+                "Removed connection {} for game {}, connections before: {}, after: {}",
+                connection_id.uuid(),
+                game_id,
+                before,
+                after
+            );
             if connections.is_empty() {
                 inner.connections.remove(&game_id);
                 tracing::info!("No more connections for game {}, removed from map", game_id);
             }
         } else {
-            tracing::warn!("Attempted to remove connection {} for game {} but no connections found",
-                connection_id.uuid(), game_id);
+            tracing::warn!(
+                "Attempted to remove connection {} for game {} but no connections found",
+                connection_id.uuid(),
+                game_id
+            );
         }
     }
 
@@ -132,11 +151,19 @@ impl WebSocketManager {
     pub async fn broadcast_to_game(&self, game_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.connections.get(&game_id) {
-            tracing::debug!("Broadcasting to {} connections for game {}", connections.len(), game_id);
+            tracing::debug!(
+                "Broadcasting to {} connections for game {}",
+                connections.len(),
+                game_id
+            );
             for connection in connections {
                 // Ignore errors if the receiver is closed
                 if let Err(e) = connection.sender.send(message.to_string()) {
-                    tracing::debug!("Failed to send message to WebSocket connection {}: {}", connection.id.uuid(), e);
+                    tracing::debug!(
+                        "Failed to send message to WebSocket connection {}: {}",
+                        connection.id.uuid(),
+                        e
+                    );
                 }
             }
         } else {
@@ -147,7 +174,11 @@ impl WebSocketManager {
     /// Get the number of active connections for a specific game.
     pub async fn connection_count(&self, game_id: Uuid) -> usize {
         let inner = self.inner.read().await;
-        inner.connections.get(&game_id).map(|c| c.len()).unwrap_or(0)
+        inner
+            .connections
+            .get(&game_id)
+            .map(|c| c.len())
+            .unwrap_or(0)
     }
 
     /// Get total number of active connections across all games.
@@ -174,7 +205,9 @@ impl WebSocketManager {
             }
         };
         // Subscribe to all game channels using pattern `game:*`
-        let mut pubsub = redis_client.psubscribe(&["game:*"]).await
+        let mut pubsub = redis_client
+            .psubscribe(&["game:*"])
+            .await
             .context("Failed to subscribe to Redis pattern")?;
         tracing::info!("Redis subscriber subscribed to game:*");
 
@@ -225,7 +258,11 @@ impl WebSocketManager {
             total_removed += removed;
 
             if removed > 0 {
-                tracing::info!("Cleaned up {} stale connections for game {}", removed, game_id);
+                tracing::info!(
+                    "Cleaned up {} stale connections for game {}",
+                    removed,
+                    game_id
+                );
             }
 
             // Keep the game entry only if there are still connections
@@ -240,7 +277,11 @@ impl WebSocketManager {
 
     /// Start a background task that periodically cleans up stale connections.
     /// This should be called once when the server starts.
-    pub async fn start_connection_cleanup_task(&self, cleanup_interval: Duration, max_idle_duration: Duration) {
+    pub async fn start_connection_cleanup_task(
+        &self,
+        cleanup_interval: Duration,
+        max_idle_duration: Duration,
+    ) {
         let manager = self.clone();
         tokio::spawn(async move {
             let mut interval = time::interval(cleanup_interval);
@@ -252,7 +293,10 @@ impl WebSocketManager {
                 }
             }
         });
-        tracing::info!("Started connection cleanup task with interval {:?} and max idle {:?}",
-            cleanup_interval, max_idle_duration);
+        tracing::info!(
+            "Started connection cleanup task with interval {:?} and max idle {:?}",
+            cleanup_interval,
+            max_idle_duration
+        );
     }
 }

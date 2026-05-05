@@ -4,10 +4,7 @@ use super::CorrelationId;
 /// The correlation_id is inherited from the HTTP request that established
 /// the WebSocket upgrade.
 #[allow(dead_code)]
-pub fn ws_connection_span(
-    correlation_id: CorrelationId,
-    game_id: &uuid::Uuid,
-) -> tracing::Span {
+pub fn ws_connection_span(correlation_id: CorrelationId, game_id: &uuid::Uuid) -> tracing::Span {
     tracing::info_span!(
         "ws_connection",
         correlation_id = %correlation_id,

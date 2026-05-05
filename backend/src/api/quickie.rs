@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, ResponseError};
 
+use crate::api::dto::responses::QuickGameResponse;
 use crate::error::AppError;
 use crate::game::orchestrator::GameOrchestratorTrait;
-use crate::api::dto::responses::QuickGameResponse;
 use crate::observability::CorrelationId;
 
 #[post("/quickie")]
@@ -12,10 +12,7 @@ pub async fn create_quick_game(
     req: HttpRequest,
     orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
 ) -> impl Responder {
-    let correlation_id = req
-        .extensions()
-        .get::<CorrelationId>()
-        .copied();
+    let correlation_id = req.extensions().get::<CorrelationId>().copied();
 
     match orchestrator.create_quick_game(correlation_id).await {
         Ok(outcome) => {
@@ -24,18 +21,20 @@ pub async fn create_quick_game(
             tracing::debug!("[DEBUG] QuickGameResponse JSON: {}", json_str);
             HttpResponse::Created().json(response)
         }
-        Err(e) => AppError::from(crate::error::GameError::from(e)).error_response(),
+        Err(e) => AppError::from(e).error_response(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, web, App};
-    use crate::game::orchestrator::{PlayCardOutcome, QuickGameOutcome, mock::MockGameOrchestrator};
     use crate::error::GameError;
-    use uuid::Uuid;
+    use crate::game::orchestrator::{
+        mock::MockGameOrchestrator, PlayCardOutcome, QuickGameOutcome,
+    };
+    use actix_web::{test, web, App};
     use std::sync::Arc;
+    use uuid::Uuid;
 
     async fn make_app(
         mock: Arc<dyn GameOrchestratorTrait>,
@@ -48,7 +47,8 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(mock))
                 .service(create_quick_game),
-        ).await
+        )
+        .await
     }
 
     #[actix_web::test]
@@ -70,9 +70,7 @@ mod tests {
         ));
         let app = make_app(mock).await;
 
-        let req = test::TestRequest::post()
-            .uri("/quickie")
-            .to_request();
+        let req = test::TestRequest::post().uri("/quickie").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 201);
         let body: serde_json::Value = test::read_body_json(resp).await;
@@ -89,17 +87,16 @@ mod tests {
                 next_turn: None,
                 game_ended: true,
             }),
-            Err(GameError::Database(sea_orm::DbErr::Custom("db error".into()))),
+            Err(GameError::Database(sea_orm::DbErr::Custom(
+                "db error".into(),
+            ))),
         ));
         let app = make_app(mock).await;
 
-        let req = test::TestRequest::post()
-            .uri("/quickie")
-            .to_request();
+        let req = test::TestRequest::post().uri("/quickie").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 500);
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["success"], false);
     }
 }
-

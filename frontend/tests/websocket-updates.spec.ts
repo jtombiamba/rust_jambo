@@ -81,12 +81,18 @@ test('WebSocket updates when card is played', async ({ page }) => {
   });
 
   // Inject mock WebSocket before loading the page
+  // The code inside addInitScript runs in the browser context, not Node.js,
+  // so it needs window casts that TypeScript can't fully type-check.
   await page.addInitScript(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+
     // Store the latest WebSocket instance and a method to simulate messages
-    (window as any).__mockWebSocket = {
-      instance: null as WebSocket | null,
+    w.__mockWebSocket = {
+      instance: null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       simulateMessage: (data: any) => {
-        const ws = (window as any).__mockWebSocket.instance;
+        const ws = w.__mockWebSocket.instance;
         if (ws && ws.onmessage) {
           const event = { data: JSON.stringify(data) };
           ws.onmessage(event);
@@ -111,7 +117,7 @@ test('WebSocket updates when card is played', async ({ page }) => {
         this.url = url;
         this.readyState = MockWebSocket.CONNECTING;
         // Store this instance globally
-        (window as any).__mockWebSocket.instance = this;
+        w.__mockWebSocket.instance = this;
 
         // Simulate connection after a tiny delay
         setTimeout(() => {
@@ -132,7 +138,7 @@ test('WebSocket updates when card is played', async ({ page }) => {
     }
 
     // Replace the global WebSocket
-    (window as any).WebSocket = MockWebSocket;
+    w.WebSocket = MockWebSocket;
   });
 
   // Navigate to the app
@@ -151,7 +157,8 @@ test('WebSocket updates when card is played', async ({ page }) => {
   await humanCards.first().click();
 
   // Simulate a WebSocket card_played event from the server
-  await page.evaluate(({ gameId, humanPlayerId, botPlayerId }) => {
+  await page.evaluate(({ gameId, humanPlayerId, botPlayerId }: Record<string, string>) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__mockWebSocket.simulateMessage({
       type: 'card_played',
       game_id: gameId,
@@ -177,7 +184,7 @@ test('WebSocket updates when card is played', async ({ page }) => {
   await expect(firstDeckSlot).not.toContainText('Slot 1');
 });
 
-test('WebSocket updates for round completion', async ({ page }) => {
+test('WebSocket updates for round completion', async ({ page: _page }) => {
   // Similar setup but simulate RoundCompleted event
   // This test is a placeholder for now
 });

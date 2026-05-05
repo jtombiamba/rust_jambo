@@ -25,6 +25,8 @@ impl Config {
         cfg.try_deserialize()
     }
 
+    /// Load configuration from environment variables with fallback defaults.
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self {
             host: env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
@@ -32,8 +34,9 @@ impl Config {
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()
                 .unwrap_or(8080),
-            database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/jambo".to_string()),
+            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
+                "postgres://postgres:postgres@localhost:5432/jambo".to_string()
+            }),
             rabbitmq_url: env::var("RABBITMQ_URL")
                 .unwrap_or_else(|_| "amqp://guest:guest@localhost:5672/%2f".to_string()),
             redis_url: env::var("REDIS_URL").ok(),

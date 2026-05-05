@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use sea_orm::DbErr;
 use uuid::Uuid;
 
-use crate::database::models::{Game, Player, GameCard, PlayerType, GameStatus};
+use crate::database::models::{Game, GameCard, GameStatus, Player, PlayerType};
 
 /// Repository trait for Game entity operations.
 #[async_trait]
@@ -40,5 +40,9 @@ pub trait GameCardRepoTrait: Send + Sync {
     ) -> Result<GameCard, DbErr>;
     async fn bulk_insert(&self, cards: Vec<(Uuid, Option<Uuid>, i32)>) -> Result<(), DbErr>;
     async fn list_by_player(&self, player_id: Uuid) -> Result<Vec<GameCard>, DbErr>;
-    async fn list_by_game_and_round(&self, game_id: Uuid, round: i32) -> Result<Vec<GameCard>, DbErr>;
+    async fn list_by_game_and_round(
+        &self,
+        game_id: Uuid,
+        round: i32,
+    ) -> Result<Vec<GameCard>, DbErr>;
 }

@@ -1,7 +1,9 @@
-use lapin::{options::*, types::FieldTable, Connection, ConnectionProperties, BasicProperties, Consumer};
+use lapin::{
+    options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties, Consumer,
+};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{info, warn, error, debug};
+use tracing::{debug, error, info, warn};
 
 pub mod ai_task;
 pub mod events;
@@ -29,7 +31,10 @@ pub async fn connect_to_rabbitmq_with_retry(
         match RabbitMQClient::new(url).await {
             Ok(client) => {
                 if attempt > 0 {
-                    info!("Successfully connected to RabbitMQ after {} retries", attempt);
+                    info!(
+                        "Successfully connected to RabbitMQ after {} retries",
+                        attempt
+                    );
                 }
                 return Ok(client);
             }
@@ -42,8 +47,7 @@ pub async fn connect_to_rabbitmq_with_retry(
                     );
                     break;
                 }
-                let delay_ms =
-                    std::cmp::min(initial_delay_ms * 2u64.pow(attempt), max_delay_ms);
+                let delay_ms = std::cmp::min(initial_delay_ms * 2u64.pow(attempt), max_delay_ms);
                 warn!(
                     "RabbitMQ connection attempt {} failed. Retrying in {}ms...",
                     attempt + 1,
@@ -58,7 +62,7 @@ pub async fn connect_to_rabbitmq_with_retry(
 }
 
 /// Metrics for RabbitMQ operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RabbitMQMetrics {
     pub publish_success_count: u64,
     pub publish_failure_count: u64,
@@ -66,19 +70,6 @@ pub struct RabbitMQMetrics {
     pub consume_success_count: u64,
     pub consume_failure_count: u64,
     pub connection_error_count: u64,
-}
-
-impl Default for RabbitMQMetrics {
-    fn default() -> Self {
-        Self {
-            publish_success_count: 0,
-            publish_failure_count: 0,
-            publish_retry_count: 0,
-            consume_success_count: 0,
-            consume_failure_count: 0,
-            connection_error_count: 0,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -109,9 +100,13 @@ impl RabbitMQClient {
     }
 
     /// Publish with exponential backoff retry
-    pub async fn publish_with_retry(&self, queue: &str, message: &[u8]) -> Result<(), lapin::Error> {
+    pub async fn publish_with_retry(
+        &self,
+        queue: &str,
+        message: &[u8],
+    ) -> Result<(), lapin::Error> {
         let mut last_error = None;
-        
+
         for attempt in 0..MAX_RETRIES {
             match self.publish_internal(queue, message).await {
                 Ok(_) => {
@@ -125,26 +120,31 @@ impl RabbitMQClient {
                 }
                 Err(e) => {
                     last_error = Some(e);
-                    
+
                     if attempt == MAX_RETRIES - 1 {
                         // Last attempt failed
                         let mut metrics = self.metrics.lock().unwrap();
                         metrics.publish_failure_count += 1;
                         break;
                     }
-                    
+
                     // Calculate exponential backoff delay
                     let delay_ms = std::cmp::min(
                         INITIAL_RETRY_DELAY_MS * 2u64.pow(attempt),
-                        MAX_RETRY_DELAY_MS
+                        MAX_RETRY_DELAY_MS,
                     );
-                    
-                    warn!("Publish attempt {} failed: {:?}. Retrying in {}ms", attempt + 1, last_error, delay_ms);
+
+                    warn!(
+                        "Publish attempt {} failed: {:?}. Retrying in {}ms",
+                        attempt + 1,
+                        last_error,
+                        delay_ms
+                    );
                     sleep(Duration::from_millis(delay_ms)).await;
                 }
             }
         }
-        
+
         Err(last_error.unwrap())
     }
 
@@ -153,7 +153,7 @@ impl RabbitMQClient {
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = queue.into();
         let exchange: lapin::types::ShortString = "".into();
-        
+
         // Declare queue (idempotent)
         let _ = channel
             .queue_declare(
@@ -162,7 +162,7 @@ impl RabbitMQClient {
                 FieldTable::default(),
             )
             .await?;
-        
+
         // Publish message
         let start_time = std::time::Instant::now();
         let result = channel
@@ -174,10 +174,10 @@ impl RabbitMQClient {
                 BasicProperties::default(),
             )
             .await;
-        
+
         let duration = start_time.elapsed();
         debug!("Publish to queue '{}' took {:?}", queue, duration);
-        
+
         result.map(|_| ())
     }
 
@@ -195,16 +195,17 @@ impl RabbitMQClient {
             player_id = %task.player_id,
         );
         let _guard = span.enter();
-        self.publish_with_retry(AI_TASKS_QUEUE, &task.to_json_bytes()).await
+        self.publish_with_retry(AI_TASKS_QUEUE, &task.to_json_bytes())
+            .await
     }
 
     /// Consume AI tasks from queue
     pub async fn consume_ai_tasks(&self) -> Result<Consumer, lapin::Error> {
         let start_time = std::time::Instant::now();
-        
+
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = AI_TASKS_QUEUE.into();
-        
+
         // Declare queue (idempotent)
         let _ = channel
             .queue_declare(
@@ -213,7 +214,7 @@ impl RabbitMQClient {
                 FieldTable::default(),
             )
             .await?;
-        
+
         // Create consumer
         let consumer = channel
             .basic_consume(
@@ -223,13 +224,13 @@ impl RabbitMQClient {
                 FieldTable::default(),
             )
             .await?;
-        
+
         let duration = start_time.elapsed();
         debug!("Consumer setup took {:?}", duration);
-        
+
         let mut metrics = self.metrics.lock().unwrap();
         metrics.consume_success_count += 1;
-        
+
         Ok(consumer)
     }
 
@@ -253,7 +254,7 @@ impl RabbitMQClient {
     pub async fn get_queue_length(&self, queue: &str) -> Result<u32, lapin::Error> {
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = queue.into();
-        
+
         let queue_info = channel
             .queue_declare(
                 queue_name,
@@ -261,7 +262,7 @@ impl RabbitMQClient {
                 FieldTable::default(),
             )
             .await?;
-        
+
         Ok(queue_info.message_count())
     }
 }

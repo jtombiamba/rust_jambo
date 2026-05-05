@@ -14,7 +14,7 @@ use jambo_backend::database::models::PlayerType;
 use jambo_backend::game::bot::execute_bot_move_from_task;
 use jambo_backend::game::constants::BOT_THINKING_DELAY_SECS;
 use jambo_backend::game::service::GameService;
-use jambo_backend::messaging::{self, RabbitMQClient, RedisClient, AITask};
+use jambo_backend::messaging::{self, AITask, RabbitMQClient, RedisClient};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -31,8 +31,7 @@ async fn main() -> Result<()> {
     info!(
         "Starting AI worker — CPU cores: {}, Tokio runtime workers: {}",
         cpu_count,
-        std::env::var("TOKIO_WORKER_THREADS")
-            .unwrap_or_else(|_| "default (num_cpus)".to_string())
+        std::env::var("TOKIO_WORKER_THREADS").unwrap_or_else(|_| "default (num_cpus)".to_string())
     );
 
     let db_connection: DatabaseConnection = database::create_connection(&config.database_url)
@@ -47,14 +46,18 @@ async fn main() -> Result<()> {
                 Some(client)
             }
             Err(e) => {
-                warn!("Failed to connect to Redis: {}, proceeding without Redis", e);
+                warn!(
+                    "Failed to connect to Redis: {}, proceeding without Redis",
+                    e
+                );
                 None
             }
         },
         None => None,
     };
 
-    let rabbitmq_client = messaging::connect_to_rabbitmq_with_retry(&config.rabbitmq_url, 10).await
+    let rabbitmq_client = messaging::connect_to_rabbitmq_with_retry(&config.rabbitmq_url, 10)
+        .await
         .context("Failed to connect to RabbitMQ after retries")?;
     info!("Connected to RabbitMQ");
 
@@ -95,10 +98,7 @@ async fn main() -> Result<()> {
         };
         let game_id = task.game_id;
         let player_id = task.player_id;
-        info!(
-            "Processing AI task: game={}, player={}",
-            game_id, player_id
-        );
+        info!("Processing AI task: game={}, player={}", game_id, player_id);
 
         let task_start_time = std::time::Instant::now();
         let process_result = process_bot_move(
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
         }
 
         let total_tasks = tasks_processed + tasks_failed + parse_errors;
-        if total_tasks % 10 == 0 && total_tasks > 0 {
+        if total_tasks.is_multiple_of(10) && total_tasks > 0 {
             let uptime = start_time.elapsed();
             info!(
                 tasks_processed = tasks_processed,
@@ -254,7 +254,10 @@ async fn process_bot_move(
 
     let service = GameService::new_with_redis(db_connection.clone(), redis_client.clone());
 
-    match service.update_card_play(game_id, player_id, chosen_card, correlation_id).await {
+    match service
+        .update_card_play(game_id, player_id, chosen_card, correlation_id)
+        .await
+    {
         Ok(result) => {
             info!(
                 "Bot {} successfully played card {} in game {}",
@@ -276,23 +279,25 @@ async fn process_bot_move(
                         result.next_player_id
                     );
                     if let Some(ref client) = rabbitmq_client {
-                        let next_task =
-                            match service.build_ai_task(game_id, result.next_player_id, correlation_id).await {
-                                Ok(task) => {
-                                    info!(
-                                        "Built comprehensive AI task for bot {} in game {}",
-                                        result.next_player_id, game_id
-                                    );
-                                    task
-                                }
-                                Err(e) => {
-                                    error!(
+                        let next_task = match service
+                            .build_ai_task(game_id, result.next_player_id, correlation_id)
+                            .await
+                        {
+                            Ok(task) => {
+                                info!(
+                                    "Built comprehensive AI task for bot {} in game {}",
+                                    result.next_player_id, game_id
+                                );
+                                task
+                            }
+                            Err(e) => {
+                                error!(
                                         "Failed to build comprehensive AI task: {}, falling back to minimal",
                                         e
                                     );
-                                    AITask::minimal(game_id, result.next_player_id)
-                                }
-                            };
+                                AITask::minimal(game_id, result.next_player_id)
+                            }
+                        };
                         match client.publish_ai_task(&next_task).await {
                             Ok(()) => info!(
                                 "Published AI task for bot {} in game {}",
@@ -390,4 +395,3 @@ async fn process_bot_move_with_db(
         }
     }
 }
-

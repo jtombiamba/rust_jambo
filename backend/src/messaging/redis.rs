@@ -1,6 +1,6 @@
+use crate::messaging::events::GameEvent;
 use redis::{aio::ConnectionManager, AsyncCommands, Client, RedisResult};
 use tracing::info;
-use crate::messaging::events::GameEvent;
 
 /// Redis client wrapper that manages a connection pool.
 #[derive(Clone)]
@@ -16,7 +16,10 @@ impl RedisClient {
         let client = Client::open(url)?;
         let connection_manager = client.get_connection_manager().await?;
         info!("Connected to Redis at {}", url);
-        Ok(Self { client, connection_manager })
+        Ok(Self {
+            client,
+            connection_manager,
+        })
     }
 
     /// Publish a message to a Redis channel.
@@ -34,7 +37,8 @@ impl RedisClient {
     /// Subscribe to a Redis channel and return a subscription object.
     /// This is a simplified subscription that yields messages as they arrive.
     pub async fn subscribe(&mut self, channels: &[&str]) -> RedisResult<redis::aio::PubSub> {
-        let mut pubsub: redis::aio::PubSub = self.client.get_async_connection().await?.into_pubsub();
+        let mut pubsub: redis::aio::PubSub =
+            self.client.get_async_connection().await?.into_pubsub();
         for channel in channels {
             pubsub.subscribe(*channel).await?;
         }
@@ -43,7 +47,8 @@ impl RedisClient {
 
     /// Subscribe to Redis patterns and return a subscription object.
     pub async fn psubscribe(&mut self, patterns: &[&str]) -> RedisResult<redis::aio::PubSub> {
-        let mut pubsub: redis::aio::PubSub = self.client.get_async_connection().await?.into_pubsub();
+        let mut pubsub: redis::aio::PubSub =
+            self.client.get_async_connection().await?.into_pubsub();
         for pattern in patterns {
             pubsub.psubscribe(*pattern).await?;
         }

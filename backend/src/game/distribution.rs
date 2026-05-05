@@ -61,11 +61,17 @@ mod tests {
         let distribution = distribute_cards(&player_ids);
 
         // Total cards equals MAX_PLAYERS_IN_GAME * MAX_CARDS_PER_PLAYER
-        assert_eq!(distribution.len(), MAX_PLAYERS_IN_GAME * MAX_CARDS_PER_PLAYER);
+        assert_eq!(
+            distribution.len(),
+            MAX_PLAYERS_IN_GAME * MAX_CARDS_PER_PLAYER
+        );
 
         // Each player gets exactly MAX_CARDS_PER_PLAYER cards
         for &player_id in &player_ids {
-            let count = distribution.iter().filter(|(id, _)| *id == player_id).count();
+            let count = distribution
+                .iter()
+                .filter(|(id, _)| *id == player_id)
+                .count();
             assert_eq!(count, MAX_CARDS_PER_PLAYER);
         }
 

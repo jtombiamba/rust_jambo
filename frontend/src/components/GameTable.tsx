@@ -80,7 +80,7 @@ const GameTable: React.FC<GameTableProps> = ({
           const position = positionMap[player.position] || 'south';
           const isCurrentTurn = currentTurn !== undefined && player.position === currentTurn;
           const isWinner = isPlayerRoundWinner(player.position);
-          
+
           // Determine grid positioning based on position
           let gridClass = '';
           switch (position) {
@@ -113,7 +113,7 @@ const GameTable: React.FC<GameTableProps> = ({
                 isCurrentTurn={isCurrentTurn}
                 onCardClick={(cardIndex) => onCardClick?.(player.id, cardIndex)}
               />
-              
+
               {/* Winner ring for round winner */}
               {isWinner && roundWinner && (
                 <WinnerRing

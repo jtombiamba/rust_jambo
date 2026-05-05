@@ -73,7 +73,7 @@ pub fn evaluate_round(ctx: &RoundContext) -> Option<RoundResult> {
         let winner_position = ctx
             .leading_player_position
             .unwrap_or(ctx.plays[0].player_position);
-        let is_kora = leading_card.index % 8 == 0;
+        let is_kora = leading_card.index.is_multiple_of(8);
         return Some(RoundResult {
             winner_position,
             is_kora,
@@ -81,16 +81,13 @@ pub fn evaluate_round(ctx: &RoundContext) -> Option<RoundResult> {
     }
 
     // Find the highest rank among same-suit cards
-    same_suit
-        .iter()
-        .max_by_key(|p| p.card.rank)
-        .map(|winner| {
-            let is_kora = winner.card.index % 8 == 0;
-            RoundResult {
-                winner_position: winner.player_position,
-                is_kora,
-            }
-        })
+    same_suit.iter().max_by_key(|p| p.card.rank).map(|winner| {
+        let is_kora = winner.card.index % 8 == 0;
+        RoundResult {
+            winner_position: winner.player_position,
+            is_kora,
+        }
+    })
 }
 
 #[cfg(test)]
@@ -124,10 +121,13 @@ mod tests {
         };
         // Leading suit is Spades (suit 1), highest rank among Spades is 4♠ (player 2)
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 2,
-            is_kora: false,
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 2,
+                is_kora: false,
+            })
+        );
     }
 
     #[test]
@@ -137,18 +137,21 @@ mod tests {
             leading_card: None,
             leading_player_position: None,
             plays: vec![
-                make_play(0, 0),  // 3♥ (Hearts, leading suit)
-                make_play(1, 8),  // 3♠ (Spades, different suit)
-                make_play(2, 1),  // 4♥ (Hearts, same suit)
-                make_play(3, 2),  // 5♥ (Hearts, same suit, highest)
+                make_play(0, 0), // 3♥ (Hearts, leading suit)
+                make_play(1, 8), // 3♠ (Spades, different suit)
+                make_play(2, 1), // 4♥ (Hearts, same suit)
+                make_play(3, 2), // 5♥ (Hearts, same suit, highest)
             ],
         };
         // Leading suit is Hearts (suit 0), highest rank among Hearts is 5♥ (player 3)
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 3,
-            is_kora: false,
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 3,
+                is_kora: false,
+            })
+        );
     }
 
     #[test]
@@ -166,10 +169,13 @@ mod tests {
         };
         // Only card 0 is of the leading suit (Hearts), so player 0 wins
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 0,
-            is_kora: true, // index 0 is a 3 of Hearts -> Kora
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 0,
+                is_kora: true, // index 0 is a 3 of Hearts -> Kora
+            })
+        );
     }
 
     #[test]
@@ -186,10 +192,13 @@ mod tests {
         };
         // Highest rank is 10♥ (card 6), player 1 wins
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 1,
-            is_kora: false,
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 1,
+                is_kora: false,
+            })
+        );
     }
 
     #[test]
@@ -214,10 +223,13 @@ mod tests {
             ],
         };
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 1, // player 1 has 4♥ which beats 3♥
-            is_kora: false,     // 4♥ is not a Kora card
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 1, // player 1 has 4♥ which beats 3♥
+                is_kora: false,     // 4♥ is not a Kora card
+            })
+        );
 
         // Kora card wins (index 24 = 3♣)
         let ctx = RoundContext {
@@ -229,10 +241,13 @@ mod tests {
             ],
         };
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 0,
-            is_kora: true, // 3♣ is a Kora card
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 0,
+                is_kora: true, // 3♣ is a Kora card
+            })
+        );
     }
 
     #[test]
@@ -251,10 +266,13 @@ mod tests {
         };
         // Leading suit is Hearts (suit 0), only player 0 has Hearts -> player 0 wins
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 0,
-            is_kora: true, // index 0 is 3♥ -> Kora
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 0,
+                is_kora: true, // index 0 is 3♥ -> Kora
+            })
+        );
     }
 
     #[test]
@@ -274,10 +292,13 @@ mod tests {
         // No Clubs played (only player 0 has Clubs, but they set the suit),
         // so player 0 (who set the leading suit) wins
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 0,
-            is_kora: false, // 28 is 4♣, not a 3
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 0,
+                is_kora: false, // 28 is 4♣, not a 3
+            })
+        );
     }
 
     #[test]
@@ -296,9 +317,12 @@ mod tests {
         };
         // No Clubs played (only player 0 has Clubs), player 0 wins with Kora
         let result = evaluate_round(&ctx);
-        assert_eq!(result, Some(RoundResult {
-            winner_position: 0,
-            is_kora: true, // 24 is 3♣ -> Kora
-        }));
+        assert_eq!(
+            result,
+            Some(RoundResult {
+                winner_position: 0,
+                is_kora: true, // 24 is 3♣ -> Kora
+            })
+        );
     }
 }

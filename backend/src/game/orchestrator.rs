@@ -1,18 +1,18 @@
 use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
-use uuid::Uuid;
 use rand::Rng;
+use sea_orm::DatabaseConnection;
 use tracing;
+use uuid::Uuid;
 
-use crate::database::models::{PlayerType, GameStatus, Player};
-use crate::database::repositories::{GameRepository, PlayerRepository, GameCardRepository};
+use crate::api::dto::responses::{PlayCardResponse, PlayerInfoDto, QuickGameResponse};
+use crate::database::models::{GameStatus, Player, PlayerType};
+use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::error::GameError;
 use crate::game::bot_scheduler::BotScheduler;
 use crate::game::distribution::distribute_cards;
 use crate::game::service::{CardPlayResult, GameService};
 use crate::messaging::{RabbitMQClient, RedisClient};
 use crate::observability::CorrelationId;
-use crate::api::dto::responses::{PlayCardResponse, QuickGameResponse, PlayerInfoDto};
 
 /// Outcome of a play_card operation — contains everything the API handler
 /// needs to build the HTTP response without accessing repositories.
@@ -129,13 +129,13 @@ impl GameOrchestrator {
                 crate::game::service::GameServiceError::NotYourTurn => GameError::NotYourTurn,
                 crate::game::service::GameServiceError::InvalidCard => GameError::InvalidCard,
                 crate::game::service::GameServiceError::GameFinished => GameError::GameFinished,
-                crate::game::service::GameServiceError::RoundNotComplete => GameError::RoundNotComplete,
+                crate::game::service::GameServiceError::RoundNotComplete => {
+                    GameError::RoundNotComplete
+                }
                 crate::game::service::GameServiceError::Internal(msg) => {
-                    GameError::Internal(Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg)))
+                    GameError::Internal(Box::new(std::io::Error::other(msg)))
                 }
-                crate::game::service::GameServiceError::Database(e) => {
-                    GameError::Internal(e)
-                }
+                crate::game::service::GameServiceError::Database(e) => GameError::Internal(e),
             })?;
 
         let next_is_bot = result
@@ -210,8 +210,9 @@ impl GameOrchestrator {
             }
         }
 
-        let all_players: Vec<&Player> =
-            std::iter::once(&human_player).chain(bot_players.iter()).collect();
+        let all_players: Vec<&Player> = std::iter::once(&human_player)
+            .chain(bot_players.iter())
+            .collect();
         let player_ids: Vec<Uuid> = all_players.iter().map(|p| p.id).collect();
 
         let initial_rank = rand::thread_rng().gen_range(0..4) as i32;
@@ -287,10 +288,7 @@ impl GameOrchestrator {
             .collect();
 
         // Kick off bot chain if first player is a bot
-        if let Some(first_player) = all_players
-            .iter()
-            .find(|p| p.position == initial_rank)
-        {
+        if let Some(first_player) = all_players.iter().find(|p| p.position == initial_rank) {
             if matches!(first_player.player_type, PlayerType::Bot) {
                 tracing::info!(
                     "First player is bot (position {}), scheduling initial move",
@@ -321,7 +319,8 @@ impl GameOrchestratorTrait for GameOrchestrator {
         card_index: i32,
         correlation_id: Option<CorrelationId>,
     ) -> Result<PlayCardOutcome, GameError> {
-        self.play_card(game_id, player_id, card_index, correlation_id).await
+        self.play_card(game_id, player_id, card_index, correlation_id)
+            .await
     }
 
     async fn create_quick_game(
@@ -379,7 +378,10 @@ pub mod mock {
             _card_index: i32,
             _correlation_id: Option<CorrelationId>,
         ) -> Result<PlayCardOutcome, GameError> {
-            self.play_card_result.lock().unwrap().take()
+            self.play_card_result
+                .lock()
+                .unwrap()
+                .take()
                 .expect("mock orchestrator play_card called more than once")
         }
 
@@ -387,7 +389,10 @@ pub mod mock {
             &self,
             _correlation_id: Option<CorrelationId>,
         ) -> Result<QuickGameOutcome, GameError> {
-            self.create_quick_game_result.lock().unwrap().take()
+            self.create_quick_game_result
+                .lock()
+                .unwrap()
+                .take()
                 .expect("mock orchestrator create_quick_game called more than once")
         }
     }

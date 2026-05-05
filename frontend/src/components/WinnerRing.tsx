@@ -28,7 +28,7 @@ const WinnerRing: React.FC<WinnerRingProps> = ({
 
   // Determine CSS classes based on win type
   const ringClass = `winner-ring winner-ring-${position} ${
-    winType === 'kora' ? 'winner-ring-kora' : 
+    winType === 'kora' ? 'winner-ring-kora' :
     winType === 'doubleKora' ? 'winner-ring-double-kora' : ''
   }`;
 
@@ -41,7 +41,7 @@ const WinnerRing: React.FC<WinnerRingProps> = ({
     <div className={ringClass}>
       {/* Ring border */}
       <div className="winner-ring-border"></div>
-      
+
       {/* Win type label */}
       <div className="winner-ring-label">
         {playerName && <div className="winner-ring-player-name">{playerName}</div>}

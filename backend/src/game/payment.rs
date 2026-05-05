@@ -1,10 +1,10 @@
 pub fn calculate_payment(winner_position: usize, total_players: usize, bet: i32) -> Vec<i32> {
     let mut credits = vec![0; total_players];
-    for i in 0..total_players {
+    for (i, credit) in credits.iter_mut().enumerate() {
         if i == winner_position {
-            credits[i] = bet.saturating_mul(total_players as i32 - 1);
+            *credit = bet.saturating_mul(total_players as i32 - 1);
         } else {
-            credits[i] = -bet;
+            *credit = -bet;
         }
     }
     credits

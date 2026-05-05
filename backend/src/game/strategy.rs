@@ -33,13 +33,19 @@ pub fn can_match_card(card: i32, current_winning_card: Option<i32>) -> bool {
 
 /// Pick all unplayed cards that can match the current winning card.
 /// If no card directly matches the winning card, return all unplayed cards.
-pub fn pick_playable_cards_in_round(unplayed_cards: &[i32], current_winning_card: Option<i32>) -> Vec<i32> {
+pub fn pick_playable_cards_in_round(
+    unplayed_cards: &[i32],
+    current_winning_card: Option<i32>,
+) -> Vec<i32> {
     if unplayed_cards.is_empty() {
         return vec![];
     }
-    let has_match = unplayed_cards.iter().any(|&c| can_match_card(c, current_winning_card));
+    let has_match = unplayed_cards
+        .iter()
+        .any(|&c| can_match_card(c, current_winning_card));
     if has_match {
-        unplayed_cards.iter()
+        unplayed_cards
+            .iter()
             .filter(|&&c| can_match_card(c, current_winning_card))
             .copied()
             .collect()
@@ -68,7 +74,8 @@ pub fn pick_best_card_from_strategy_choice(
 
     // Helper to find first card in a given zone range.
     let find_in_zone = |zone_start: i32, zone_end: i32| -> Option<i32> {
-        playable.iter()
+        playable
+            .iter()
             .find(|&&c| {
                 let rem = c % 8;
                 rem >= zone_start && rem <= zone_end
@@ -79,39 +86,75 @@ pub fn pick_best_card_from_strategy_choice(
     match strategy_choice {
         StrategyChoice::LongUp => {
             // zone 3 -> zone 2 -> zone 1
-            if let Some(card) = find_in_zone(6, 7) { return card; }
-            if let Some(card) = find_in_zone(3, 5) { return card; }
-            if let Some(card) = find_in_zone(0, 2) { return card; }
+            if let Some(card) = find_in_zone(6, 7) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(3, 5) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(0, 2) {
+                return card;
+            }
         }
         StrategyChoice::LongDown => {
             // zone 3 -> zone 1 -> zone 2
-            if let Some(card) = find_in_zone(6, 7) { return card; }
-            if let Some(card) = find_in_zone(0, 2) { return card; }
-            if let Some(card) = find_in_zone(3, 5) { return card; }
+            if let Some(card) = find_in_zone(6, 7) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(0, 2) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(3, 5) {
+                return card;
+            }
         }
         StrategyChoice::MidUp => {
             // zone 2 -> zone 3 -> zone 1
-            if let Some(card) = find_in_zone(3, 5) { return card; }
-            if let Some(card) = find_in_zone(6, 7) { return card; }
-            if let Some(card) = find_in_zone(0, 2) { return card; }
+            if let Some(card) = find_in_zone(3, 5) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(6, 7) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(0, 2) {
+                return card;
+            }
         }
         StrategyChoice::MidDown => {
             // zone 2 -> zone 1 -> zone 3
-            if let Some(card) = find_in_zone(3, 5) { return card; }
-            if let Some(card) = find_in_zone(0, 2) { return card; }
-            if let Some(card) = find_in_zone(6, 7) { return card; }
+            if let Some(card) = find_in_zone(3, 5) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(0, 2) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(6, 7) {
+                return card;
+            }
         }
         StrategyChoice::ShortUp => {
             // zone 1 -> zone 3 -> zone 2
-            if let Some(card) = find_in_zone(0, 2) { return card; }
-            if let Some(card) = find_in_zone(6, 7) { return card; }
-            if let Some(card) = find_in_zone(3, 5) { return card; }
+            if let Some(card) = find_in_zone(0, 2) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(6, 7) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(3, 5) {
+                return card;
+            }
         }
         StrategyChoice::ShortDown => {
             // zone 1 -> zone 2 -> zone 3
-            if let Some(card) = find_in_zone(0, 2) { return card; }
-            if let Some(card) = find_in_zone(3, 5) { return card; }
-            if let Some(card) = find_in_zone(6, 7) { return card; }
+            if let Some(card) = find_in_zone(0, 2) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(3, 5) {
+                return card;
+            }
+            if let Some(card) = find_in_zone(6, 7) {
+                return card;
+            }
         }
     }
 
@@ -121,7 +164,12 @@ pub fn pick_best_card_from_strategy_choice(
 
 /// Simple strategy: if no winning card, pick random.
 /// Otherwise use MID_UP strategy (which will filter by suit).
-fn compute_simple(unplayed_cards: &[i32], _round_played_cards: &[i32], current_winning_card: Option<i32>) -> i32 {
+#[allow(dead_code)]
+fn compute_simple(
+    unplayed_cards: &[i32],
+    _round_played_cards: &[i32],
+    current_winning_card: Option<i32>,
+) -> i32 {
     if unplayed_cards.is_empty() {
         // Safety: no cards to play — should not happen in normal flow
         return -1;
@@ -140,7 +188,11 @@ fn compute_simple(unplayed_cards: &[i32], _round_played_cards: &[i32], current_w
 
 /// High strategy: if no winning card, pick random.
 /// Otherwise pick a random strategy among LONG_UP, LONG_DOWN, MID_UP, MID_DOWN.
-fn compute_high(unplayed_cards: &[i32], _round_played_cards: &[i32], current_winning_card: Option<i32>) -> i32 {
+fn compute_high(
+    unplayed_cards: &[i32],
+    _round_played_cards: &[i32],
+    current_winning_card: Option<i32>,
+) -> i32 {
     if unplayed_cards.is_empty() {
         // Safety: no cards to play — should not happen in normal flow
         return -1;
@@ -149,18 +201,18 @@ fn compute_high(unplayed_cards: &[i32], _round_played_cards: &[i32], current_win
         *unplayed_cards.choose(&mut thread_rng()).unwrap()
     } else {
         let strategy = StrategyChoice::random_high();
-        pick_best_card_from_strategy_choice(
-            unplayed_cards,
-            current_winning_card,
-            strategy,
-        )
+        pick_best_card_from_strategy_choice(unplayed_cards, current_winning_card, strategy)
     }
 }
 
 /// Main entry point for bot strategy.
 /// Currently uses the high strategy (as per Python default).
 /// Returns -1 if no cards are available to play (caller should handle this).
-pub fn compute_strategy(unplayed_cards: &[i32], round_played_cards: &[i32], current_winning_card: Option<i32>) -> i32 {
+pub fn compute_strategy(
+    unplayed_cards: &[i32],
+    round_played_cards: &[i32],
+    current_winning_card: Option<i32>,
+) -> i32 {
     if unplayed_cards.is_empty() {
         return -1;
     }
@@ -190,7 +242,7 @@ mod tests {
         let playable2 = pick_playable_cards_in_round(&cards, Some(10));
         // card 8 matches suit 1 (cards 8-15), returns [8]
         assert_eq!(playable2, vec![8]);
-        
+
         // Test with no matching suit
         let cards2 = vec![0, 16, 24]; // no suit 1 cards
         let playable3 = pick_playable_cards_in_round(&cards2, Some(10));
@@ -201,12 +253,12 @@ mod tests {
     #[test]
     fn test_pick_best_card_from_strategy_choice() {
         let cards = vec![0, 1, 2, 3, 4, 5, 6, 7]; // all hearts
-        // For LongUp, should pick zone 3 (6-7) first
+                                                  // For LongUp, should pick zone 3 (6-7) first
         let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::LongUp);
         assert!(card == 6 || card == 7);
         // For ShortDown, should pick zone 1 (0-2) first
         let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::ShortDown);
-        assert!(card >= 0 && card <= 2);
+        assert!((0..=2).contains(&card));
     }
 
     #[test]

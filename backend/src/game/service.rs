@@ -1,19 +1,22 @@
-use sea_orm::{DatabaseConnection, DatabaseTransaction, ActiveValue, TransactionTrait, ActiveModelTrait, EntityTrait, QueryFilter, ColumnTrait, QueryOrder};
-use uuid::Uuid;
-use thiserror::Error;
 use chrono::Utc;
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
+};
+use thiserror::Error;
+use uuid::Uuid;
 
-use crate::database::models::{game, player, game_card, GameStatus};
 use crate::database::models::Player;
-use crate::database::repositories::{GameRepository, PlayerRepository, GameCardRepository};
+use crate::database::models::{game, game_card, player, GameStatus};
+use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::card_mapping::Card;
-use crate::game::round_evaluation::{PlayedCard, RoundContext, evaluate_round};
-use crate::game::turn_order::next_player;
-use crate::game::payment::calculate_payment;
 use crate::game::constants::MAX_CARDS_PER_PLAYER;
-use crate::messaging::{RedisClient, events::GameEvent};
+use crate::game::payment::calculate_payment;
+use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
+use crate::game::turn_order::next_player;
 use crate::messaging::ai_task::{AITask, PlayerInfo};
-use tracing::{info, error};
+use crate::messaging::{events::GameEvent, RedisClient};
+use tracing::{error, info};
 
 #[derive(Error, Debug)]
 pub enum GameServiceError {
@@ -65,7 +68,10 @@ pub struct GameService {
 
 impl GameService {
     pub fn new(db: DatabaseConnection) -> Self {
-        Self { db, redis_client: None }
+        Self {
+            db,
+            redis_client: None,
+        }
     }
 
     pub fn new_with_redis(db: DatabaseConnection, redis_client: Option<RedisClient>) -> Self {
@@ -93,8 +99,9 @@ impl GameService {
             } else {
                 // The card played is not from the same colour, find if the player had one he didn't play
                 let repo = GameCardRepository::new(self.db.clone());
-                let player_cards = repo.list_by_player(player_id).await
-                    .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+                let player_cards = repo.list_by_player(player_id).await.map_err(|e| {
+                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                })?;
                 let unplayed_cards: Vec<i32> = player_cards
                     .iter()
                     .filter(|gc| !gc.played)
@@ -139,8 +146,9 @@ impl GameService {
         let _guard = span.enter();
 
         // Start transaction first — all reads and writes happen inside it
-        let txn = self.db.begin().await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+        let txn = self.db.begin().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
 
         // --- All data fetching happens INSIDE the transaction ---
 
@@ -148,9 +156,14 @@ impl GameService {
         let game = game::Entity::find_by_id(game_id)
             .one(&txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
             .ok_or(GameServiceError::GameNotFound)?;
-        if game.status == GameStatus::Finished || game.status == GameStatus::Kora || game.status == GameStatus::DoubleKora {
+        if game.status == GameStatus::Finished
+            || game.status == GameStatus::Kora
+            || game.status == GameStatus::DoubleKora
+        {
             txn.rollback().await.ok();
             return Err(GameServiceError::GameFinished);
         }
@@ -161,8 +174,11 @@ impl GameService {
             .order_by_asc(player::Column::Position)
             .all(&txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
-        let current_player = players.iter()
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        let current_player = players
+            .iter()
             .find(|p| p.id == player_id)
             .ok_or(GameServiceError::PlayerNotFound)?;
         let current_rank = game.rank.unwrap_or(0) as usize;
@@ -176,8 +192,11 @@ impl GameService {
             .filter(game_card::Column::PlayerId.eq(player_id))
             .all(&txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
-        let target_card = game_cards.iter()
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        let target_card = game_cards
+            .iter()
             .find(|gc| gc.card_index == card_index && !gc.played)
             .ok_or(GameServiceError::CardNotFound)?;
 
@@ -186,7 +205,9 @@ impl GameService {
         let _current_winning_player_position = game.current_winning_player_position;
 
         // 5. Validate the card (uses self.db for card lookup — acceptable since it's read-only validation)
-        let valid = self.validate_card_play(game_id, player_id, card_index, current_winning_card).await?;
+        let valid = self
+            .validate_card_play(game_id, player_id, card_index, current_winning_card)
+            .await?;
         if !valid {
             txn.rollback().await.ok();
             return Err(GameServiceError::InvalidCard);
@@ -197,8 +218,9 @@ impl GameService {
         card_active.played = ActiveValue::Set(true);
         card_active.played_at = ActiveValue::Set(Some(Utc::now()));
         card_active.round = ActiveValue::Set(Some(game.roll));
-        card_active.update(&txn).await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+        card_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
 
         // 6a. Compute updated current_winning_card and current_winning_player_position.
         //     The first card played in a round defines the leading suit (stored as current_winning_card).
@@ -234,19 +256,25 @@ impl GameService {
         } else {
             // Round not complete: just advance rank to next player
             let next_rank = next_player(current_rank, players.len());
-            info!("Card played by player {} (index {}), updating rank from {} to {}", player_id, card_index, current_rank, next_rank);
+            info!(
+                "Card played by player {} (index {}), updating rank from {} to {}",
+                player_id, card_index, current_rank, next_rank
+            );
             let mut game_active: game::ActiveModel = game::Entity::find_by_id(game_id)
                 .one(&txn)
                 .await
-                .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+                .map_err(|e| {
+                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                })?
                 .ok_or(GameServiceError::GameNotFound)?
                 .into();
             game_active.rank = ActiveValue::Set(Some(next_rank as i32));
             game_active.current_winning_card = ActiveValue::Set(new_winning_card);
             game_active.current_winning_player_position = ActiveValue::Set(new_winning_position);
             game_active.updated_at = ActiveValue::Set(Utc::now());
-            game_active.update(&txn).await
-                .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+            game_active.update(&txn).await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
         }
 
         // 8. If game ended, process payment INSIDE the transaction (atomic with game state)
@@ -257,8 +285,9 @@ impl GameService {
         }
 
         // 9. Commit transaction — all state changes (game, cards, credits) are atomic
-        txn.commit().await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+        txn.commit().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
 
         // === PHASE 2: Post-transaction operations (best-effort, non-critical) ===
 
@@ -273,28 +302,35 @@ impl GameService {
                 })?
         } else {
             let rank_after = next_player(current_rank, players.len());
-            players
-                .get(rank_after)
-                .map(|p| p.id)
-                .ok_or_else(|| {
-                    GameServiceError::Internal("No player at computed rank".to_string())
-                })?
+            players.get(rank_after).map(|p| p.id).ok_or_else(|| {
+                GameServiceError::Internal("No player at computed rank".to_string())
+            })?
         };
 
         // 11. Publish CardPlayed event AFTER commit succeeds, BEFORE round events.
-        self.publish_card_played(game_id, player_id, card_index, Some(next_player_id), correlation_id).await;
+        self.publish_card_played(
+            game_id,
+            player_id,
+            card_index,
+            Some(next_player_id),
+            correlation_id,
+        )
+        .await;
 
         // 11b. Publish TurnChanged event so frontend knows whose turn it is
         if !game_ended {
-            self.publish_turn_changed(game_id, next_player_id, correlation_id).await;
+            self.publish_turn_changed(game_id, next_player_id, correlation_id)
+                .await;
         }
 
         // 12. If round was evaluated, publish events
         if let Some(result) = round_result {
-            self.publish_round_completed(game_id, &result, &players, correlation_id).await;
+            self.publish_round_completed(game_id, &result, &players, correlation_id)
+                .await;
 
             if result.game_ended {
-                self.publish_game_finished(game_id, &result, correlation_id).await;
+                self.publish_game_finished(game_id, &result, correlation_id)
+                    .await;
             }
         }
 
@@ -303,7 +339,9 @@ impl GameService {
         let card = card_repo
             .list_by_player(player_id)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
             .into_iter()
             .find(|gc| gc.id == target_card.id)
             .ok_or(GameServiceError::Internal("Card disappeared".to_string()))?;
@@ -316,7 +354,6 @@ impl GameService {
         })
     }
 
-
     /// Check if all players have played a card in the given round.
     /// Uses the provided transaction connection to see uncommitted data.
     async fn is_round_complete_txn(
@@ -325,23 +362,27 @@ impl GameService {
         game_id: Uuid,
         round: i32,
     ) -> Result<bool, GameServiceError> {
-        use sea_orm::QueryFilter;
-        use sea_orm::ColumnTrait;
-        use crate::database::models::player;
         use crate::database::models::game_card;
+        use crate::database::models::player;
+        use sea_orm::ColumnTrait;
+        use sea_orm::QueryFilter;
 
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .all(txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
 
         for player_model in players {
             let cards = game_card::Entity::find()
                 .filter(game_card::Column::PlayerId.eq(player_model.id))
                 .all(txn)
                 .await
-                .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+                .map_err(|e| {
+                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                })?;
             let played_in_round = cards.iter().any(|c| c.played && c.round == Some(round));
             if !played_in_round {
                 return Ok(false);
@@ -365,10 +406,10 @@ impl GameService {
             round = round,
         );
         let _guard = span.enter();
-        use sea_orm::QueryFilter;
-        use sea_orm::ColumnTrait;
         use crate::database::models::game_card;
         use crate::database::models::player;
+        use sea_orm::ColumnTrait;
+        use sea_orm::QueryFilter;
 
         // Fetch played cards for this round (via txn)
         // Order by PlayedAt to correctly identify the chronologically first card
@@ -380,8 +421,14 @@ impl GameService {
             .order_by_asc(game_card::Column::PlayedAt)
             .all(txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
-        info!("evaluate_round_in_txn: found {} played cards for round {}", played_cards.len(), round);
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        info!(
+            "evaluate_round_in_txn: found {} played cards for round {}",
+            played_cards.len(),
+            round
+        );
         if played_cards.is_empty() {
             return Err(GameServiceError::RoundNotComplete);
         }
@@ -392,16 +439,24 @@ impl GameService {
             .order_by_asc(player::Column::Position)
             .all(txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
         let player_positions: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
         // Convert to PlayedCard structures
         let mut plays = Vec::new();
         for card in &played_cards {
             if let Some(player_id) = card.player_id {
-                let position = player_positions.iter().position(|&id| id == player_id)
-                    .ok_or_else(|| GameServiceError::Internal("Player not found in game".to_string()))?;
-                let Ok(index) = u8::try_from(card.card_index) else { continue; };
+                let position = player_positions
+                    .iter()
+                    .position(|&id| id == player_id)
+                    .ok_or_else(|| {
+                        GameServiceError::Internal("Player not found in game".to_string())
+                    })?;
+                let Ok(index) = u8::try_from(card.card_index) else {
+                    continue;
+                };
                 if let Some(card_obj) = Card::new(index) {
                     plays.push(PlayedCard {
                         player_position: position,
@@ -415,17 +470,26 @@ impl GameService {
         // The first player (previous round's winner, or randomly chosen for round 1)
         // determines the leading suit by playing any card they choose.
         // Subsequent players must follow that suit if they have a matching card.
-        let first_play = plays.first()
+        let first_play = plays
+            .first()
             .ok_or_else(|| GameServiceError::Internal("No plays in round".to_string()))?;
         let leading_card = Some(first_play.card);
         let leading_player_position = Some(first_play.player_position);
 
         // Log the plays and the leading card
         for (index, value) in plays.iter().map(|p| (p.player_position, p.card)) {
-            info!(" played in round {}: Index: {}, Value: {}", round, index, value.index);
+            info!(
+                " played in round {}: Index: {}, Value: {}",
+                round, index, value.index
+            );
         }
         if let Some(card) = leading_card {
-            info!(" leading card for round {}: index {} (suit {})", round, card.index, card.index / 8);
+            info!(
+                " leading card for round {}: index {} (suit {})",
+                round,
+                card.index,
+                card.index / 8
+            );
         } else {
             info!(" no leading card for round {} (first round)", round);
         }
@@ -443,13 +507,18 @@ impl GameService {
 
         // Update game: winner_id, rank = winner position, roll += 1 (via txn)
         let new_roll = round + 1;
-        info!("Round {} evaluated, winner is player {}, updating round to {}", round, winner_id, new_roll);
+        info!(
+            "Round {} evaluated, winner is player {}, updating round to {}",
+            round, winner_id, new_roll
+        );
 
         // Fetch current game model to get the current status
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
             .ok_or(GameServiceError::GameNotFound)?;
 
         // Determine if game ends (all rounds played)
@@ -478,8 +547,9 @@ impl GameService {
         if game_ends {
             game_active.status = ActiveValue::Set(final_status);
         }
-        game_active.update(txn).await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+        game_active.update(txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
 
         Ok(RoundEvaluationResult {
             round,
@@ -515,7 +585,12 @@ impl GameService {
     }
 
     /// Publish a TurnChanged event to Redis so the frontend knows whose turn it is.
-    async fn publish_turn_changed(&self, game_id: Uuid, current_turn: Uuid, correlation_id: Option<Uuid>) {
+    async fn publish_turn_changed(
+        &self,
+        game_id: Uuid,
+        current_turn: Uuid,
+        correlation_id: Option<Uuid>,
+    ) {
         if let Some(mut redis_client) = self.redis_client.clone() {
             let event = GameEvent::TurnChanged {
                 game_id,
@@ -596,7 +671,9 @@ impl GameService {
         correlation_id: Option<Uuid>,
     ) {
         if let Some(mut redis_client) = self.redis_client.clone() {
-            let winner_name = result.players.iter()
+            let winner_name = result
+                .players
+                .iter()
                 .find(|p| p.id == result.winner_id)
                 .map(|p| p.name.clone());
 
@@ -610,7 +687,7 @@ impl GameService {
                     GameStatus::DoubleKora => "doubleKora".to_string(),
                     _ => "finished".to_string(),
                 },
-                final_score: None, // TODO: Calculate final score
+                final_score: None,           // TODO: Calculate final score
                 rounds_played: result.round, // round is the old round number, which equals rounds played
                 correlation_id,
             };
@@ -632,7 +709,9 @@ impl GameService {
         let players = &result.players;
         let total_players = players.len();
         let winner_id = result.winner_id;
-        let winner_position = players.iter().position(|p| p.id == winner_id)
+        let winner_position = players
+            .iter()
+            .position(|p| p.id == winner_id)
             .ok_or_else(|| GameServiceError::Internal("Winner not in player list".to_string()))?;
 
         // Determine bet multiplier based on status
@@ -646,7 +725,9 @@ impl GameService {
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
             .await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
             .ok_or(GameServiceError::GameNotFound)?;
         let bet = game_model.bet * bet_multiplier;
 
@@ -657,8 +738,9 @@ impl GameService {
         for (idx, player) in players.iter().enumerate() {
             let mut player_active: player::ActiveModel = player.clone().into();
             player_active.credits = ActiveValue::Set(player.credits + credits[idx]);
-            player_active.update(txn).await
-                .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+            player_active.update(txn).await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
         }
 
         Ok(())
@@ -670,17 +752,29 @@ impl GameService {
     pub async fn process_payment(&self, game_id: Uuid) -> Result<(), GameServiceError> {
         let game_repo = GameRepository::new(self.db.clone());
         let player_repo = PlayerRepository::new(self.db.clone());
-        let game = game_repo.find_by_id(game_id).await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+        let game = game_repo
+            .find_by_id(game_id)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
             .ok_or(GameServiceError::GameNotFound)?;
-        if game.status != GameStatus::Finished && game.status != GameStatus::Kora && game.status != GameStatus::DoubleKora {
+        if game.status != GameStatus::Finished
+            && game.status != GameStatus::Kora
+            && game.status != GameStatus::DoubleKora
+        {
             return Ok(());
         }
-        let players = player_repo.list_by_game(game_id).await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+        let players = player_repo.list_by_game(game_id).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
         let total_players = players.len();
-        let winner_id = game.winner_id.ok_or_else(|| GameServiceError::Internal("No winner set".to_string()))?;
-        let winner_position = players.iter().position(|p| p.id == winner_id)
+        let winner_id = game
+            .winner_id
+            .ok_or_else(|| GameServiceError::Internal("No winner set".to_string()))?;
+        let winner_position = players
+            .iter()
+            .position(|p| p.id == winner_id)
             .ok_or_else(|| GameServiceError::Internal("Winner not in player list".to_string()))?;
 
         // Determine bet multiplier based on status
@@ -698,8 +792,9 @@ impl GameService {
         for (idx, player) in players.iter().enumerate() {
             let mut player_active: player::ActiveModel = player.clone().into();
             player_active.credits = ActiveValue::Set(player.credits + credits[idx]);
-            player_active.update(&self.db).await
-                .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+            player_active.update(&self.db).await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
         }
 
         Ok(())
@@ -709,15 +804,24 @@ impl GameService {
     pub async fn next_player(&self, game_id: Uuid) -> Result<Uuid, GameServiceError> {
         let game_repo = GameRepository::new(self.db.clone());
         let player_repo = PlayerRepository::new(self.db.clone());
-        let game = game_repo.find_by_id(game_id).await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+        let game = game_repo
+            .find_by_id(game_id)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
             .ok_or(GameServiceError::GameNotFound)?;
-        let players = player_repo.list_by_game(game_id).await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+        let players = player_repo.list_by_game(game_id).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
         let current_rank = game.rank.unwrap_or(0) as usize;
-        let player_id = players.get(current_rank)
-            .map(|p| p.id)
-            .ok_or(GameServiceError::Internal("Player index out of bounds".to_string()))?;
+        let player_id =
+            players
+                .get(current_rank)
+                .map(|p| p.id)
+                .ok_or(GameServiceError::Internal(
+                    "Player index out of bounds".to_string(),
+                ))?;
         Ok(player_id)
     }
 
@@ -742,47 +846,57 @@ impl GameService {
         let card_repo = GameCardRepository::new(self.db.clone());
 
         // Fetch game first to get current round
-        let game = game_repo.find_by_id(game_id).await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?
+        let game = game_repo
+            .find_by_id(game_id)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
             .ok_or(GameServiceError::GameNotFound)?;
-        
+
         // Fetch other data in parallel
         let players_future = player_repo.list_by_game(game_id);
         let bot_cards_future = card_repo.list_by_player(player_id);
-        
+
         // Determine current round - in Jambo, each game has 5 rounds (rolls)
         // The roll field tracks which round we're in (1-5)
         let current_round = game.roll;
-        
+
         let round_cards_future = card_repo.list_by_game_and_round(game_id, current_round);
 
-        let players = players_future.await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
-        
-        let bot_cards = bot_cards_future.await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
-        
-        let round_cards = round_cards_future.await
-            .map_err(|e| GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>))?;
+        let players = players_future.await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let bot_cards = bot_cards_future.await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let round_cards = round_cards_future.await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
 
         // Convert player positions from game.player_positions JSON mapping
         let player_positions: std::collections::HashMap<Uuid, i32> = {
             // player_positions is Value, not Option<Value>
             if game.player_positions.is_null() {
                 // Fallback to player.position field if JSON mapping not available
-                players.iter()
-                    .map(|p| (p.id, p.position))
-                    .collect()
+                players.iter().map(|p| (p.id, p.position)).collect()
             } else {
-                serde_json::from_value(game.player_positions.clone())
-                    .map_err(|e| GameServiceError::Internal(format!("Failed to parse player positions: {}", e)))?
+                serde_json::from_value(game.player_positions.clone()).map_err(|e| {
+                    GameServiceError::Internal(format!("Failed to parse player positions: {}", e))
+                })?
             }
         };
 
         // Build PlayerInfo list
-        let player_info_list: Vec<PlayerInfo> = players.iter()
+        let player_info_list: Vec<PlayerInfo> = players
+            .iter()
             .map(|player| {
-                let position = player_positions.get(&player.id).copied().unwrap_or(player.position);
+                let position = player_positions
+                    .get(&player.id)
+                    .copied()
+                    .unwrap_or(player.position);
                 let player_type_str = match player.player_type {
                     crate::database::models::PlayerType::Human => "human".to_string(),
                     crate::database::models::PlayerType::Bot => "bot".to_string(),
@@ -798,13 +912,15 @@ impl GameService {
             .collect();
 
         // Get bot's unplayed cards
-        let bot_hand_cards: Vec<i32> = bot_cards.iter()
+        let bot_hand_cards: Vec<i32> = bot_cards
+            .iter()
             .filter(|gc| !gc.played)
             .map(|gc| gc.card_index)
             .collect();
 
         // Get played cards in current round
-        let played_cards_this_round: Vec<i32> = round_cards.iter()
+        let played_cards_this_round: Vec<i32> = round_cards
+            .iter()
             .filter(|gc| gc.played)
             .map(|gc| gc.card_index)
             .collect();
@@ -822,8 +938,8 @@ impl GameService {
             game_id,
             player_id,
             correlation_id,
-            current_round,  // Use roll as current_round
-            current_round,  // Use roll as current_roll (same in Jambo)
+            current_round, // Use roll as current_round
+            current_round, // Use roll as current_roll (same in Jambo)
             format!("{:?}", game.status),
             current_player_turn,
             played_cards_this_round,

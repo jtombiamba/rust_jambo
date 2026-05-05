@@ -12,10 +12,10 @@ mod messaging;
 mod observability;
 mod websocket;
 
-use config::Config;
 use api::anonymous::get_anonymous_stats;
+use api::game::{get_my_cards, list_games, play_card, start_game};
 use api::quickie::create_quick_game;
-use api::game::{list_games, get_my_cards, play_card, start_game};
+use config::Config;
 use game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
 use messaging::{RabbitMQClient, RedisClient};
 use observability::middleware::CorrelationIdMiddleware;
@@ -89,26 +89,30 @@ async fn main() -> std::io::Result<()> {
         Some(url) => match RedisClient::new(&url).await {
             Ok(client) => Some(client),
             Err(e) => {
-                tracing::warn!("Failed to connect to Redis: {}, proceeding without Redis", e);
+                tracing::warn!(
+                    "Failed to connect to Redis: {}, proceeding without Redis",
+                    e
+                );
                 None
             }
         },
         None => None,
     };
 
-    let rabbitmq_client = match messaging::connect_to_rabbitmq_with_retry(&config.rabbitmq_url, 10).await {
-        Ok(client) => {
-            tracing::info!("Successfully connected to RabbitMQ");
-            Some(client)
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Failed to connect to RabbitMQ after retries: {}, proceeding without RabbitMQ",
-                e
-            );
-            None
-        }
-    };
+    let rabbitmq_client =
+        match messaging::connect_to_rabbitmq_with_retry(&config.rabbitmq_url, 10).await {
+            Ok(client) => {
+                tracing::info!("Successfully connected to RabbitMQ");
+                Some(client)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to connect to RabbitMQ after retries: {}, proceeding without RabbitMQ",
+                    e
+                );
+                None
+            }
+        };
 
     let orchestrator: Arc<dyn GameOrchestratorTrait> = Arc::new(GameOrchestrator::new(
         db_connection.clone(),
@@ -126,10 +130,7 @@ async fn main() -> std::io::Result<()> {
     }
     use std::time::Duration;
     ws_manager_instance
-        .start_connection_cleanup_task(
-            Duration::from_secs(5 * 60),
-            Duration::from_secs(10 * 60),
-        )
+        .start_connection_cleanup_task(Duration::from_secs(5 * 60), Duration::from_secs(10 * 60))
         .await;
     let ws_manager = web::Data::new(ws_manager_instance);
 
@@ -168,12 +169,8 @@ mod tests {
 
     #[actix_web::test]
     async fn test_health_check() {
-        let app = test::init_service(
-            App::new().service(health_check),
-        ).await;
-        let req = test::TestRequest::get()
-            .uri("/health")
-            .to_request();
+        let app = test::init_service(App::new().service(health_check)).await;
+        let req = test::TestRequest::get().uri("/health").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
         let body = test::read_body(resp).await;
@@ -186,10 +183,9 @@ mod tests {
             App::new()
                 .app_data(web::Data::new(None::<crate::messaging::RabbitMQClient>))
                 .service(metrics),
-        ).await;
-        let req = test::TestRequest::get()
-            .uri("/metrics")
-            .to_request();
+        )
+        .await;
+        let req = test::TestRequest::get().uri("/metrics").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
         let body: serde_json::Value = test::read_body_json(resp).await;

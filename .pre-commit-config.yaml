@@ -1,0 +1,70 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+
+repos:
+  # ── General file checks ────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      - id: end-of-file-fixer
+        name: Ensure files end with a newline
+      - id: check-yaml
+        name: Check YAML syntax
+        exclude: ^infra/
+      - id: check-added-large-files
+        name: Check for large files
+        args: ["--maxkb=500"]
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+      - id: check-toml
+        name: Check TOML syntax
+      - id: check-json
+        name: Check JSON syntax
+        exclude: >
+          (?x)^(
+            frontend/package-lock\.json|
+            frontend/tsconfig\.json
+          )$
+
+  # ── Backend: Rust ─────────────────────────────────────────────────
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        name: cargo fmt
+        args: ["--manifest-path", "backend/Cargo.toml", "--", "--check"]
+        files: ^backend/
+      - id: clippy
+        name: cargo clippy
+        # Deny all warnings except dead_code (pre-existing, intentional)
+        args:
+          - "--manifest-path"
+          - "backend/Cargo.toml"
+          - "--all-targets"
+          - "--"
+          - "-D"
+          - "warnings"
+          - "-A"
+          - "dead_code"
+        files: ^backend/
+        verbose: true
+
+  # ── Frontend: TypeScript / React (local hooks) ────────────────────
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint frontend
+        entry: frontend/node_modules/.bin/eslint
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        types_or: [javascript, jsx, ts, tsx]
+        args:
+          - --config
+          - frontend/.eslintrc.cjs
+          - --ext
+          - .ts,.tsx
+          - --fix
+          - --max-warnings
+          - "0"

@@ -12,10 +12,7 @@ impl MigrationTrait for Migration {
             .create_type(
                 Type::create()
                     .as_enum(PlayerTypeEnum::Enum)
-                    .values(vec![
-                        PlayerTypeEnum::Human,
-                        PlayerTypeEnum::Bot,
-                    ])
+                    .values(vec![PlayerTypeEnum::Human, PlayerTypeEnum::Bot])
                     .to_owned(),
             )
             .await?;
@@ -207,16 +204,36 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Drop indexes
         manager
-            .drop_index(Index::drop().name("idx_rounds_game_round").table(Rounds::Table).to_owned())
+            .drop_index(
+                Index::drop()
+                    .name("idx_rounds_game_round")
+                    .table(Rounds::Table)
+                    .to_owned(),
+            )
             .await?;
         manager
-            .drop_index(Index::drop().name("idx_game_cards_player_id").table(GameCards::Table).to_owned())
+            .drop_index(
+                Index::drop()
+                    .name("idx_game_cards_player_id")
+                    .table(GameCards::Table)
+                    .to_owned(),
+            )
             .await?;
         manager
-            .drop_index(Index::drop().name("idx_game_cards_game_round").table(GameCards::Table).to_owned())
+            .drop_index(
+                Index::drop()
+                    .name("idx_game_cards_game_round")
+                    .table(GameCards::Table)
+                    .to_owned(),
+            )
             .await?;
         manager
-            .drop_index(Index::drop().name("idx_players_game_id").table(Players::Table).to_owned())
+            .drop_index(
+                Index::drop()
+                    .name("idx_players_game_id")
+                    .table(Players::Table)
+                    .to_owned(),
+            )
             .await?;
 
         // Drop tables in reverse order (respecting FK constraints)
@@ -246,10 +263,20 @@ impl MigrationTrait for Migration {
 
         // Drop custom enum types
         manager
-            .drop_type(Type::drop().if_exists().name(GameStatusEnum::Enum).to_owned())
+            .drop_type(
+                Type::drop()
+                    .if_exists()
+                    .name(GameStatusEnum::Enum)
+                    .to_owned(),
+            )
             .await?;
         manager
-            .drop_type(Type::drop().if_exists().name(PlayerTypeEnum::Enum).to_owned())
+            .drop_type(
+                Type::drop()
+                    .if_exists()
+                    .name(PlayerTypeEnum::Enum)
+                    .to_owned(),
+            )
             .await?;
 
         Ok(())

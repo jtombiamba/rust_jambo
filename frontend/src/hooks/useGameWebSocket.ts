@@ -34,7 +34,7 @@ export function useGameWebSocket(gameId: string | null) {
           // Clear round winner when new card is played (new round starts)
           clearRoundWinner();
           break;
-        case 'round_completed':
+        case 'round_completed': {
           // Clear deck slots after 1 second delay for human eye to read result
           if (deckClearTimerRef.current) {
             clearTimeout(deckClearTimerRef.current);
@@ -42,7 +42,7 @@ export function useGameWebSocket(gameId: string | null) {
           deckClearTimerRef.current = setTimeout(() => {
             clearDeckSlots();
           }, 1000);
-          
+
           // Set round winner for visualization
           const winType = (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal';
           setRoundWinner({
@@ -50,7 +50,7 @@ export function useGameWebSocket(gameId: string | null) {
             position: event.winner_position,
             winType,
           });
-          
+
           // Auto-clear winner after 3 seconds
           if (roundWinnerTimerRef.current) {
             clearTimeout(roundWinnerTimerRef.current);
@@ -59,9 +59,10 @@ export function useGameWebSocket(gameId: string | null) {
             clearRoundWinner();
           }, 3000);
           break;
-        case 'game_finished':
+        }
+        case 'game_finished': {
           setGameStatus(event.status);
-          
+
           // Set game over state
           const winner = event.winner_id ? players.find(p => p.id === event.winner_id) : null;
           const gameResult: GameResult = {
@@ -69,7 +70,7 @@ export function useGameWebSocket(gameId: string | null) {
             finalScore: event.final_score,
             roundsPlayed: event.rounds_played,
           };
-          
+
           setGameOver({
             isGameOver: true,
             winner: winner || null,
@@ -83,15 +84,19 @@ export function useGameWebSocket(gameId: string | null) {
             updateStatsAfterGame(bet, won, event.status as 'finished' | 'kora' | 'doubleKora');
           }
           break;
-        case 'turn_changed':
+        }
+        case 'turn_changed': {
           // Find player position by ID
           const player = players.find((p) => p.id === event.current_turn);
           if (player) {
             setCurrentTurn(player.position);
           }
           break;
-        default:
-          console.warn('Unhandled game event type:', (event as any).type);
+        }
+        default: {
+          const _exhaustive: never = event;
+          console.warn('Unhandled game event type:', (_exhaustive as { type: string }).type);
+        }
       }
     },
     onError: (error) => {

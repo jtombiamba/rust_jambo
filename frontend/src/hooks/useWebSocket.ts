@@ -27,7 +27,7 @@ interface UseWebSocketOptions {
 // Global WebSocket manager with pub/sub pattern
 class WebSocketManager {
   private static instances = new Map<string, WebSocketManager>();
-  
+
   private ws: WebSocket | null = null;
   private subscribers: Set<(event: GameEvent) => void> = new Set();
   private errorSubscribers: Set<(error: Event) => void> = new Set();
@@ -37,22 +37,22 @@ class WebSocketManager {
   private isConnecting = false;
   private usageCount = 0;
   private gameId: string;
-  
+
   private constructor(gameId: string) {
     this.gameId = gameId;
   }
-  
+
   static getInstance(gameId: string): WebSocketManager {
     if (!gameId) {
       throw new Error('gameId is required');
     }
-    
+
     if (!this.instances.has(gameId)) {
       this.instances.set(gameId, new WebSocketManager(gameId));
     }
     return this.instances.get(gameId)!;
   }
-  
+
   static cleanupInstance(gameId: string): void {
     const instance = this.instances.get(gameId);
     if (instance) {
@@ -60,7 +60,7 @@ class WebSocketManager {
       this.instances.delete(gameId);
     }
   }
-  
+
   subscribe(
     onMessage?: (event: GameEvent) => void,
     onError?: (error: Event) => void,
@@ -71,24 +71,24 @@ class WebSocketManager {
       clearTimeout(this.cleanupTimer);
       this.cleanupTimer = null;
     }
-    
+
     if (onMessage) this.subscribers.add(onMessage);
     if (onError) this.errorSubscribers.add(onError);
     if (onClose) this.closeSubscribers.add(onClose);
-    
+
     this.usageCount++;
     log(`New subscriber for game ${this.gameId}, usage count: ${this.usageCount}`);
     this.connect();
-    
+
     // Return unsubscribe function
     return () => {
       if (onMessage) this.subscribers.delete(onMessage);
       if (onError) this.errorSubscribers.delete(onError);
       if (onClose) this.closeSubscribers.delete(onClose);
-      
+
       this.usageCount--;
       log(`Subscriber removed for game ${this.gameId}, usage count: ${this.usageCount}`);
-      
+
       if (this.usageCount <= 0) {
         // Schedule cleanup after a delay instead of immediate cleanup
         // This handles React StrictMode mount/unmount cycles
@@ -102,7 +102,7 @@ class WebSocketManager {
       }
     };
   }
-  
+
   send(message: OutgoingMessage): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       const json = JSON.stringify(message);
@@ -112,13 +112,13 @@ class WebSocketManager {
       console.warn('WebSocket not connected, cannot send message');
     }
   }
-  
+
   private connect(): void {
     if (this.isConnecting) {
       log('Already connecting to game', this.gameId);
       return;
     }
-    
+
     // Check if we have a usable WebSocket
     if (this.ws) {
       const state = this.ws.readyState;
@@ -130,24 +130,24 @@ class WebSocketManager {
       log('WebSocket exists but in state', state, 'for game', this.gameId, 'creating new connection');
       this.ws = null;
     }
-    
+
     this.isConnecting = true;
     log('Creating WebSocket connection to game', this.gameId);
-    
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const url = `${protocol}//${host}/ws/${this.gameId}`;
-    
+
     const ws = new WebSocket(url);
     this.ws = ws;
-    
+
     ws.onopen = () => {
       this.isConnecting = false;
       log(`WebSocket connected to game ${this.gameId}`);
       // Send join message
       this.send({ type: 'join_game', game_id: this.gameId });
     };
-    
+
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -161,21 +161,21 @@ class WebSocketManager {
         console.error('Failed to parse WebSocket message:', err);
       }
     };
-    
+
     ws.onerror = (error) => {
       this.isConnecting = false;
       console.error('WebSocket error for game', this.gameId, error);
       this.errorSubscribers.forEach(callback => callback(error));
     };
-    
+
     ws.onclose = (event) => {
       this.isConnecting = false;
       log(`WebSocket closed for game ${this.gameId}`, event.code, event.reason);
       this.closeSubscribers.forEach(callback => callback(event));
-      
+
       // Clear the WebSocket reference
       this.ws = null;
-      
+
       // Schedule reconnect if there are still subscribers
       if (this.subscribers.size > 0) {
         const reconnectInterval = 5000; // Minimum 5 seconds
@@ -187,26 +187,26 @@ class WebSocketManager {
       }
     };
   }
-  
+
   private close(): void {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    
+
     if (this.cleanupTimer) {
       clearTimeout(this.cleanupTimer);
       this.cleanupTimer = null;
     }
-    
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
-    
+
     this.isConnecting = false;
   }
-  
+
   getConnectionStatus(): 'connecting' | 'connected' | 'disconnected' {
     if (this.isConnecting) return 'connecting';
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return 'connected';
@@ -238,14 +238,14 @@ export function useWebSocket({
   const [isConnected, setIsConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
-  
+
   // Convert connection status to boolean
   const updateConnectionStatus = useCallback(() => {
     if (!gameId) {
       setIsConnected(false);
       return;
     }
-    
+
     try {
       const manager = WebSocketManager.getInstance(gameId);
       const status = manager.getConnectionStatus();
@@ -254,13 +254,13 @@ export function useWebSocket({
       setIsConnected(false);
     }
   }, [gameId]);
-  
+
   const send = useCallback((message: OutgoingMessage) => {
     if (!gameId) {
       console.warn('Cannot send message without gameId');
       return;
     }
-    
+
     try {
       const manager = WebSocketManager.getInstance(gameId);
       manager.send(message);
@@ -268,27 +268,27 @@ export function useWebSocket({
       console.error('Failed to send WebSocket message:', err);
     }
   }, [gameId]);
-  
+
   useEffect(() => {
     if (!gameId) {
       return;
     }
-    
+
     // Create wrapped callbacks that also update state
     const wrappedOnMessage = onMessage ? (event: GameEvent) => {
       onMessage(event);
     } : undefined;
-    
+
     const wrappedOnError = onError ? (error: Event) => {
       setLastError('WebSocket connection error');
       onError(error);
     } : undefined;
-    
+
     const wrappedOnClose = onClose ? (event: CloseEvent) => {
       setIsConnected(false);
       onClose(event);
     } : undefined;
-    
+
     // Subscribe to the WebSocket manager
     try {
       const manager = WebSocketManager.getInstance(gameId);
@@ -297,13 +297,13 @@ export function useWebSocket({
         wrappedOnError,
         wrappedOnClose
       );
-      
+
       // Initial status update
       updateConnectionStatus();
-      
+
       // Set up interval to check connection status
       const statusInterval = setInterval(updateConnectionStatus, 1000);
-      
+
       return () => {
         clearInterval(statusInterval);
         if (unsubscribeRef.current) {
@@ -316,11 +316,11 @@ export function useWebSocket({
       setLastError('Invalid gameId');
     }
   }, [gameId, onMessage, onError, onClose, updateConnectionStatus]);
-  
+
   // Expose a manual reconnect function
   const reconnect = useCallback(() => {
     if (!gameId) return;
-    
+
     try {
       WebSocketManager.cleanupInstance(gameId);
       // Get new instance - this will trigger reconnection
@@ -330,7 +330,7 @@ export function useWebSocket({
       console.error('Failed to reconnect:', err);
     }
   }, [gameId]);
-  
+
   return { isConnected, lastError, send, reconnect };
 }
 

@@ -1,10 +1,13 @@
 use async_trait::async_trait;
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, ColumnTrait, Set, ActiveValue, ActiveModelTrait, DbErr};
-use uuid::Uuid;
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait,
+    QueryFilter, QueryOrder, Set,
+};
 use serde_json::json;
+use uuid::Uuid;
 
-use crate::database::models::{game, Game, Player, GameCard, PlayerType, GameStatus};
-use crate::database::traits::{GameRepoTrait, PlayerRepoTrait, GameCardRepoTrait};
+use crate::database::models::{game, Game, GameCard, GameStatus, Player, PlayerType};
+use crate::database::traits::{GameCardRepoTrait, GameRepoTrait, PlayerRepoTrait};
 
 pub struct GameRepository {
     connection: DatabaseConnection,
@@ -34,7 +37,9 @@ impl GameRepository {
             current_winning_card: ActiveValue::NotSet,
             current_winning_player_position: ActiveValue::NotSet,
         };
-        let insert_result = game::Entity::insert(game_active).exec(&self.connection).await?;
+        let insert_result = game::Entity::insert(game_active)
+            .exec(&self.connection)
+            .await?;
         let inserted_id = insert_result.last_insert_id;
         let game = game::Entity::find_by_id(inserted_id)
             .one(&self.connection)
@@ -44,9 +49,7 @@ impl GameRepository {
     }
 
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
-        game::Entity::find_by_id(id)
-            .one(&self.connection)
-            .await
+        game::Entity::find_by_id(id).one(&self.connection).await
     }
 
     pub async fn update_rank(&self, id: Uuid, rank: Option<i32>) -> Result<Game, DbErr> {
@@ -82,7 +85,12 @@ impl GameRepository {
         active.update(&self.connection).await
     }
 
-    pub async fn update_player_positions(&self, id: Uuid, player_id: Uuid, position: i32) -> Result<Game, DbErr> {
+    pub async fn update_player_positions(
+        &self,
+        id: Uuid,
+        player_id: Uuid,
+        position: i32,
+    ) -> Result<Game, DbErr> {
         let game_model = game::Entity::find_by_id(id)
             .one(&self.connection)
             .await?
@@ -164,7 +172,9 @@ impl PlayerRepository {
             credits: Set(500),
             created_at: Set(now),
         };
-        let insert_result = player::Entity::insert(player_active).exec(&self.connection).await?;
+        let insert_result = player::Entity::insert(player_active)
+            .exec(&self.connection)
+            .await?;
         let inserted_id = insert_result.last_insert_id;
         let player = player::Entity::find_by_id(inserted_id)
             .one(&self.connection)
@@ -230,7 +240,9 @@ impl GameCardRepository {
             round: Set(round),
             created_at: Set(now),
         };
-        let insert_result = game_card::Entity::insert(card_active).exec(&self.connection).await?;
+        let insert_result = game_card::Entity::insert(card_active)
+            .exec(&self.connection)
+            .await?;
         let inserted_id = insert_result.last_insert_id;
         let card = game_card::Entity::find_by_id(inserted_id)
             .one(&self.connection)
@@ -272,7 +284,11 @@ impl GameCardRepository {
             .await
     }
 
-    pub async fn list_by_game_and_round(&self, game_id: Uuid, round: i32) -> Result<Vec<GameCard>, DbErr> {
+    pub async fn list_by_game_and_round(
+        &self,
+        game_id: Uuid,
+        round: i32,
+    ) -> Result<Vec<GameCard>, DbErr> {
         use crate::database::models::game_card;
         game_card::Entity::find()
             .filter(game_card::Column::GameId.eq(game_id))
@@ -318,7 +334,11 @@ impl GameCardRepoTrait for GameCardRepository {
         self.list_by_player(player_id).await
     }
 
-    async fn list_by_game_and_round(&self, game_id: Uuid, round: i32) -> Result<Vec<GameCard>, DbErr> {
+    async fn list_by_game_and_round(
+        &self,
+        game_id: Uuid,
+        round: i32,
+    ) -> Result<Vec<GameCard>, DbErr> {
         self.list_by_game_and_round(game_id, round).await
     }
 }
