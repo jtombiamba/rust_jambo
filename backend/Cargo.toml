@@ -34,6 +34,11 @@ dotenv = "0.15"
 config = "0.13"
 chrono = { version = "0.4", features = ["serde"] }
 num_cpus = "1.16"
+argon2 = "0.5"
+jsonwebtoken = "9"
+cookie = "0.18"
+sha2 = "0.10"
+hex = "0.4"
 
 [[bin]]
 name = "ai-worker"

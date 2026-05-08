@@ -1,4 +1,8 @@
 pub mod anonymous;
+pub mod auth;
+pub mod dashboard;
 pub mod dto;
 pub mod game;
+pub mod middleware;
 pub mod quickie;
+pub mod services;

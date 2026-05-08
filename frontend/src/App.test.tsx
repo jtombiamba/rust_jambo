@@ -1,17 +1,73 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 
+vi.mock('./stores/useAuthStore', () => ({
+  useAuthStore: vi.fn(() => ({
+    isAuthenticated: false,
+    user: null,
+    authModalOpen: false,
+    authView: 'choice',
+    authError: null,
+    authLoading: false,
+    openAuthModal: vi.fn(),
+    closeAuthModal: vi.fn(),
+    setAuthView: vi.fn(),
+    checkAuth: vi.fn(),
+    register: vi.fn(),
+    login: vi.fn(),
+    forgotPassword: vi.fn(),
+    logout: vi.fn(),
+  })),
+}));
+
+vi.mock('axios', () => ({
+  default: {
+    get: vi.fn().mockResolvedValue({
+      data: {
+        games_allowed: 10,
+        games_played: 0,
+        total_wins: 0,
+        credits: 500,
+      },
+    }),
+    post: vi.fn(),
+  },
+}));
+
 describe('App', () => {
-  it('renders the dashboard heading', () => {
-    render(<App />);
-    const heading = screen.getByRole('heading', { name: /FapFap Card Game/i });
-    expect(heading).toBeInTheDocument();
+  beforeEach(() => {
+    localStorage.clear();
   });
 
   it('shows loading state initially', () => {
     render(<App />);
     const loading = screen.getByText(/Loading/i);
     expect(loading).toBeInTheDocument();
+  });
+
+  it('renders the dashboard heading after loading', async () => {
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText(/FapFap Card Game/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders the Rules button', async () => {
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText('Rules')).toBeInTheDocument();
+    });
+  });
+
+  it('opens Rules modal when clicking Rules button', async () => {
+    render(<App />);
+    await waitFor(() => {
+      expect(screen.getByText('Rules')).toBeInTheDocument();
+    });
+    screen.getByText('Rules').click();
+    await waitFor(() => {
+      expect(screen.getByText('How to Play Jambo')).toBeInTheDocument();
+    });
   });
 });

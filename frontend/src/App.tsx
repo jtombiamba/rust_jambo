@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react'
 import axios from 'axios'
 import './App.css'
 import GameTable from './components/GameTable'
+import AuthModal from './components/AuthModal'
+import GameRules from './components/GameRules'
+import UserDashboard from './components/UserDashboard'
 import { useGameStore } from './stores/useGameStore'
+import { useAuthStore } from './stores/useAuthStore'
 import { useGameWebSocket } from './hooks/useGameWebSocket'
 import { getStoredStats, saveStats, AnonymousStats } from './utils/storage'
 
@@ -28,22 +32,30 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [cardError, setCardError] = useState<string | null>(null)
   const [playingCard, setPlayingCard] = useState<number | null>(null)
+  const [rulesOpen, setRulesOpen] = useState(false)
   const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver } = useGameStore()
+  const { isAuthenticated, openAuthModal, checkAuth } = useAuthStore()
   useGameWebSocket(gameId)
 
   useEffect(() => {
+    checkAuth()
+  }, [checkAuth])
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      // Don't auto-navigate to active game — let the dashboard handle resume
+      setLoading(false)
+      return
+    }
     const storedStats = getStoredStats()
     if (storedStats) {
-      // console.log('[DEBUG] Loaded stats from localStorage:', storedStats)
       setStats(storedStats)
       setLoading(false)
       return
     }
     axios.get('/api/anonymous')
       .then(response => {
-        // console.log('[DEBUG] Raw API response for /api/anonymous:', JSON.stringify(response.data))
         const data = response.data as AnonymousStats
-        // console.log('[DEBUG] Parsed stats (snake_case interface):', data)
         setStats(data)
         saveStats(data)
         setLoading(false)
@@ -52,21 +64,14 @@ function App() {
         console.error('Failed to fetch stats', error)
         setLoading(false)
       })
-  }, [])
+  }, [isAuthenticated])
 
   const startGame = () => {
     setStartingGame(true)
     setError(null)
-    axios.post<QuickGameResponse>('/api/quickie')
+    const endpoint = isAuthenticated ? '/api/me/games' : '/api/quickie'
+    axios.post<QuickGameResponse>(endpoint)
       .then(response => {
-        // console.log('[DEBUG] Raw quickie response:', JSON.stringify(response.data))
-        // console.log('[DEBUG] Accessing snake_case fields:', {
-        //   game_id: response.data.game_id,
-        //   current_turn: response.data.current_turn,
-        //   players: response.data.players,
-        //   status: response.data.status,
-        //   bet: response.data.bet,
-        // })
         setGameStore(response.data.game_id, response.data.players, response.data.status, response.data.current_turn, response.data.bet)
         setStartingGame(false)
       })
@@ -128,59 +133,91 @@ function App() {
     )
   }
 
-  return (
-    <div className="container mx-auto p-8">
-      <h1 className="text-3xl font-bold mb-6">FapFap Card Game</h1>
-      <div className="bg-gray-100 p-6 rounded-lg shadow mb-8">
-        <h2 className="text-xl font-semibold mb-4">Dashboard</h2>
-        <p className="mb-2">
-          You are not logged in. You are allowed {stats?.games_allowed} games.
-          Create an account to play more.
-        </p>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white p-4 rounded shadow">
-            <p className="text-lg">Games Played</p>
-            <p className="text-2xl font-bold">{stats?.games_played}</p>
-          </div>
-          <div className="bg-white p-4 rounded shadow">
-            <p className="text-lg">Total Wins</p>
-            <p className="text-2xl font-bold">{stats?.total_wins}</p>
-          </div>
-          <div className="bg-white p-4 rounded shadow">
-            <p className="text-lg">Credits</p>
-            <p className="text-2xl font-bold">{stats?.credits}</p>
-          </div>
-          <div className="bg-white p-4 rounded shadow">
-            <p className="text-lg">Remaining Games</p>
-            <p className="text-2xl font-bold">
-              {stats ? stats.games_allowed - stats.games_played : 0}
-            </p>
-          </div>
-        </div>
-        {stats && stats.games_played < 10 ? (
-          <button
-            className="mt-6 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            disabled={startingGame}
-            onClick={startGame}
-          >
-            {startingGame ? 'Starting game...' : 'Start a game'}
-          </button>
-        ) : (
-          <button
-            className="mt-6 px-6 py-3 bg-emerald-600 text-white font-semibold rounded-lg opacity-50 cursor-not-allowed"
-            disabled
-          >
-            Create your account
-          </button>
-        )}
-        {error && (
-          <div className="mt-4 p-3 bg-red-100 text-red-700 rounded">
-            Failed to start game: {error}
-          </div>
-        )}
+  const handleResumeGame = (data: QuickGameResponse) => {
+    setGameStore(data.game_id, data.players, data.status, data.current_turn, data.bet)
+  }
+
+  if (isAuthenticated) {
+    return (
+      <div>
+        <AuthModal />
+        <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
+        <UserDashboard
+          onStartGame={startGame}
+          onResumeGame={handleResumeGame}
+          starting={startingGame}
+          error={error}
+        />
       </div>
-      <div className="text-gray-500 text-sm">
-        Sprint 3: Real time gameplay.
+    )
+  }
+
+  const gamesPlayed = stats?.games_played ?? 0
+  const gamesAllowed = stats?.games_allowed ?? 10
+  const gamesRemaining = Math.max(0, gamesAllowed - gamesPlayed)
+
+  return (
+    <div>
+      <AuthModal />
+      <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
+      <button
+        onClick={openAuthModal}
+        className="fixed top-4 right-4 z-40 px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 shadow-lg"
+      >
+        Create account / Connect
+      </button>
+      <div className="container mx-auto p-8">
+        <h1 className="text-3xl font-bold mb-6">FapFap Card Game</h1>
+        <div className="bg-gray-100 p-6 rounded-lg shadow mb-8">
+          <h2 className="text-xl font-semibold mb-4">Dashboard</h2>
+          <p className="mb-2">
+            You are not logged in. You are allowed {gamesAllowed} games.
+            Create an account to play more.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white p-4 rounded shadow">
+              <p className="text-lg">Games Played</p>
+              <p className="text-2xl font-bold">{gamesPlayed}</p>
+            </div>
+            <div className="bg-white p-4 rounded shadow">
+              <p className="text-lg">Total Wins</p>
+              <p className="text-2xl font-bold">{stats?.total_wins ?? 0}</p>
+            </div>
+            <div className="bg-white p-4 rounded shadow">
+              <p className="text-lg">Credits</p>
+              <p className="text-2xl font-bold">{stats?.credits ?? 0}</p>
+            </div>
+            <div className="bg-white p-4 rounded shadow">
+              <p className="text-lg">Remaining Games</p>
+              <p className="text-2xl font-bold">{gamesRemaining}</p>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-6">
+            {gamesPlayed < gamesAllowed && (
+              <button
+                className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                disabled={startingGame}
+                onClick={startGame}
+              >
+                {startingGame ? 'Starting game...' : 'Start a quick game'}
+              </button>
+            )}
+            <button
+              className="px-6 py-3 border border-gray-400 text-gray-700 font-semibold rounded-lg hover:bg-gray-100"
+              onClick={() => setRulesOpen(true)}
+            >
+              Rules
+            </button>
+          </div>
+          {error && (
+            <div className="mt-4 p-3 bg-red-100 text-red-700 rounded">
+              Failed to start game: {error}
+            </div>
+          )}
+        </div>
+        <div className="text-gray-500 text-sm">
+          Sprint 3: Real time gameplay.
+        </div>
       </div>
     </div>
   )

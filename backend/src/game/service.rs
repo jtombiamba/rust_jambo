@@ -10,7 +10,7 @@ use crate::database::models::Player;
 use crate::database::models::{game, game_card, player, GameStatus};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::card_mapping::Card;
-use crate::game::constants::MAX_CARDS_PER_PLAYER;
+use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::payment::calculate_payment;
 use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
 use crate::game::turn_order::next_player;
@@ -67,6 +67,7 @@ pub struct GameService {
 }
 
 impl GameService {
+    #[allow(dead_code)]
     pub fn new(db: DatabaseConnection) -> Self {
         Self {
             db,
@@ -78,6 +79,7 @@ impl GameService {
         Self { db, redis_client }
     }
 
+    #[allow(dead_code)]
     pub fn redis_client(&self) -> Option<RedisClient> {
         self.redis_client.clone()
     }
@@ -522,7 +524,7 @@ impl GameService {
             .ok_or(GameServiceError::GameNotFound)?;
 
         // Determine if game ends (all rounds played)
-        let game_ends = new_roll > MAX_CARDS_PER_PLAYER as i32;
+        let game_ends = new_roll > CARDS_PER_PLAYER as i32;
         let mut final_status = game_model.status;
 
         if game_ends {
@@ -699,13 +701,15 @@ impl GameService {
     }
 
     /// Process payment for a finished game inside an active transaction.
-    /// Updates player credits atomically with game state changes.
+    /// Updates player credits and user profiles atomically with game state changes.
     async fn process_payment_in_txn(
         &self,
         txn: &DatabaseTransaction,
         game_id: Uuid,
         result: &RoundEvaluationResult,
     ) -> Result<(), GameServiceError> {
+        use crate::database::models::player_profile;
+
         let players = &result.players;
         let total_players = players.len();
         let winner_id = result.winner_id;
@@ -720,6 +724,11 @@ impl GameService {
             GameStatus::DoubleKora => 4,
             _ => 1,
         };
+
+        let is_kora = matches!(
+            result.final_status,
+            GameStatus::Kora | GameStatus::DoubleKora
+        );
 
         // Fetch the game model from txn to get the bet amount
         let game_model = game::Entity::find_by_id(game_id)
@@ -736,11 +745,42 @@ impl GameService {
 
         // Update player credits (via txn — atomic with game state)
         for (idx, player) in players.iter().enumerate() {
+            let new_credits = player.credits + credits[idx];
             let mut player_active: player::ActiveModel = player.clone().into();
-            player_active.credits = ActiveValue::Set(player.credits + credits[idx]);
+            player_active.credits = ActiveValue::Set(new_credits);
             player_active.update(txn).await.map_err(|e| {
                 GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
             })?;
+
+            // Update user profile if this player is linked to a user
+            if let Some(user_id) = player.user_id {
+                let profile = player_profile::Entity::find()
+                    .filter(player_profile::Column::UserId.eq(user_id))
+                    .one(txn)
+                    .await
+                    .map_err(|e| {
+                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                    })?;
+
+                if let Some(profile_model) = profile {
+                    let won = player.id == winner_id;
+                    let mut profile_active: player_profile::ActiveModel = profile_model.into();
+                    profile_active.credit = ActiveValue::Set(new_credits);
+                    profile_active.game_played =
+                        ActiveValue::Set(profile_active.game_played.unwrap() + 1);
+                    if won {
+                        profile_active.wins = ActiveValue::Set(profile_active.wins.unwrap() + 1);
+                    }
+                    if won && is_kora {
+                        profile_active.kora_wins =
+                            ActiveValue::Set(profile_active.kora_wins.unwrap() + 1);
+                    }
+                    profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
+                    profile_active.update(txn).await.map_err(|e| {
+                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                    })?;
+                }
+            }
         }
 
         Ok(())
@@ -749,6 +789,7 @@ impl GameService {
     /// Process payment for a finished game (status Finished, Kora, DoubleKora).
     /// Updates player credits.
     /// NOTE: This runs outside a transaction. Prefer process_payment_in_txn for atomicity.
+    #[allow(dead_code)]
     pub async fn process_payment(&self, game_id: Uuid) -> Result<(), GameServiceError> {
         let game_repo = GameRepository::new(self.db.clone());
         let player_repo = PlayerRepository::new(self.db.clone());

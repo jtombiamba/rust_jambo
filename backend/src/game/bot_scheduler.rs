@@ -102,7 +102,7 @@ impl BotScheduler {
                 }
             }
         } else {
-            info!("RabbitMQ not available, running synchronous bot chain");
+            info!("RabbitMQ not available, running internal bot chain");
             let db = self.db.clone();
             let redis = self.redis.clone();
             tokio::spawn(async move {

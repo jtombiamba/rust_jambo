@@ -55,6 +55,7 @@ impl GameEvent {
     }
 
     /// Deserialize from JSON string.
+    #[allow(dead_code)]
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(s)
     }

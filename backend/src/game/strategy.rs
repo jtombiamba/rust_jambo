@@ -8,7 +8,9 @@ pub enum StrategyChoice {
     LongDown = 2,
     MidUp = 3,
     MidDown = 4,
+    #[allow(dead_code)]
     ShortUp = 5,
+    #[allow(dead_code)]
     ShortDown = 6,
 }
 

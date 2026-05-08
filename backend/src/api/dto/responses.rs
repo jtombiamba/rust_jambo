@@ -27,6 +27,8 @@ pub struct QuickGameResponse {
     pub status: String,
     pub current_turn: i32,
     pub bet: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deck_slots: Option<Vec<Option<i32>>>,
 }
 
 #[derive(Debug, Serialize)]

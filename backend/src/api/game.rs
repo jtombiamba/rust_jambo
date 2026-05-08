@@ -215,6 +215,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -238,6 +239,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -261,6 +263,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -284,6 +287,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -307,6 +311,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -330,6 +335,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -353,6 +359,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -378,6 +385,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -403,6 +411,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;

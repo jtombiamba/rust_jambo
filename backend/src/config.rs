@@ -4,6 +4,7 @@ use config::{Config as ConfigBuilder, ConfigError, Environment};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct Config {
     pub host: String,
     pub port: u16,
@@ -12,6 +13,10 @@ pub struct Config {
     pub redis_url: Option<String>,
     pub log_level: String,
     pub max_rabbitmq_connection_retries: u32,
+    pub jwt_secret: String,
+    pub jwt_expiry_hours: i64,
+    pub ip_hash_pepper: String,
+    pub frontend_url: String,
 }
 
 impl Config {
@@ -25,8 +30,8 @@ impl Config {
         cfg.try_deserialize()
     }
 
-    /// Load configuration from environment variables with fallback defaults.
     #[allow(clippy::should_implement_trait)]
+    #[allow(dead_code)]
     pub fn default() -> Self {
         Self {
             host: env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
@@ -45,6 +50,17 @@ impl Config {
                 .unwrap_or_else(|_| "10".to_string())
                 .parse()
                 .unwrap_or(10),
+            jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| {
+                "super-secret-key-change-me-in-production-please-do-it-now".to_string()
+            }),
+            jwt_expiry_hours: env::var("JWT_EXPIRY_HOURS")
+                .unwrap_or_else(|_| "24".to_string())
+                .parse()
+                .unwrap_or(24),
+            ip_hash_pepper: env::var("IP_HASH_PEPPER")
+                .unwrap_or_else(|_| "ip-pepper-change-me-1234567890abcdef".to_string()),
+            frontend_url: env::var("FRONTEND_URL")
+                .unwrap_or_else(|_| "http://localhost:5173".to_string()),
         }
     }
 }

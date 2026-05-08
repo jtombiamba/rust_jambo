@@ -1,0 +1,86 @@
+use std::sync::Arc;
+
+use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, ResponseError};
+
+use crate::api::dto::auth::{
+    ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest,
+};
+use crate::api::services::auth_service::AuthService;
+use crate::auth::cookie;
+use crate::auth::extractors::{AuthenticatedUser, ClientIp};
+use crate::database::repositories::UserRepository;
+
+pub type AuthServiceType = AuthService<UserRepository>;
+
+pub async fn register(
+    req: HttpRequest,
+    body: web::Json<RegisterRequest>,
+    service: web::Data<Arc<AuthServiceType>>,
+) -> HttpResponse {
+    let client_ip = req.extensions().get::<ClientIp>().cloned();
+    let ip_hash = client_ip.map(|c| c.hash);
+
+    match service.register(body.into_inner(), ip_hash).await {
+        Ok(result) => {
+            let mut resp = HttpResponse::Created();
+            cookie::set_auth_cookie(&mut resp, &result.token);
+            resp.json(result.response)
+        }
+        Err(e) => e.error_response(),
+    }
+}
+
+pub async fn login(
+    req: HttpRequest,
+    body: web::Json<LoginRequest>,
+    service: web::Data<Arc<AuthServiceType>>,
+) -> HttpResponse {
+    let client_ip = req.extensions().get::<ClientIp>().cloned();
+    let ip_hash = client_ip.map(|c| c.hash);
+
+    match service.login(body.into_inner(), ip_hash).await {
+        Ok(result) => {
+            let mut resp = HttpResponse::Ok();
+            cookie::set_auth_cookie(&mut resp, &result.token);
+            resp.json(result.response)
+        }
+        Err(e) => e.error_response(),
+    }
+}
+
+pub async fn forgot_password(
+    body: web::Json<ForgotPasswordRequest>,
+    service: web::Data<Arc<AuthServiceType>>,
+) -> HttpResponse {
+    HttpResponse::Ok().json(service.forgot_password(body.into_inner()).await)
+}
+
+pub async fn reset_password(
+    body: web::Json<ResetPasswordRequest>,
+    service: web::Data<Arc<AuthServiceType>>,
+) -> HttpResponse {
+    match service.reset_password(body.into_inner()).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => e.error_response(),
+    }
+}
+
+pub async fn logout() -> HttpResponse {
+    let mut resp = HttpResponse::Ok();
+    cookie::clear_auth_cookie(&mut resp);
+    resp.json(serde_json::json!({
+        "success": true,
+        "message": "Logged out successfully",
+        "user": null
+    }))
+}
+
+pub async fn me(
+    auth_user: AuthenticatedUser,
+    service: web::Data<Arc<AuthServiceType>>,
+) -> HttpResponse {
+    match service.me(auth_user.user_id).await {
+        Ok(user_info) => HttpResponse::Ok().json(user_info),
+        Err(e) => e.error_response(),
+    }
+}

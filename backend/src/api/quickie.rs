@@ -66,6 +66,7 @@ mod tests {
                 status: "active".into(),
                 current_turn: 2,
                 bet: 10,
+                deck_slots: None,
             }),
         ));
         let app = make_app(mock).await;

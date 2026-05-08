@@ -55,10 +55,24 @@ pub mod player {
         pub position: i32,
         pub credits: i32,
         pub created_at: DateTime<Utc>,
+        pub user_id: Option<Uuid>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::user::Entity",
+            from = "Column::UserId",
+            to = "super::user::Column::Id"
+        )]
+        User,
+    }
+
+    impl Related<super::user::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::User.def()
+        }
+    }
 
     impl ActiveModelBehavior for ActiveModel {}
 }
@@ -132,9 +146,74 @@ pub enum GameStatus {
     DoubleKora,
 }
 
+pub mod user {
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+    #[sea_orm(table_name = "users")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: Uuid,
+        pub pseudo: String,
+        pub email: String,
+        pub password_hash: String,
+        pub last_ip_hash: Option<String>,
+        pub created_at: DateTime<Utc>,
+        pub updated_at: DateTime<Utc>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod player_profile {
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+    #[sea_orm(table_name = "player_profiles")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: Uuid,
+        pub user_id: Uuid,
+        pub player_type: super::PlayerType,
+        pub credit: i32,
+        pub game_played: i32,
+        pub wins: i32,
+        pub kora_wins: i32,
+        pub latitude: Option<f64>,
+        pub longitude: Option<f64>,
+        pub country_code: Option<String>,
+        pub city: Option<String>,
+        pub created_at: DateTime<Utc>,
+        pub updated_at: DateTime<Utc>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::user::Entity",
+            from = "Column::UserId",
+            to = "super::user::Column::Id"
+        )]
+        User,
+    }
+
+    impl Related<super::user::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::User.def()
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 // Re-export the Model types as the original names for convenience
 pub use game::Model as Game;
 pub use game_card::Model as GameCard;
 pub use player::Model as Player;
+pub use player_profile::Model as PlayerProfile;
 #[allow(unused_imports)]
 pub use round::Model as Round;
+pub use user::Model as User;
