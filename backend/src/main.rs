@@ -4,6 +4,7 @@ use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use tracing::info;
 
 mod api;
+mod auth;
 mod config;
 mod database;
 mod error;
@@ -14,8 +15,12 @@ mod websocket;
 
 use api::anonymous::get_anonymous_stats;
 use api::game::{get_my_cards, list_games, play_card, start_game};
+use api::middleware::ip_forward::ForwardedIpMiddleware;
 use api::quickie::create_quick_game;
+use auth::config::AuthConfig;
+use auth::middleware::AuthMiddleware;
 use config::Config;
+use database::repositories::{DashboardRepository, UserRepository};
 use game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
 use messaging::{RabbitMQClient, RedisClient};
 use observability::middleware::CorrelationIdMiddleware;
@@ -114,8 +119,25 @@ async fn main() -> std::io::Result<()> {
             }
         };
 
+    let auth_config = AuthConfig::from_env().expect("Failed to load auth configuration");
+    let auth_config_data = web::Data::new(auth_config.clone());
+
+    let db_clone = db_connection.clone();
+
+    let user_repo = Arc::new(UserRepository::new(db_connection.clone()));
+    let dashboard_repo = Arc::new(DashboardRepository::new(db_connection.clone()));
+    let auth_service: Arc<api::auth::AuthServiceType> = Arc::new(
+        api::services::auth_service::AuthService::new(user_repo, auth_config),
+    );
+    let dashboard_service: Arc<api::dashboard::DashboardServiceType> = Arc::new(
+        api::services::dashboard_service::DashboardService::new(dashboard_repo),
+    );
+
+    let auth_service_data = web::Data::new(auth_service);
+    let dashboard_service_data = web::Data::new(dashboard_service);
+
     let orchestrator: Arc<dyn GameOrchestratorTrait> = Arc::new(GameOrchestrator::new(
-        db_connection.clone(),
+        db_clone,
         redis_client.clone(),
         rabbitmq_client.clone(),
     ));
@@ -138,11 +160,15 @@ async fn main() -> std::io::Result<()> {
         info!("Registering routes");
         App::new()
             .wrap(CorrelationIdMiddleware)
+            .wrap(ForwardedIpMiddleware)
             .app_data(web::Data::new(db_connection.clone()))
             .app_data(redis_client_data.clone())
             .app_data(rabbitmq_client_data.clone())
             .app_data(ws_manager.clone())
             .app_data(orchestrator_data.clone())
+            .app_data(auth_config_data.clone())
+            .app_data(auth_service_data.clone())
+            .app_data(dashboard_service_data.clone())
             .service(health_check)
             .service(metrics)
             .service(
@@ -152,7 +178,35 @@ async fn main() -> std::io::Result<()> {
                     .service(list_games)
                     .service(get_my_cards)
                     .service(play_card)
-                    .service(start_game),
+                    .service(start_game)
+                    .service(
+                        web::scope("/auth")
+                            .route("/register", web::post().to(api::auth::register))
+                            .route("/login", web::post().to(api::auth::login))
+                            .route(
+                                "/forgot-password",
+                                web::post().to(api::auth::forgot_password),
+                            )
+                            .route("/reset-password", web::post().to(api::auth::reset_password))
+                            .route("/logout", web::post().to(api::auth::logout))
+                            .service(
+                                web::resource("/me")
+                                    .wrap(AuthMiddleware)
+                                    .route(web::get().to(api::auth::me)),
+                            ),
+                    )
+                    .service(
+                        web::scope("/me")
+                            .wrap(AuthMiddleware)
+                            .route("/profile", web::get().to(api::dashboard::get_profile))
+                            .route("/games", web::get().to(api::dashboard::list_games))
+                            .route("/games", web::post().to(api::dashboard::create_game))
+                            .route("/games/{game_id}", web::get().to(api::dashboard::get_game))
+                            .route(
+                                "/active-game",
+                                web::get().to(api::dashboard::get_active_game),
+                            ),
+                    ),
             )
             .service(websocket::scope())
     })

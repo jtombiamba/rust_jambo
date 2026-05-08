@@ -100,6 +100,7 @@ impl WebSocketManager {
     }
 
     /// Update the last activity time for a connection.
+    #[allow(dead_code)]
     pub async fn update_activity(&self, game_id: Uuid, connection_id: ConnectionId) {
         let mut inner = self.inner.write().await;
         if let Some(connections) = inner.connections.get_mut(&game_id) {
@@ -140,6 +141,7 @@ impl WebSocketManager {
     }
 
     /// Remove all connections for a specific game (e.g., when game ends).
+    #[allow(dead_code)]
     pub async fn remove_all_connections(&self, game_id: Uuid) {
         let mut inner = self.inner.write().await;
         if inner.connections.remove(&game_id).is_some() {
@@ -172,6 +174,7 @@ impl WebSocketManager {
     }
 
     /// Get the number of active connections for a specific game.
+    #[allow(dead_code)]
     pub async fn connection_count(&self, game_id: Uuid) -> usize {
         let inner = self.inner.read().await;
         inner
@@ -182,6 +185,7 @@ impl WebSocketManager {
     }
 
     /// Get total number of active connections across all games.
+    #[allow(dead_code)]
     pub async fn total_connection_count(&self) -> usize {
         let inner = self.inner.read().await;
         inner.connections.values().map(|c| c.len()).sum()

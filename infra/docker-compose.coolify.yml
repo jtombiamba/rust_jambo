@@ -60,6 +60,10 @@ services:
       PORT: 8080
       RUST_LOG: ${RUST_LOG:-info}
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
+      JWT_SECRET: ${JWT_SECRET:-super-secret-key-change-me-in-production-please-do-it-now}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      IP_HASH_PEPPER: ${IP_HASH_PEPPER:-ip-pepper-change-me-1234567890abcdef}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     networks:
       - internal
     # Expose port internally (Coolify will proxy)
@@ -104,6 +108,10 @@ services:
       REDIS_URL: redis://redis:6379
       RUST_LOG: ${RUST_LOG:-info}
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
+      JWT_SECRET: ${JWT_SECRET:-super-secret-key-change-me-in-production-please-do-it-now}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      IP_HASH_PEPPER: ${IP_HASH_PEPPER:-ip-pepper-change-me-1234567890abcdef}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     networks:
       - internal
     volumes:

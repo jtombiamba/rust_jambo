@@ -104,6 +104,7 @@ impl AITask {
     }
 
     /// Deserialize from JSON bytes.
+    #[allow(dead_code)]
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }

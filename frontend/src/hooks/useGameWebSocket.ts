@@ -1,7 +1,8 @@
 import { useEffect, useRef} from 'react';
 import { useGameStore, GameResult } from '../stores/useGameStore';
 import { useWebSocket, GameEvent } from './useWebSocket';
-import { updateStatsAfterGame } from '../utils/storage';
+import { updateAnonymousStatsAfterGame } from '../utils/storage';
+import { useAuthStore } from '../stores/useAuthStore';
 
 /**
  * A hook that connects WebSocket events to the game store.
@@ -77,11 +78,14 @@ export function useGameWebSocket(gameId: string | null) {
             result: gameResult,
           });
 
-          // Update localStorage with game result
-          const humanPlayer = players.find(p => p.type === 'human');
-          if (humanPlayer) {
-            const won = humanPlayer.id === event.winner_id;
-            updateStatsAfterGame(bet, won, event.status as 'finished' | 'kora' | 'doubleKora');
+          // Update stats: anonymous users use localStorage, authenticated users are updated server-side
+          const { isAuthenticated } = useAuthStore.getState();
+          if (!isAuthenticated) {
+            const humanPlayer = players.find(p => p.type === 'human');
+            if (humanPlayer) {
+              const won = humanPlayer.id === event.winner_id;
+              updateAnonymousStatsAfterGame(bet, won, event.status as 'finished' | 'kora' | 'doubleKora');
+            }
           }
           break;
         }

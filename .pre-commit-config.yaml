@@ -46,8 +46,6 @@ repos:
           - "--"
           - "-D"
           - "warnings"
-          - "-A"
-          - "dead_code"
         files: ^backend/
         verbose: true
 

@@ -10,6 +10,7 @@ use crate::messaging::ai_task::{AITask, PlayerInfo};
 
 /// Bot move execution result
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct BotMoveResult {
     pub game_id: Uuid,
     pub player_id: Uuid,
@@ -19,6 +20,7 @@ pub struct BotMoveResult {
 }
 
 /// Execute a bot move using database connection
+#[allow(dead_code)]
 pub async fn execute_bot_move(
     game_id: Uuid,
     player_id: Uuid,
@@ -117,6 +119,7 @@ pub async fn execute_bot_move(
 }
 
 /// Execute a bot move using AITask (no database queries needed)
+#[allow(dead_code)]
 pub async fn execute_bot_move_from_task(task: &AITask) -> Result<BotMoveResult, GameError> {
     let bot_cards = task.bot_hand_cards.clone();
 
@@ -147,6 +150,7 @@ pub async fn execute_bot_move_from_task(task: &AITask) -> Result<BotMoveResult, 
 }
 
 /// Create an AITask from current game state
+#[allow(dead_code)]
 pub async fn create_ai_task_from_game(
     game_id: Uuid,
     player_id: Uuid,
@@ -229,6 +233,7 @@ pub async fn create_ai_task_from_game(
 }
 
 /// Check if a player is a bot
+#[allow(dead_code)]
 pub async fn is_bot_player(
     game_id: Uuid,
     player_id: Uuid,

@@ -26,9 +26,10 @@ pub enum AppError {
     Serialization(#[from] serde_json::Error),
 
     #[error("WebSocket error: {0}")]
+    #[allow(dead_code)]
     WebSocket(String),
-
-    #[error("Internal server error")]
+    #[error("Internal error")]
+    #[allow(dead_code)]
     Internal,
 }
 
@@ -64,5 +65,3 @@ impl ResponseError for AppError {
         }))
     }
 }
-
-pub type Result<T> = std::result::Result<T, AppError>;

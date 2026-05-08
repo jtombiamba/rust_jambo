@@ -49,7 +49,7 @@ export function saveStats(stats: AnonymousStats): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(stats))
 }
 
-export function updateStatsAfterGame(
+export function updateAnonymousStatsAfterGame(
   bet: number,
   won: boolean,
   status: 'finished' | 'kora' | 'doubleKora',

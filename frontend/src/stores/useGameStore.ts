@@ -6,6 +6,7 @@ export interface Player {
   name: string;
   position: number;
   cards: number[];
+  cards_count?: number;
 }
 
 export interface RoundWinner {
@@ -24,15 +25,6 @@ export interface GameOverData {
   isGameOver: boolean;
   winner: Player | null;
   result: GameResult;
-}
-
-export interface Player {
-  id: string;
-  type: 'human' | 'bot';
-  name: string;
-  position: number;
-  cards: number[];
-  cards_count?: number;
 }
 
 export interface GameState {

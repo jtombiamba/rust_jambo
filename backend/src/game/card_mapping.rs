@@ -21,6 +21,7 @@ impl Card {
         })
     }
 
+    #[allow(dead_code)]
     pub fn suit_colour(&self) -> &'static str {
         match self.suit {
             "Hearts" | "Diamonds" => "Red",
@@ -29,6 +30,7 @@ impl Card {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_same_colour(&self, other: &Card) -> bool {
         self.suit_colour() == other.suit_colour()
     }

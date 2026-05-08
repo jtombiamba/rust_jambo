@@ -94,6 +94,7 @@ impl RabbitMQClient {
     }
 
     /// Reset metrics (useful for testing)
+    #[allow(dead_code)]
     pub fn reset_metrics(&self) {
         let mut metrics = self.metrics.lock().unwrap();
         *metrics = RabbitMQMetrics::default();
@@ -182,6 +183,7 @@ impl RabbitMQClient {
     }
 
     /// Publish message (with retry)
+    #[allow(dead_code)]
     pub async fn publish(&self, queue: &str, message: &[u8]) -> Result<(), lapin::Error> {
         self.publish_with_retry(queue, message).await
     }
@@ -200,6 +202,7 @@ impl RabbitMQClient {
     }
 
     /// Consume AI tasks from queue
+    #[allow(dead_code)]
     pub async fn consume_ai_tasks(&self) -> Result<Consumer, lapin::Error> {
         let start_time = std::time::Instant::now();
 

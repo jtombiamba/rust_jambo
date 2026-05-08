@@ -2,7 +2,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use uuid::Uuid;
 
-use crate::game::constants::{MAX_CARDS_PER_PLAYER, TOTAL_CARDS};
+use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
 
 /// Distributes cards randomly among the given players.
 ///
@@ -10,7 +10,7 @@ use crate::game::constants::{MAX_CARDS_PER_PLAYER, TOTAL_CARDS};
 /// * `player_ids` - Slice of player UUIDs. The number of players must be exactly `MAX_PLAYERS_IN_GAME` (4).
 ///
 /// # Returns
-/// A vector of `(player_id, card_index)` pairs where each player receives `MAX_CARDS_PER_PLAYER` (5) cards,
+/// A vector of `(player_id, card_index)` pairs where each player receives `CARDS_PER_PLAYER` (5) cards,
 /// and each card index is a unique integer in `0..TOTAL_CARDS` (32).
 ///
 /// # Panics
@@ -29,7 +29,7 @@ pub fn distribute_cards(player_ids: &[Uuid]) -> Vec<(Uuid, i32)> {
     cards.shuffle(&mut rng);
 
     // Chunk the cards into equal slices per player
-    let chunk_size = MAX_CARDS_PER_PLAYER;
+    let chunk_size = CARDS_PER_PLAYER;
     let mut result = Vec::with_capacity(TOTAL_CARDS);
 
     for (i, player_id) in player_ids.iter().enumerate() {
@@ -60,25 +60,22 @@ mod tests {
 
         let distribution = distribute_cards(&player_ids);
 
-        // Total cards equals MAX_PLAYERS_IN_GAME * MAX_CARDS_PER_PLAYER
-        assert_eq!(
-            distribution.len(),
-            MAX_PLAYERS_IN_GAME * MAX_CARDS_PER_PLAYER
-        );
+        // Total cards equals MAX_PLAYERS_IN_GAME * CARDS_PER_PLAYER
+        assert_eq!(distribution.len(), MAX_PLAYERS_IN_GAME * CARDS_PER_PLAYER);
 
-        // Each player gets exactly MAX_CARDS_PER_PLAYER cards
+        // Each player gets exactly CARDS_PER_PLAYER cards
         for &player_id in &player_ids {
             let count = distribution
                 .iter()
                 .filter(|(id, _)| *id == player_id)
                 .count();
-            assert_eq!(count, MAX_CARDS_PER_PLAYER);
+            assert_eq!(count, CARDS_PER_PLAYER);
         }
 
         // All card indices are unique and within range
         let mut card_indices: Vec<i32> = distribution.iter().map(|&(_, card)| card).collect();
         card_indices.sort_unstable();
-        let expected_count = (MAX_PLAYERS_IN_GAME * MAX_CARDS_PER_PLAYER) as i32;
+        let expected_count = (MAX_PLAYERS_IN_GAME * CARDS_PER_PLAYER) as i32;
         assert_eq!(card_indices.len(), expected_count as usize);
         for &card in &card_indices {
             assert!(card >= 0 && card < TOTAL_CARDS as i32);

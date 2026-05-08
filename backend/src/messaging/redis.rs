@@ -36,6 +36,7 @@ impl RedisClient {
 
     /// Subscribe to a Redis channel and return a subscription object.
     /// This is a simplified subscription that yields messages as they arrive.
+    #[allow(dead_code)]
     pub async fn subscribe(&mut self, channels: &[&str]) -> RedisResult<redis::aio::PubSub> {
         let mut pubsub: redis::aio::PubSub =
             self.client.get_async_connection().await?.into_pubsub();

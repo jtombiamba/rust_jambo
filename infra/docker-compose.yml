@@ -60,6 +60,10 @@ services:
       PORT: 8080
       LOG_LEVEL: info
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
+      JWT_SECRET: super-secret-key-change-me-in-production-please-do-it-now
+      JWT_EXPIRY_HOURS: 24
+      IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
+      FRONTEND_URL: http://localhost:3000
     ports:
       - "8080:8080"
     volumes:
@@ -102,6 +106,10 @@ services:
       PORT: 8080
       LOG_LEVEL: info
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
+      JWT_SECRET: super-secret-key-change-me-in-production-please-do-it-now
+      JWT_EXPIRY_HOURS: 24
+      IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
+      FRONTEND_URL: http://localhost:3000
     volumes:
       - ../backend/migrations:/app/migrations:ro
     healthcheck:
