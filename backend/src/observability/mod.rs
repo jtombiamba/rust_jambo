@@ -1,3 +1,4 @@
+pub mod metrics;
 pub mod middleware;
 pub mod ws;
 

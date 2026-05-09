@@ -1,4 +1,5 @@
 use crate::messaging::RedisClient;
+use crate::observability::metrics;
 use crate::observability::CorrelationId;
 use anyhow::Context;
 use futures_util::StreamExt;
@@ -96,6 +97,7 @@ impl WebSocketManager {
             game_id,
             cid_display
         );
+        metrics::WS_CONNECTIONS_ACTIVE.inc();
         connection_id
     }
 
@@ -138,6 +140,7 @@ impl WebSocketManager {
                 game_id
             );
         }
+        metrics::WS_CONNECTIONS_ACTIVE.dec();
     }
 
     /// Remove all connections for a specific game (e.g., when game ends).
@@ -153,11 +156,9 @@ impl WebSocketManager {
     pub async fn broadcast_to_game(&self, game_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.connections.get(&game_id) {
-            tracing::debug!(
-                "Broadcasting to {} connections for game {}",
-                connections.len(),
-                game_id
-            );
+            let count = connections.len();
+            metrics::WS_MESSAGES_SENT_TOTAL.inc_by(count as f64);
+            tracing::debug!("Broadcasting to {} connections for game {}", count, game_id);
             for connection in connections {
                 // Ignore errors if the receiver is closed
                 if let Err(e) = connection.sender.send(message.to_string()) {
@@ -276,6 +277,7 @@ impl WebSocketManager {
         if total_removed > 0 {
             tracing::info!("Total stale connections cleaned up: {}", total_removed);
         }
+        metrics::WS_CONNECTIONS_ACTIVE.sub(total_removed as f64);
         total_removed
     }
 

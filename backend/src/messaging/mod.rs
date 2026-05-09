@@ -1,3 +1,4 @@
+use crate::observability::metrics;
 use lapin::{
     options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties, Consumer,
 };
@@ -18,6 +19,7 @@ const MAX_RETRY_DELAY_MS: u64 = 5000;
 
 /// Connect to RabbitMQ with exponential backoff retry.
 /// Shared between the main server and the ai-worker binary.
+#[allow(dead_code)]
 pub async fn connect_to_rabbitmq_with_retry(
     url: &str,
     max_retries: u32,
@@ -63,6 +65,7 @@ pub async fn connect_to_rabbitmq_with_retry(
 
 /// Metrics for RabbitMQ operations
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct RabbitMQMetrics {
     pub publish_success_count: u64,
     pub publish_failure_count: u64,
@@ -89,6 +92,7 @@ impl RabbitMQClient {
     }
 
     /// Get a copy of current metrics
+    #[allow(dead_code)]
     pub fn get_metrics(&self) -> RabbitMQMetrics {
         self.metrics.lock().unwrap().clone()
     }
@@ -117,6 +121,9 @@ impl RabbitMQClient {
                         metrics.publish_retry_count += 1;
                         info!("Publish succeeded after {} retries", attempt);
                     }
+                    metrics::RABBITMQ_PUBLISH_TOTAL
+                        .with_label_values(&[queue])
+                        .inc();
                     return Ok(());
                 }
                 Err(e) => {
@@ -126,6 +133,9 @@ impl RabbitMQClient {
                         // Last attempt failed
                         let mut metrics = self.metrics.lock().unwrap();
                         metrics.publish_failure_count += 1;
+                        metrics::RABBITMQ_PUBLISH_ERRORS_TOTAL
+                            .with_label_values(&[queue])
+                            .inc();
                         break;
                     }
 
@@ -234,26 +244,32 @@ impl RabbitMQClient {
         let mut metrics = self.metrics.lock().unwrap();
         metrics.consume_success_count += 1;
 
+        metrics::RABBITMQ_CONSUME_TOTAL.inc();
+
         Ok(consumer)
     }
 
     /// Check if connection is still alive
+    #[allow(dead_code)]
     pub async fn check_health(&self) -> bool {
         match self.connection.status().connected() {
             true => {
                 debug!("RabbitMQ connection is healthy");
+                metrics::RABBITMQ_HEALTHY.set(1.0);
                 true
             }
             false => {
                 error!("RabbitMQ connection is not healthy");
                 let mut metrics = self.metrics.lock().unwrap();
                 metrics.connection_error_count += 1;
+                metrics::RABBITMQ_HEALTHY.set(0.0);
                 false
             }
         }
     }
 
     /// Get queue length (approximate)
+    #[allow(dead_code)]
     pub async fn get_queue_length(&self, queue: &str) -> Result<u32, lapin::Error> {
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = queue.into();
@@ -266,6 +282,9 @@ impl RabbitMQClient {
             )
             .await?;
 
-        Ok(queue_info.message_count())
+        let count = queue_info.message_count();
+        metrics::RABBITMQ_QUEUE_LENGTH.set(count as f64);
+
+        Ok(count)
     }
 }
