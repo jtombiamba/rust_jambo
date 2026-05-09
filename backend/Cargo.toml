@@ -39,6 +39,8 @@ jsonwebtoken = "9"
 cookie = "0.18"
 sha2 = "0.10"
 hex = "0.4"
+prometheus = "0.13"
+once_cell = "1"
 
 [[bin]]
 name = "ai-worker"

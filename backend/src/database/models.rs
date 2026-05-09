@@ -146,6 +146,20 @@ pub enum GameStatus {
     DoubleKora,
 }
 
+impl std::fmt::Display for GameStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            GameStatus::Pending => "pending",
+            GameStatus::Active => "active",
+            GameStatus::Finished => "finished",
+            GameStatus::Cancelled => "cancelled",
+            GameStatus::Kora => "kora",
+            GameStatus::DoubleKora => "double_kora",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 pub mod user {
     use super::*;
 

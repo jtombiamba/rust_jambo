@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use prometheus::Encoder;
 use tracing::info;
 
 mod api;
@@ -22,7 +23,7 @@ use auth::middleware::AuthMiddleware;
 use config::Config;
 use database::repositories::{DashboardRepository, UserRepository};
 use game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
-use messaging::{RabbitMQClient, RedisClient};
+use messaging::RedisClient;
 use observability::middleware::CorrelationIdMiddleware;
 use websocket::manager::WebSocketManager;
 
@@ -32,37 +33,14 @@ pub async fn health_check() -> impl Responder {
 }
 
 #[get("/metrics")]
-async fn metrics(rabbitmq_client: web::Data<Option<RabbitMQClient>>) -> impl Responder {
-    use serde_json::json;
-
-    let mut metrics_data = json!({
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "service": "jambo-backend",
-        "rabbitmq_available": rabbitmq_client.is_some(),
-    });
-
-    if let Some(client) = rabbitmq_client.get_ref() {
-        let rabbitmq_metrics = client.get_metrics();
-        metrics_data["rabbitmq_metrics"] = json!({
-            "publish_success_count": rabbitmq_metrics.publish_success_count,
-            "publish_failure_count": rabbitmq_metrics.publish_failure_count,
-            "publish_retry_count": rabbitmq_metrics.publish_retry_count,
-            "consume_success_count": rabbitmq_metrics.consume_success_count,
-            "consume_failure_count": rabbitmq_metrics.consume_failure_count,
-            "connection_error_count": rabbitmq_metrics.connection_error_count,
-        });
-
-        if let Ok(length) = client.get_queue_length("ai_tasks").await {
-            metrics_data["queue_length"] = json!(length);
-        }
-
-        let is_healthy = client.check_health().await;
-        metrics_data["rabbitmq_healthy"] = json!(is_healthy);
-    }
-
+async fn metrics() -> HttpResponse {
+    let encoder = prometheus::TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = vec![];
+    encoder.encode(&metric_families, &mut buffer).unwrap();
     HttpResponse::Ok()
-        .content_type("application/json")
-        .json(metrics_data)
+        .content_type("text/plain; version=0.0.4")
+        .body(buffer)
 }
 
 #[actix_web::main]
@@ -74,6 +52,8 @@ async fn main() -> std::io::Result<()> {
         )
         .json()
         .init();
+
+    observability::metrics::init_all();
 
     let config = Config::from_env().expect("Failed to load configuration");
     let cpu_count = num_cpus::get();
@@ -219,7 +199,7 @@ async fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, web, App};
+    use actix_web::{test, App};
 
     #[actix_web::test]
     async fn test_health_check() {
@@ -232,19 +212,55 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_metrics_no_rabbitmq() {
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(None::<crate::messaging::RabbitMQClient>))
-                .service(metrics),
-        )
-        .await;
+    async fn test_metrics() {
+        let app = test::init_service(App::new().service(metrics)).await;
         let req = test::TestRequest::get().uri("/metrics").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["service"], "jambo-backend");
-        assert_eq!(body["rabbitmq_available"], false);
-        assert!(body["timestamp"].is_string());
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            content_type.starts_with("text/plain"),
+            "Expected text/plain content-type, got: {content_type}"
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_metrics_contains_default_metrics() {
+        crate::observability::metrics::init_all();
+        let app = test::init_service(App::new().service(metrics)).await;
+        let req = test::TestRequest::get().uri("/metrics").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body = test::read_body(resp).await;
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body_str.contains("ws_messages_sent_total"),
+            "Expected ws_messages_sent_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("ws_connections_active"),
+            "Expected ws_connections_active in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("rabbitmq_consume_total"),
+            "Expected rabbitmq_consume_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("rabbitmq_healthy"),
+            "Expected rabbitmq_healthy in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("rabbitmq_publish_total"),
+            "Expected rabbitmq_publish_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("games_finished_total"),
+            "Expected games_finished_total in metrics, got: {body_str}"
+        );
     }
 }

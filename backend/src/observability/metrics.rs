@@ -1,0 +1,86 @@
+use once_cell::sync::Lazy;
+use prometheus::{
+    register_counter, register_counter_vec, register_gauge, Counter, CounterVec, Gauge,
+};
+
+pub static RABBITMQ_PUBLISH_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "rabbitmq_publish_total",
+        "Total number of messages published to RabbitMQ",
+        &["queue"]
+    )
+    .unwrap()
+});
+
+pub static RABBITMQ_PUBLISH_ERRORS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "rabbitmq_publish_errors_total",
+        "Total number of failed publish attempts",
+        &["queue"]
+    )
+    .unwrap()
+});
+
+pub static RABBITMQ_CONSUME_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "rabbitmq_consume_total",
+        "Total number of consumers started"
+    )
+    .unwrap()
+});
+
+#[allow(dead_code)]
+pub static RABBITMQ_HEALTHY: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "rabbitmq_healthy",
+        "1 if RabbitMQ connection is healthy, 0 otherwise"
+    )
+    .unwrap()
+});
+
+#[allow(dead_code)]
+pub static RABBITMQ_QUEUE_LENGTH: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "rabbitmq_queue_length",
+        "Current number of messages in the ai_tasks queue"
+    )
+    .unwrap()
+});
+
+pub static GAMES_FINISHED_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "games_finished_total",
+        "Total number of games finished",
+        &["status"]
+    )
+    .unwrap()
+});
+
+pub static WS_MESSAGES_SENT_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "ws_messages_sent_total",
+        "Total number of WebSocket messages sent to clients"
+    )
+    .unwrap()
+});
+
+pub static WS_CONNECTIONS_ACTIVE: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "ws_connections_active",
+        "Current number of active WebSocket connections"
+    )
+    .unwrap()
+});
+
+pub fn init_all() {
+    RABBITMQ_PUBLISH_TOTAL.with_label_values(&["ai_tasks"]);
+    RABBITMQ_PUBLISH_ERRORS_TOTAL.with_label_values(&["ai_tasks"]);
+    RABBITMQ_CONSUME_TOTAL.inc_by(0.0);
+    RABBITMQ_HEALTHY.set(0.0);
+    RABBITMQ_QUEUE_LENGTH.set(0.0);
+    GAMES_FINISHED_TOTAL.with_label_values(&["finished"]);
+    GAMES_FINISHED_TOTAL.with_label_values(&["kora"]);
+    GAMES_FINISHED_TOTAL.with_label_values(&["double_kora"]);
+    WS_MESSAGES_SENT_TOTAL.inc_by(0.0);
+    WS_CONNECTIONS_ACTIVE.set(0.0);
+}

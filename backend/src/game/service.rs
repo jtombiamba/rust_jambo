@@ -331,6 +331,9 @@ impl GameService {
                 .await;
 
             if result.game_ended {
+                crate::observability::metrics::GAMES_FINISHED_TOTAL
+                    .with_label_values(&[&result.final_status.to_string()])
+                    .inc();
                 self.publish_game_finished(game_id, &result, correlation_id)
                     .await;
             }
