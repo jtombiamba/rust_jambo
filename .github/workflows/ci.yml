@@ -78,3 +78,57 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # ── Security scans (Trivy) ──────────────────────────────────────
+
+  trivy-repo:
+    name: Trivy repo scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy vulnerability scanner in repo mode
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          exit-code: 1
+          severity: CRITICAL
+          format: table
+
+  trivy-config:
+    name: Trivy config scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy config scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: 1
+          severity: CRITICAL
+          format: table
+
+  trivy-images:
+    name: Trivy Docker image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t backend:scan backend/
+      - name: Build frontend image
+        run: docker build -t frontend:scan frontend/
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: backend:scan
+          exit-code: 1
+          severity: CRITICAL
+          format: table
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: frontend:scan
+          exit-code: 1
+          severity: CRITICAL
+          format: table
