@@ -264,6 +264,7 @@ async fn build_game_state_response(
                 display_position: display_pos as i32,
                 cards,
                 cards_count,
+                is_current_user: is_me,
             }
         })
         .collect();
@@ -282,6 +283,8 @@ async fn build_game_state_response(
         },
         current_turn: current_turn_display,
         bet: game.bet,
+        max_players: game.max_players as i32,
+        invite_expires_at: game.invite_expires_at.map(|t| t.to_rfc3339()),
         deck_slots: Some(deck_slots),
     }))
 }

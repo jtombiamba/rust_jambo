@@ -34,12 +34,15 @@ interface QuickGameResponse {
     type: 'human' | 'bot'
     name: string
     position: number
+    display_position: number
     cards: number[]
     cards_count: number
   }>
   status: string
   current_turn: number
   bet: number
+  max_players: number
+  deck_slots?: (number | null)[]
 }
 
 interface Props {
@@ -227,6 +230,19 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     }
   }
 
+  const handleDeclineInvite = async (gameId: string) => {
+    setJoiningGameId(gameId)
+    try {
+      await axios.post(`/api/games/${gameId}/decline`)
+      setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
+      showToast('Invitation declined')
+    } catch (err: unknown) {
+      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Failed to decline invitation')
+    } finally {
+      setJoiningGameId(null)
+    }
+  }
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       if (sortDir === 'desc') {
@@ -350,13 +366,22 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                       </p>
                     )}
                   </div>
-                  <button
-                    onClick={() => handleAcceptInvite(inv.game_id)}
-                    disabled={joiningGameId === inv.game_id}
-                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium w-full sm:w-auto"
-                  >
-                    {joiningGameId === inv.game_id ? 'Joining...' : 'Accept'}
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleAcceptInvite(inv.game_id)}
+                      disabled={joiningGameId === inv.game_id}
+                      className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium w-full sm:w-auto"
+                    >
+                      {joiningGameId === inv.game_id ? '...' : 'Accept'}
+                    </button>
+                    <button
+                      onClick={() => handleDeclineInvite(inv.game_id)}
+                      disabled={joiningGameId === inv.game_id}
+                      className="px-4 py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500 disabled:opacity-50 text-sm font-medium w-full sm:w-auto"
+                    >
+                      Decline
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

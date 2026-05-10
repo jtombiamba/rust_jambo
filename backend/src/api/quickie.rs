@@ -68,6 +68,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 2,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));

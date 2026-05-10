@@ -8,7 +8,9 @@ use crate::api::dto::responses::{
     MultiplayerGameResponse, PlayCardResponse, PlayerInfoDto, QuickGameResponse,
 };
 use crate::database::models::{GameStatus, Player, PlayerType};
-use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
+use crate::database::repositories::{
+    GameCardRepository, GameRepository, PlayerProfileRepository, PlayerRepository,
+};
 use crate::error::GameError;
 use crate::game::bot_scheduler::BotScheduler;
 use crate::game::distribution::distribute_cards;
@@ -35,6 +37,8 @@ pub struct QuickGameOutcome {
     pub status: String,
     pub current_turn: i32,
     pub bet: i32,
+    pub max_players: i32,
+    pub invite_expires_at: Option<String>,
     pub deck_slots: Option<Vec<Option<i32>>>,
 }
 
@@ -92,6 +96,8 @@ impl From<QuickGameOutcome> for QuickGameResponse {
             status: o.status,
             current_turn: o.current_turn,
             bet: o.bet,
+            max_players: o.max_players,
+            invite_expires_at: o.invite_expires_at,
             deck_slots: o.deck_slots,
         }
     }
@@ -144,6 +150,8 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
         user_id: Uuid,
         pseudo: &str,
     ) -> Result<AcceptInviteOutcome, GameError>;
+
+    async fn decline_invite(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError>;
 
     #[allow(dead_code)]
     async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError>;
@@ -330,6 +338,13 @@ impl GameOrchestrator {
         })
     }
 
+    pub async fn decline_invite(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
+        self.game_service
+            .decline_invite(game_id, user_id)
+            .await
+            .map_err(map_service_error)
+    }
+
     #[allow(dead_code)]
     pub async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
         self.game_service
@@ -350,6 +365,26 @@ impl GameOrchestrator {
         let game_repo = GameRepository::new(self.db.clone());
         let player_repo = PlayerRepository::new(self.db.clone());
         let card_repo = GameCardRepository::new(self.db.clone());
+        let profile_repo = PlayerProfileRepository::new(self.db.clone());
+        const SOLO_BET: i32 = 10;
+
+        let profile = profile_repo
+            .find_by_user_id(user_id)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or_else(|| {
+                GameError::Internal(Box::new(std::io::Error::other("Player profile not found")))
+            })?;
+
+        if profile.credit < SOLO_BET {
+            return Err(GameError::InsufficientCredits);
+        }
+
+        let new_credit = profile.credit - SOLO_BET;
+        profile_repo
+            .update_credit(user_id, new_credit)
+            .await
+            .map_err(GameError::Database)?;
 
         let game = game_repo.create(10, false).await.map_err(|e| {
             tracing::error!("Failed to create game: {}", e);
@@ -361,6 +396,14 @@ impl GameOrchestrator {
             .await
             .map_err(|e| {
                 tracing::error!("Failed to create human player: {}", e);
+                GameError::Database(e)
+            })?;
+
+        player_repo
+            .update_credits(human_player.id, new_credit)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to update player credits: {}", e);
                 GameError::Database(e)
             })?;
 
@@ -453,6 +496,7 @@ impl GameOrchestrator {
                     display_position: player.position,
                     cards,
                     cards_count: 5,
+                    is_current_user: matches!(player.player_type, PlayerType::Human),
                 }
             })
             .collect();
@@ -475,6 +519,8 @@ impl GameOrchestrator {
             status: "active".to_string(),
             current_turn: initial_rank,
             bet: 10,
+            max_players: 4,
+            invite_expires_at: None,
             deck_slots: None,
         })
     }
@@ -597,6 +643,7 @@ impl GameOrchestrator {
                     display_position: player.position,
                     cards,
                     cards_count: 5,
+                    is_current_user: matches!(player.player_type, PlayerType::Human),
                 }
             })
             .collect();
@@ -620,6 +667,8 @@ impl GameOrchestrator {
             status: "active".to_string(),
             current_turn: initial_rank,
             bet: 10,
+            max_players: 4,
+            invite_expires_at: None,
             deck_slots: None,
         })
     }
@@ -687,6 +736,10 @@ impl GameOrchestratorTrait for GameOrchestrator {
         self.accept_invite(game_id, user_id, pseudo).await
     }
 
+    async fn decline_invite(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
+        self.decline_invite(game_id, user_id).await
+    }
+
     async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
         self.cancel_game(game_id).await
     }
@@ -739,6 +792,8 @@ pub mod mock {
                 status: "active".to_string(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             };
             Self::new(Ok(play_outcome), Ok(quick_outcome))
@@ -830,6 +885,10 @@ pub mod mock {
                 .unwrap()
                 .take()
                 .expect("mock orchestrator accept_invite called more than once")
+        }
+
+        async fn decline_invite(&self, _game_id: Uuid, _user_id: Uuid) -> Result<(), GameError> {
+            Ok(())
         }
 
         async fn cancel_game(&self, _game_id: Uuid) -> Result<(), GameError> {

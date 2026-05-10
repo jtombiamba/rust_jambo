@@ -287,6 +287,33 @@ pub async fn accept_invite(
     }
 }
 
+pub async fn decline_invite(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+) -> HttpResponse {
+    let game_id = path.into_inner();
+
+    match orchestrator
+        .decline_invite(game_id, auth_user.user_id)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": "Invitation declined"
+        })),
+        Err(e) => {
+            let status = match &e {
+                crate::error::GameError::NotInvited => actix_web::http::StatusCode::FORBIDDEN,
+                crate::error::GameError::GameNotPending => actix_web::http::StatusCode::CONFLICT,
+                crate::error::GameError::GameNotFound => actix_web::http::StatusCode::NOT_FOUND,
+                _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            HttpResponse::build(status).json(serde_json::json!({"error": e.to_string()}))
+        }
+    }
+}
+
 pub async fn get_invitations(
     auth_user: AuthenticatedUser,
     db: web::Data<sea_orm::DatabaseConnection>,
@@ -345,14 +372,18 @@ pub async fn start_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
 
     match orchestrator.start_game(game_id, auth_user.user_id).await {
-        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
-            "success": true,
-            "message": "Game started"
-        })),
+        Ok(()) => service
+            .get_game(auth_user.user_id, game_id)
+            .await
+            .unwrap_or_else(|e| {
+                HttpResponse::InternalServerError()
+                    .json(serde_json::json!({"error": e.to_string()}))
+            }),
         Err(e) => {
             let status = match &e {
                 crate::error::GameError::NotCreator => actix_web::http::StatusCode::FORBIDDEN,

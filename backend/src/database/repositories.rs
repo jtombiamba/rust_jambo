@@ -208,6 +208,18 @@ impl PlayerProfileRepository {
         active.updated_at = Set(chrono::Utc::now());
         active.update(&self.connection).await
     }
+
+    pub async fn update_credit(&self, user_id: Uuid, credit: i32) -> Result<PlayerProfile, DbErr> {
+        let profile = player_profile::Entity::find()
+            .filter(player_profile::Column::UserId.eq(user_id))
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("PlayerProfile not found".to_string()))?;
+        let mut active: player_profile::ActiveModel = profile.into();
+        active.credit = Set(credit);
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
 }
 
 #[async_trait]
@@ -418,6 +430,17 @@ impl PlayerRepository {
             .order_by_asc(player::Column::Position)
             .all(&self.connection)
             .await
+    }
+
+    pub async fn update_credits(&self, player_id: Uuid, credits: i32) -> Result<Player, DbErr> {
+        use crate::database::models::player;
+        let model = player::Entity::find_by_id(player_id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Player not found".to_string()))?;
+        let mut active: player::ActiveModel = model.into();
+        active.credits = Set(credits);
+        active.update(&self.connection).await
     }
 
     pub async fn create_with_user(

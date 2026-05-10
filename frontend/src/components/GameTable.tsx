@@ -10,6 +10,7 @@ export interface GamePlayer {
   type: 'human' | 'bot';
   name: string;
   position: number;
+  display_position: number;
   cards: number[];
 }
 
@@ -26,12 +27,15 @@ export interface GameTableProps {
   onCloseGameOver?: () => void;
 }
 
-const positionMap: Record<number, PlayerSlotProps['position']> = {
-  0: 'south',
-  1: 'east',
-  2: 'north',
-  3: 'west',
-};
+function getPositionMap(numPlayers: number): Record<number, PlayerSlotProps['position']> {
+  if (numPlayers <= 2) {
+    return { 0: 'south', 1: 'north' };
+  }
+  if (numPlayers === 3) {
+    return { 0: 'south', 1: 'east', 2: 'north' };
+  }
+  return { 0: 'south', 1: 'east', 2: 'north', 3: 'west' };
+}
 
 const GameTable: React.FC<GameTableProps> = ({
   players,
@@ -45,19 +49,25 @@ const GameTable: React.FC<GameTableProps> = ({
   onReturnToLobby,
   onCloseGameOver,
 }) => {
-  const sortedPlayers = [...players].sort((a, b) => a.position - b.position);
-  while (sortedPlayers.length < 4) {
+  const numPlayers = players.length;
+  const positionMap = getPositionMap(numPlayers);
+
+  const getDisplayPos = (p: GamePlayer) => p.display_position ?? p.position;
+
+  const sortedPlayers = [...players].sort((a, b) => getDisplayPos(a) - getDisplayPos(b));
+  while (sortedPlayers.length < numPlayers) {
     sortedPlayers.push({
       id: `placeholder-${sortedPlayers.length}`,
       type: 'bot',
       name: 'Missing',
       position: sortedPlayers.length,
+      display_position: sortedPlayers.length,
       cards: [],
     });
   }
 
-  const isPlayerRoundWinner = (playerPosition: number) => {
-    return roundWinner !== null && roundWinner.position === playerPosition;
+  const isPlayerRoundWinner = (playerDisplayPosition: number) => {
+    return roundWinner !== null && roundWinner.position === playerDisplayPosition;
   };
 
   return (
@@ -68,9 +78,10 @@ const GameTable: React.FC<GameTableProps> = ({
         {/* Mobile layout: stacked players + center deck */}
         <div className="md:hidden flex flex-col gap-4">
           {sortedPlayers.map((player) => {
-            const position = positionMap[player.position] || 'south';
-            const isCurrentTurn = currentTurn !== undefined && player.position === currentTurn;
-            const isWinner = isPlayerRoundWinner(player.position);
+            const displayPos = getDisplayPos(player);
+            const position = positionMap[displayPos] || 'south';
+            const isCurrentTurn = currentTurn !== undefined && displayPos === currentTurn;
+            const isWinner = isPlayerRoundWinner(displayPos);
 
             return (
               <div key={player.id} className="relative">
@@ -126,9 +137,10 @@ const GameTable: React.FC<GameTableProps> = ({
         {/* Desktop layout: grid with 4 positions */}
         <div className="hidden md:grid grid-cols-3 grid-rows-3 gap-8">
           {sortedPlayers.map((player) => {
-            const position = positionMap[player.position] || 'south';
-            const isCurrentTurn = currentTurn !== undefined && player.position === currentTurn;
-            const isWinner = isPlayerRoundWinner(player.position);
+            const displayPos = getDisplayPos(player);
+            const position = positionMap[displayPos] || 'south';
+            const isCurrentTurn = currentTurn !== undefined && displayPos === currentTurn;
+            const isWinner = isPlayerRoundWinner(displayPos);
 
             let gridClass = '';
             switch (position) {

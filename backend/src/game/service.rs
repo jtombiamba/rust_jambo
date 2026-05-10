@@ -495,6 +495,48 @@ impl GameService {
             .ok_or(GameServiceError::PlayerNotFound)
     }
 
+    pub async fn decline_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), GameServiceError> {
+        let invite_repo = crate::database::repositories::GameInviteRepository::new(self.db.clone());
+
+        let invite = invite_repo
+            .find_invite(game_id, user_id)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::NotInvited)?;
+
+        if invite.status != InviteStatus::Pending {
+            return Err(GameServiceError::GameNotPending);
+        }
+
+        let game = game::Entity::find_by_id(game_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::GameNotFound)?;
+
+        if game.status != GameStatus::Pending {
+            return Err(GameServiceError::GameNotPending);
+        }
+
+        invite_repo
+            .update_invite_status(invite.id, InviteStatus::Declined)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        info!("User {} declined invite for game {}", user_id, game_id);
+        Ok(())
+    }
+
     pub async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameServiceError> {
         let txn = self.db.begin().await.map_err(|e| {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
@@ -1400,8 +1442,11 @@ impl GameService {
         let credits = calculate_payment(winner_position, total_players, bet);
 
         // Update player credits (via txn — atomic with game state)
+        // Each player's bet was deducted upfront at game creation from their profile.
+        // Add it back here so the net change reflects only the game outcome.
+        // (e.g. 4-player normal: winner nets +3*bet, losers net -bet)
         for (idx, player) in players.iter().enumerate() {
-            let new_credits = player.credits + credits[idx];
+            let new_credits = player.credits + game_model.bet + credits[idx];
             let mut player_active: player::ActiveModel = player.clone().into();
             player_active.credits = ActiveValue::Set(new_credits);
             player_active.update(txn).await.map_err(|e| {
@@ -1437,61 +1482,6 @@ impl GameService {
                     })?;
                 }
             }
-        }
-
-        Ok(())
-    }
-
-    /// Process payment for a finished game (status Finished, Kora, DoubleKora).
-    /// Updates player credits.
-    /// NOTE: This runs outside a transaction. Prefer process_payment_in_txn for atomicity.
-    #[allow(dead_code)]
-    pub async fn process_payment(&self, game_id: Uuid) -> Result<(), GameServiceError> {
-        let game_repo = GameRepository::new(self.db.clone());
-        let player_repo = PlayerRepository::new(self.db.clone());
-        let game = game_repo
-            .find_by_id(game_id)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
-            .ok_or(GameServiceError::GameNotFound)?;
-        if game.status != GameStatus::Finished
-            && game.status != GameStatus::Kora
-            && game.status != GameStatus::DoubleKora
-        {
-            return Ok(());
-        }
-        let players = player_repo.list_by_game(game_id).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
-        let total_players = players.len();
-        let winner_id = game
-            .winner_id
-            .ok_or_else(|| GameServiceError::Internal("No winner set".to_string()))?;
-        let winner_position = players
-            .iter()
-            .position(|p| p.id == winner_id)
-            .ok_or_else(|| GameServiceError::Internal("Winner not in player list".to_string()))?;
-
-        // Determine bet multiplier based on status
-        let bet_multiplier = match game.status {
-            GameStatus::Kora => 2,
-            GameStatus::DoubleKora => 4,
-            _ => 1,
-        };
-        let bet = game.bet * bet_multiplier;
-
-        // Calculate payment using existing function
-        let credits = calculate_payment(winner_position, total_players, bet);
-
-        // Update player credits (simplified, no profile table yet)
-        for (idx, player) in players.iter().enumerate() {
-            let mut player_active: player::ActiveModel = player.clone().into();
-            player_active.credits = ActiveValue::Set(player.credits + credits[idx]);
-            player_active.update(&self.db).await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
         }
 
         Ok(())

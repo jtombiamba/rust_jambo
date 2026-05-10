@@ -21,12 +21,15 @@ interface QuickGameResponse {
     type: 'human' | 'bot'
     name: string
     position: number
+    display_position: number
     cards: number[]
     cards_count: number
   }>
   status: string
   current_turn: number
   bet: number
+  max_players: number
+  deck_slots?: (number | null)[]
 }
 
 interface MultiplayerGameResponse {
@@ -156,9 +159,10 @@ function AppContent() {
     setLobbyGameId(null)
   }
 
-  const handleGameStartFromLobby = (data: QuickGameResponse) => {
-    if (data.game_id && data.players) {
-      setGameStore(data.game_id, data.players, data.status || 'active', data.current_turn || 0, data.bet || 10)
+  const handleGameStartFromLobby = (data: unknown) => {
+    const d = data as QuickGameResponse
+    if (d.game_id && d.players) {
+      setGameStore(d.game_id, d.players, d.status || 'active', d.current_turn || 0, d.bet || 10, d.deck_slots || null)
       setLobbyGameId(null)
     }
   }
@@ -233,7 +237,11 @@ function AppContent() {
   }
 
   const handleResumeGame = (data: QuickGameResponse) => {
-    setGameStore(data.game_id, data.players, data.status, data.current_turn, data.bet)
+    if (data.status === 'pending' || data.status === 'ready') {
+      setLobbyGameId(data.game_id)
+    } else {
+      setGameStore(data.game_id, data.players, data.status, data.current_turn, data.bet, data.deck_slots || null)
+    }
   }
 
   if (isAuthenticated) {

@@ -229,6 +229,10 @@ async fn main() -> std::io::Result<()> {
                                 web::post().to(api::dashboard::accept_invite),
                             )
                             .route(
+                                "/{game_id}/decline",
+                                web::post().to(api::dashboard::decline_invite),
+                            )
+                            .route(
                                 "/{game_id}/start",
                                 web::post().to(api::dashboard::start_game),
                             )

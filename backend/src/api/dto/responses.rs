@@ -22,6 +22,7 @@ pub struct PlayerInfoDto {
     pub display_position: i32,
     pub cards: Vec<i32>,
     pub cards_count: i32,
+    pub is_current_user: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +32,9 @@ pub struct QuickGameResponse {
     pub status: String,
     pub current_turn: i32,
     pub bet: i32,
+    pub max_players: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invite_expires_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deck_slots: Option<Vec<Option<i32>>>,
 }

@@ -5,6 +5,7 @@ export interface Player {
   type: 'human' | 'bot';
   name: string;
   position: number;
+  display_position: number;
   cards: number[];
   cards_count?: number;
 }
@@ -37,7 +38,7 @@ export interface GameState {
   remainingCards: Record<string, number>;
   roundWinner: RoundWinner | null;
   gameOver: GameOverData | null;
-  setGame: (gameId: string, players: Player[], status: string, currentTurn: number, bet: number) => void;
+  setGame: (gameId: string, players: Player[], status: string, currentTurn: number, bet: number, deckSlots?: (number | null)[] | null) => void;
   resetGame: () => void;
   updatePlayerCards: (playerId: string, cards: number[]) => void;
   setCurrentTurn: (turn: number) => void;
@@ -64,12 +65,19 @@ export const useGameStore = create<GameState>((set, get) => ({
   remainingCards: {},
   roundWinner: null,
   gameOver: null,
-  setGame: (gameId, players, status, currentTurn, bet) => {
+  setGame: (gameId, players, status, currentTurn, bet, deckSlots?) => {
     const remainingCards: Record<string, number> = {};
-    players.forEach((p) => {
+    const playersWithDisplay = players.map((p) => ({
+      ...p,
+      display_position: p.display_position ?? p.position,
+    }));
+    playersWithDisplay.forEach((p) => {
       remainingCards[p.id] = p.cards_count ?? p.cards.length;
     });
-    set({ gameId, players, status, currentTurn, bet, remainingCards });
+    const resolvedDeckSlots: (number | null)[] = deckSlots && deckSlots.length === players.length
+      ? deckSlots
+      : new Array(players.length).fill(null);
+    set({ gameId, players: playersWithDisplay, status, currentTurn, bet, remainingCards, deckSlots: resolvedDeckSlots });
   },
   resetGame: () =>
     set({
@@ -78,7 +86,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       status: 'pending',
       currentTurn: 0,
       bet: 10,
-      deckSlots: [null, null, null, null],
+      deckSlots: [],
       remainingCards: {},
       roundWinner: null,
       gameOver: null,
@@ -99,8 +107,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ roundWinner: winner }),
   clearRoundWinner: () =>
     set({ roundWinner: null }),
-  clearDeckSlots: () =>
-    set({ deckSlots: [null, null, null, null] }),
+  clearDeckSlots: () => {
+    const players = get().players;
+    set({ deckSlots: new Array(players.length).fill(null) });
+  },
   setGameOver: (gameOverData) =>
     set({ gameOver: gameOverData }),
   clearGameOver: () =>
@@ -125,11 +135,11 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (nextTurn) {
       const nextPlayer = updatedPlayers.find((p) => p.id === nextTurn);
       if (nextPlayer) {
-        nextTurnPosition = nextPlayer.position;
+        nextTurnPosition = nextPlayer.display_position;
       }
     } else {
-      // Default: advance to next player position (circular)
-      nextTurnPosition = (state.currentTurn + 1) % updatedPlayers.length;
+      const maxDisplayPos = Math.max(...updatedPlayers.map((p) => p.display_position), 0);
+      nextTurnPosition = (state.currentTurn + 1) % (maxDisplayPos + 1);
     }
     // Update deck slots? For simplicity, we can add the played card to the first empty slot
     const newDeckSlots = [...state.deckSlots];

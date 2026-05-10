@@ -16,7 +16,7 @@ interface UserSearchItem {
 interface Props {
   gameId: string
   onBack: () => void
-  onGameStart: (data: Record<string, unknown>) => void
+  onGameStart: (data: unknown) => void
 }
 
 export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
@@ -53,14 +53,19 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
         onBack()
         return
       }
+      if (data.status === 'active') {
+        onGameStart(data)
+        return
+      }
       setStatus(data.status)
       setBet(data.bet ?? 0)
       setMaxPlayers(data.max_players ?? data.players?.length ?? 4)
 
-      const lobbyPlayers: LobbyPlayer[] = (data.players || []).map((p: { name: string; position: number }) => ({
+      const rawPlayers = data.players || []
+      const lobbyPlayers: LobbyPlayer[] = rawPlayers.map((p: { name: string; position: number; is_current_user?: boolean }) => ({
         pseudo: p.name,
         position: p.position,
-        isCurrentUser: true,
+        isCurrentUser: p.is_current_user ?? false,
       }))
       setPlayers(lobbyPlayers)
       setIsCreator(lobbyPlayers.some(p => p.position === 0 && p.isCurrentUser))
@@ -68,9 +73,15 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       const expiresHeader = data.invite_expires_at
       if (expiresHeader) setExpiresAt(expiresHeader)
     } catch (err) {
+      const status = (err as { response?: { status?: number } }).response?.status
+      if (status === 404 || status === 403) {
+        showToast('You do not have access to this game lobby.')
+        onBack()
+        return
+      }
       console.error('Failed to refresh lobby', err)
     }
-  }, [gameId, onBack])
+  }, [gameId, onBack, onGameStart])
 
   useEffect(() => {
     refreshLobby()

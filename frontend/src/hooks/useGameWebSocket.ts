@@ -39,9 +39,11 @@ export function useGameWebSocket(gameId: string | null) {
           }, 1000);
 
           const winType = (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal';
+          const winnerPlayer = players.find((p) => p.id === event.winner_id);
+          const winnerDisplayPos = winnerPlayer?.display_position ?? event.winner_position;
           setRoundWinner({
             playerId: event.winner_id,
-            position: event.winner_position,
+            position: winnerDisplayPos,
             winType,
           });
 
@@ -82,7 +84,7 @@ export function useGameWebSocket(gameId: string | null) {
         case 'turn_changed': {
           const player = players.find((p) => p.id === event.current_turn);
           if (player) {
-            setCurrentTurn(player.position);
+            setCurrentTurn(player.display_position ?? player.position);
           }
           break;
         }
