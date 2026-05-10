@@ -40,9 +40,18 @@ impl ResponseError for AppError {
                 GameError::GameNotFound | GameError::PlayerNotFound | GameError::CardNotFound => {
                     StatusCode::NOT_FOUND
                 }
-                GameError::NotYourTurn | GameError::InvalidCard => StatusCode::FORBIDDEN,
-                GameError::GameFinished => StatusCode::CONFLICT,
-                GameError::RoundNotComplete => StatusCode::BAD_REQUEST,
+                GameError::NotYourTurn
+                | GameError::InvalidCard
+                | GameError::NotCreator
+                | GameError::NotInvited => StatusCode::FORBIDDEN,
+                GameError::GameFinished
+                | GameError::GameNotPending
+                | GameError::AlreadyJoined
+                | GameError::GameFull
+                | GameError::CreatorCannotJoin
+                | GameError::GameNotReady => StatusCode::CONFLICT,
+                GameError::RoundNotComplete | GameError::InviteExpired => StatusCode::BAD_REQUEST,
+                GameError::InsufficientCredits => StatusCode::PAYMENT_REQUIRED,
                 GameError::Database(_) | GameError::Internal(_) => {
                     StatusCode::INTERNAL_SERVER_ERROR
                 }

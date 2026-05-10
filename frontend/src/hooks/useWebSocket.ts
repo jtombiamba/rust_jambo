@@ -8,11 +8,16 @@ export type GameEvent =
   | { type: 'card_played'; game_id: string; player_id: string; card_index: number; next_turn?: string }
   | { type: 'round_completed'; game_id: string; round_number: number; winner_id: string; winner_position: number; win_type?: string; deck_slots: (number | null)[] }
   | { type: 'game_finished'; game_id: string; winner_id?: string; winner_name?: string; winner_position?: number; status: string; final_score?: number; rounds_played: number }
-  | { type: 'turn_changed'; game_id: string; current_turn: string };
+  | { type: 'turn_changed'; game_id: string; current_turn: string }
+  | { type: 'player_joined'; game_id: string; player_id: string; user_id: string; pseudo: string; position: number; player_count: number; max_players: number }
+  | { type: 'game_cancelled'; game_id: string; reason: string }
+  | { type: 'game_ready'; game_id: string }
+  | { type: 'player_disconnected'; game_id: string; player_id: string; player_position: number; disconnected_at?: string }
+  | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string };
 
 export type OutgoingMessage =
   | { type: 'ping' }
-  | { type: 'join_game'; game_id: string }
+  | { type: 'join_game'; game_id: string; player_id?: string; player_position?: number }
   | { type: 'leave_game' };
 
 interface UseWebSocketOptions {
@@ -148,10 +153,10 @@ class WebSocketManager {
       this.send({ type: 'join_game', game_id: this.gameId });
     };
 
-    ws.onmessage = (event) => {
+      ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed'].includes(data.type)) {
+        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed', 'player_joined', 'game_cancelled', 'game_ready', 'player_disconnected', 'player_reconnected'].includes(data.type)) {
           log('Received GameEvent:', data);
           this.subscribers.forEach(callback => callback(data as GameEvent));
         } else {

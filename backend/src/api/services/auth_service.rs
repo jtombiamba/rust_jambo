@@ -193,7 +193,7 @@ impl<R: UserRepoTrait> AuthService<R> {
                 }
             })?;
 
-        let token = jwt::generate_token(user.id, &self.config).map_err(|e| {
+        let token = jwt::generate_token(user.id, &user.pseudo, &self.config).map_err(|e| {
             tracing::error!("JWT generation failed: {}", e);
             AuthError::Internal {
                 error: "Internal server error".into(),
@@ -257,7 +257,7 @@ impl<R: UserRepoTrait> AuthService<R> {
             }
         }
 
-        let token = jwt::generate_token(user.id, &self.config).map_err(|e| {
+        let token = jwt::generate_token(user.id, &user.pseudo, &self.config).map_err(|e| {
             tracing::error!("JWT generation failed: {}", e);
             AuthError::Internal {
                 error: "Internal server error".into(),

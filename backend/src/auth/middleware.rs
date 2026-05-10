@@ -57,6 +57,7 @@ where
                 Ok(claims) => {
                     req.extensions_mut().insert(AuthenticatedUser {
                         user_id: claims.sub,
+                        pseudo: claims.pseudo,
                     });
                     true
                 }

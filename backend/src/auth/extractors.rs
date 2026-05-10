@@ -2,9 +2,10 @@ use actix_web::{Error, FromRequest, HttpMessage, HttpRequest};
 use serde_json::json;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     pub user_id: Uuid,
+    pub pseudo: String,
 }
 
 impl FromRequest for AuthenticatedUser {
@@ -15,7 +16,7 @@ impl FromRequest for AuthenticatedUser {
         let result = req
             .extensions()
             .get::<AuthenticatedUser>()
-            .copied()
+            .cloned()
             .ok_or_else(|| {
                 actix_web::error::ErrorUnauthorized(
                     json!({"success": false, "error": "Authentication required"}).to_string(),

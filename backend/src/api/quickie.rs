@@ -59,6 +59,8 @@ mod tests {
                 card_id: Uuid::new_v4(),
                 next_turn: Some(Uuid::new_v4()),
                 game_ended: false,
+                round_completed: false,
+                current_round: 1,
             }),
             Ok(QuickGameOutcome {
                 game_id,
@@ -87,6 +89,8 @@ mod tests {
                 card_id: Uuid::new_v4(),
                 next_turn: None,
                 game_ended: true,
+                round_completed: false,
+                current_round: 1,
             }),
             Err(GameError::Database(sea_orm::DbErr::Custom(
                 "db error".into(),

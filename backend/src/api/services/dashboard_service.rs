@@ -11,6 +11,7 @@ use crate::api::dto::dashboard::{
 use crate::api::dto::responses::{PlayerInfoDto, QuickGameResponse};
 use crate::database::models::{GameStatus, PlayerType};
 use crate::database::traits::DashboardRepoTrait;
+use crate::game::service::compute_display_position;
 
 pub struct DashboardService<R: DashboardRepoTrait> {
     repo: Arc<R>,
@@ -52,31 +53,24 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
     ) -> Result<HttpResponse, actix_web::Error> {
         let page = query.page.unwrap_or(1).max(1);
         let per_page = query.per_page.unwrap_or(10).clamp(1, 100);
+        let filter = query.to_filter();
 
-        let all_players = match self.repo.list_players_for_user(user_id).await {
-            Ok(rows) => rows,
+        let (pairs, total) = match self
+            .repo
+            .list_players_for_user_filtered(user_id, filter, page, per_page)
+            .await
+        {
+            Ok(result) => result,
             Err(e) => {
-                tracing::error!("Failed to fetch player records: {}", e);
+                tracing::error!("Failed to fetch filtered player records: {}", e);
                 return Ok(HttpResponse::InternalServerError()
                     .json(json!({"error": "Internal server error"})));
             }
         };
 
-        let total = all_players.len() as u64;
-        let start = ((page - 1) as usize * per_page as usize).min(all_players.len());
-        let end = (start + per_page as usize).min(all_players.len());
-        let page_players = &all_players[start..end];
-
         let mut game_items = Vec::new();
-        for player in page_players {
-            let game = self.repo.find_game_by_id(player.game_id).await;
-
-            let (status, bet, played_at, winner_id) = match game {
-                Ok(Some(g)) => (g.status, g.bet, g.created_at, g.winner_id),
-                _ => continue,
-            };
-
-            let result = if let Some(wid) = winner_id {
+        for (player, game) in pairs {
+            let result = if let Some(wid) = game.winner_id {
                 if player.id == wid {
                     "win".to_string()
                 } else {
@@ -86,22 +80,24 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 "draw".to_string()
             };
 
-            let status_str = match status {
+            let status_str = match game.status {
                 GameStatus::Pending => "pending",
                 GameStatus::Active => "active",
                 GameStatus::Finished => "finished",
                 GameStatus::Cancelled => "cancelled",
                 GameStatus::Kora => "kora",
                 GameStatus::DoubleKora => "double_kora",
+                GameStatus::Ready => "ready",
             };
 
             game_items.push(GameHistoryItem {
                 game_id: player.game_id.to_string(),
                 status: status_str.to_string(),
-                bet,
+                bet: game.bet,
                 result,
-                played_at: played_at.to_rfc3339(),
+                played_at: game.created_at.to_rfc3339(),
                 credits_after: player.credits,
+                player_count: game.max_players as i32,
             });
         }
 
@@ -148,7 +144,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
         };
 
         match game.status {
-            GameStatus::Active | GameStatus::Pending => {}
+            GameStatus::Active | GameStatus::Pending | GameStatus::Ready => {}
             _ => {
                 return Ok(HttpResponse::Gone().json(json!({
                     "error": "Game already finished",
@@ -157,7 +153,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             }
         }
 
-        build_game_state_response(&*self.repo, &game).await
+        build_game_state_response(&*self.repo, &game, user_id).await
     }
 
     pub async fn get_active_game(&self, user_id: Uuid) -> Result<HttpResponse, actix_web::Error> {
@@ -176,7 +172,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
         for p in &players {
             if let Ok(Some(game)) = self.repo.find_game_by_id(p.game_id).await {
                 if game.status == GameStatus::Active {
-                    return build_game_state_response(&*self.repo, &game).await;
+                    return build_game_state_response(&*self.repo, &game, user_id).await;
                 }
             }
         }
@@ -188,6 +184,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
 async fn build_game_state_response(
     repo: &dyn DashboardRepoTrait,
     game: &crate::database::models::Game,
+    user_id: Uuid,
 ) -> Result<HttpResponse, actix_web::Error> {
     let all_players = match repo.list_players_by_game_ordered(game.id).await {
         Ok(rows) => rows,
@@ -199,15 +196,17 @@ async fn build_game_state_response(
         }
     };
 
-    let human_player = all_players
-        .iter()
-        .find(|ap| matches!(ap.player_type, PlayerType::Human));
+    let num_players = all_players.len();
 
-    let human_cards: Vec<i32> = if let Some(hp) = human_player {
-        match repo.find_cards_for_player(hp.id, true).await {
+    let my_player = all_players.iter().find(|p| p.user_id == Some(user_id));
+
+    let my_position = my_player.map(|p| p.position as usize).unwrap_or(0);
+
+    let my_cards: Vec<i32> = if let Some(mp) = my_player {
+        match repo.find_cards_for_player(mp.id, true).await {
             Ok(cards) => cards.iter().map(|c| c.card_index).collect(),
             Err(e) => {
-                tracing::error!("Failed to fetch human cards: {}", e);
+                tracing::error!("Failed to fetch my cards: {}", e);
                 Vec::new()
             }
         }
@@ -233,13 +232,13 @@ async fn build_game_state_response(
     }
 
     let current_round = game.roll;
-    let num_players = all_players.len();
     let mut deck_slots: Vec<Option<i32>> = vec![None; num_players];
     for card in &all_game_cards {
         if card.played && card.round == Some(current_round) {
             if let Some(pid) = card.player_id {
                 if let Some(pos) = all_players.iter().position(|p| p.id == pid) {
-                    deck_slots[pos] = Some(card.card_index);
+                    let display_pos = compute_display_position(pos, num_players, my_position);
+                    deck_slots[display_pos] = Some(card.card_index);
                 }
             }
         }
@@ -247,22 +246,22 @@ async fn build_game_state_response(
 
     let players_json: Vec<PlayerInfoDto> = all_players
         .iter()
-        .map(|player| {
+        .enumerate()
+        .map(|(idx, player)| {
             let player_type = match player.player_type {
                 PlayerType::Human => "human",
                 PlayerType::Bot => "bot",
             };
-            let cards = if matches!(player.player_type, PlayerType::Human) {
-                human_cards.clone()
-            } else {
-                Vec::new()
-            };
+            let is_me = player.user_id == Some(user_id);
+            let cards = if is_me { my_cards.clone() } else { Vec::new() };
             let cards_count = *remaining_counts.get(&player.id).unwrap_or(&0) as i32;
+            let display_pos = compute_display_position(idx, num_players, my_position);
             PlayerInfoDto {
                 id: player.id,
                 player_type: player_type.to_string(),
                 name: player.name.clone(),
                 position: player.position,
+                display_position: display_pos as i32,
                 cards,
                 cards_count,
             }
@@ -270,15 +269,18 @@ async fn build_game_state_response(
         .collect();
 
     let current_turn = game.rank.unwrap_or(0);
+    let current_turn_display =
+        compute_display_position(current_turn as usize, num_players, my_position) as i32;
 
     Ok(HttpResponse::Ok().json(QuickGameResponse {
         game_id: game.id,
         players: players_json,
         status: match game.status {
             GameStatus::Active => "active".to_string(),
+            GameStatus::Ready => "ready".to_string(),
             _ => "pending".to_string(),
         },
-        current_turn,
+        current_turn: current_turn_display,
         bet: game.bet,
         deck_slots: Some(deck_slots),
     }))
@@ -287,6 +289,7 @@ async fn build_game_state_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::dto::dashboard::GameFilter;
     use crate::database::models::{Game, GameCard, Player, PlayerProfile};
     use actix_web::http::StatusCode;
     use async_trait::async_trait;
@@ -378,6 +381,25 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        async fn list_players_for_user_filtered(
+            &self,
+            _user_id: Uuid,
+            _filter: GameFilter,
+            _page: u64,
+            _per_page: u64,
+        ) -> Result<(Vec<(Player, Game)>, u64), DbErr> {
+            let players = self.players.lock().unwrap().clone();
+            let games = self.games.lock().unwrap().clone();
+            let total = players.len() as u64;
+            let mut pairs = Vec::new();
+            for p in &players {
+                if let Some(g) = games.get(&p.game_id) {
+                    pairs.push((p.clone(), g.clone()));
+                }
+            }
+            Ok((pairs, total))
+        }
     }
 
     #[tokio::test]
@@ -398,6 +420,10 @@ mod tests {
                 PaginationParams {
                     page: None,
                     per_page: None,
+                    status: None,
+                    order_by: None,
+                    bet_min: None,
+                    bet_max: None,
                 },
             )
             .await

@@ -8,6 +8,7 @@ use actix_web::{
 use tracing::Instrument;
 use uuid::Uuid;
 
+use super::metrics;
 use super::CorrelationId;
 
 pub struct CorrelationIdMiddleware;
@@ -79,9 +80,39 @@ where
             let duration = start.elapsed();
             span.record("http.duration_ms", duration.as_millis() as u64);
 
+            let status_code = match &result {
+                Ok(resp) => resp.status().as_u16(),
+                Err(_) => 500u16,
+            };
+
+            let method_str = method.as_str();
+            let path_segments: Vec<&str> = path.split('/').collect();
+            let normalized_path = if path_segments.len() >= 4 && path_segments[1] == "api" {
+                let parts: Vec<&str> = path_segments[0..4]
+                    .iter()
+                    .map(|seg| {
+                        if Uuid::parse_str(seg).is_ok() {
+                            "{id}"
+                        } else {
+                            seg
+                        }
+                    })
+                    .collect();
+                format!("/{}", parts.join("/"))
+            } else {
+                path.clone()
+            };
+
+            metrics::HTTP_REQUESTS_TOTAL
+                .with_label_values(&[method_str, &normalized_path, &status_code.to_string()])
+                .inc();
+            metrics::HTTP_REQUEST_DURATION_SECONDS
+                .with_label_values(&[method_str, &normalized_path])
+                .observe(duration.as_secs_f64());
+
             match result {
                 Ok(response) => {
-                    span.record("http.status_code", response.status().as_u16());
+                    span.record("http.status_code", status_code);
                     let correlation_id_str = correlation_id.to_string();
                     let mut response = response;
                     let headers = response.headers_mut();

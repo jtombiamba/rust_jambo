@@ -6,6 +6,7 @@ use tracing::info;
 
 mod api;
 mod auth;
+mod cache;
 mod config;
 mod database;
 mod error;
@@ -15,11 +16,14 @@ mod observability;
 mod websocket;
 
 use api::anonymous::get_anonymous_stats;
-use api::game::{get_my_cards, list_games, play_card, start_game};
+use api::game::play_card;
 use api::middleware::ip_forward::ForwardedIpMiddleware;
+#[allow(unused_imports)]
+use api::middleware::rate_limiter::RateLimiterMiddleware;
 use api::quickie::create_quick_game;
 use auth::config::AuthConfig;
 use auth::middleware::AuthMiddleware;
+use cache::UserCache;
 use config::Config;
 use database::repositories::{DashboardRepository, UserRepository};
 use game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
@@ -116,6 +120,9 @@ async fn main() -> std::io::Result<()> {
     let auth_service_data = web::Data::new(auth_service);
     let dashboard_service_data = web::Data::new(dashboard_service);
 
+    let user_cache = Arc::new(UserCache::new());
+    let user_cache_data = web::Data::new(user_cache.clone());
+
     let orchestrator: Arc<dyn GameOrchestratorTrait> = Arc::new(GameOrchestrator::new(
         db_clone,
         redis_client.clone(),
@@ -126,7 +133,7 @@ async fn main() -> std::io::Result<()> {
     let redis_client_data = web::Data::new(redis_client.clone());
     let rabbitmq_client_data = web::Data::new(rabbitmq_client.clone());
 
-    let ws_manager_instance = WebSocketManager::new(redis_client);
+    let ws_manager_instance = WebSocketManager::new(redis_client.clone());
     if let Err(e) = ws_manager_instance.start_redis_subscriber().await {
         tracing::warn!("Failed to start Redis subscriber: {}", e);
     }
@@ -136,10 +143,31 @@ async fn main() -> std::io::Result<()> {
         .await;
     let ws_manager = web::Data::new(ws_manager_instance);
 
+    let redis_for_canceller = redis_client.clone();
+    let db_for_canceller = db_connection.clone();
+    tokio::spawn(async move {
+        let game_service =
+            game::service::GameService::new_with_redis(db_for_canceller, redis_for_canceller);
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            match game_service.cancel_expired_games().await {
+                Ok(0) => {}
+                Ok(n) => {
+                    tracing::info!("Cancelled {} expired multiplayer games", n);
+                }
+                Err(e) => {
+                    tracing::error!("Error cancelling expired games: {}", e);
+                }
+            }
+        }
+    });
+
     HttpServer::new(move || {
         info!("Registering routes");
         App::new()
             .wrap(CorrelationIdMiddleware)
+            //.wrap(RateLimiterMiddleware::new()) // TODO: uncomment for production
             .wrap(ForwardedIpMiddleware)
             .app_data(web::Data::new(db_connection.clone()))
             .app_data(redis_client_data.clone())
@@ -149,16 +177,14 @@ async fn main() -> std::io::Result<()> {
             .app_data(auth_config_data.clone())
             .app_data(auth_service_data.clone())
             .app_data(dashboard_service_data.clone())
+            .app_data(user_cache_data.clone())
             .service(health_check)
             .service(metrics)
             .service(
                 web::scope("/api")
                     .service(get_anonymous_stats)
                     .service(create_quick_game)
-                    .service(list_games)
-                    .service(get_my_cards)
                     .service(play_card)
-                    .service(start_game)
                     .service(
                         web::scope("/auth")
                             .route("/register", web::post().to(api::auth::register))
@@ -185,7 +211,34 @@ async fn main() -> std::io::Result<()> {
                             .route(
                                 "/active-game",
                                 web::get().to(api::dashboard::get_active_game),
+                            )
+                            .route(
+                                "/invitations",
+                                web::get().to(api::dashboard::get_invitations),
                             ),
+                    )
+                    .service(
+                        web::scope("/games")
+                            .wrap(AuthMiddleware)
+                            .route(
+                                "/{game_id}/invites",
+                                web::post().to(api::dashboard::send_invites),
+                            )
+                            .route(
+                                "/{game_id}/join",
+                                web::post().to(api::dashboard::accept_invite),
+                            )
+                            .route(
+                                "/{game_id}/start",
+                                web::post().to(api::dashboard::start_game),
+                            )
+                            .route("/{game_id}/play", web::post().to(api::dashboard::play_game))
+                            .route("/{game_id}/me", web::get().to(api::dashboard::game_state)),
+                    )
+                    .service(
+                        web::scope("/users")
+                            .wrap(AuthMiddleware)
+                            .route("/search", web::get().to(api::dashboard::search_users)),
                     ),
             )
             .service(websocket::scope())

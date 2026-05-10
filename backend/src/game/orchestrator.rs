@@ -4,13 +4,15 @@ use sea_orm::DatabaseConnection;
 use tracing;
 use uuid::Uuid;
 
-use crate::api::dto::responses::{PlayCardResponse, PlayerInfoDto, QuickGameResponse};
+use crate::api::dto::responses::{
+    MultiplayerGameResponse, PlayCardResponse, PlayerInfoDto, QuickGameResponse,
+};
 use crate::database::models::{GameStatus, Player, PlayerType};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::error::GameError;
 use crate::game::bot_scheduler::BotScheduler;
 use crate::game::distribution::distribute_cards;
-use crate::game::service::{CardPlayResult, GameService};
+use crate::game::service::{CardPlayResult, GameService, MultiplayerGameOutcome};
 use crate::messaging::{RabbitMQClient, RedisClient};
 use crate::observability::CorrelationId;
 
@@ -20,8 +22,9 @@ use crate::observability::CorrelationId;
 pub struct PlayCardOutcome {
     pub card_id: Uuid,
     pub next_turn: Option<Uuid>,
-    #[allow(dead_code)]
     pub game_ended: bool,
+    pub round_completed: bool,
+    pub current_round: i32,
 }
 
 /// Outcome of a create_quick_game operation.
@@ -35,6 +38,38 @@ pub struct QuickGameOutcome {
     pub deck_slots: Option<Vec<Option<i32>>>,
 }
 
+/// Outcome of a create_multiplayer_game operation.
+#[derive(Debug, Clone)]
+pub struct MultiplayerCreationOutcome {
+    pub game_id: Uuid,
+    pub status: String,
+    pub bet: i32,
+    pub max_players: i16,
+    pub invite_expires_at: String,
+}
+
+/// Outcome of accepting an invite.
+#[derive(Debug, Clone)]
+pub struct AcceptInviteOutcome {
+    pub player_id: Uuid,
+    pub position: i32,
+    pub player_count: i32,
+    pub max_players: i32,
+    pub game_status: String,
+}
+
+impl From<MultiplayerCreationOutcome> for MultiplayerGameResponse {
+    fn from(o: MultiplayerCreationOutcome) -> Self {
+        MultiplayerGameResponse {
+            game_id: o.game_id,
+            status: o.status,
+            bet: o.bet,
+            max_players: o.max_players,
+            invite_expires_at: o.invite_expires_at,
+        }
+    }
+}
+
 impl From<PlayCardOutcome> for PlayCardResponse {
     fn from(o: PlayCardOutcome) -> Self {
         PlayCardResponse {
@@ -42,6 +77,9 @@ impl From<PlayCardOutcome> for PlayCardResponse {
             message: "Card played successfully".to_string(),
             card_id: o.card_id,
             next_turn: o.next_turn,
+            round_completed: o.round_completed,
+            game_ended: o.game_ended,
+            current_round: o.current_round,
         }
     }
 }
@@ -61,6 +99,7 @@ impl From<QuickGameOutcome> for QuickGameResponse {
 
 /// Trait abstracting game orchestration so handlers can be tested
 /// with a mock implementation without a database.
+#[allow(dead_code)]
 #[async_trait]
 pub trait GameOrchestratorTrait: Send + Sync + 'static {
     async fn play_card(
@@ -81,6 +120,33 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
         user_id: Uuid,
         db: &DatabaseConnection,
     ) -> Result<QuickGameOutcome, GameError>;
+
+    async fn create_multiplayer_game(
+        &self,
+        user_id: Uuid,
+        pseudo: &str,
+        bet: i32,
+        max_players: i16,
+    ) -> Result<MultiplayerCreationOutcome, GameError>;
+
+    async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError>;
+
+    async fn send_invites(
+        &self,
+        game_id: Uuid,
+        creator_user_id: Uuid,
+        invited_user_ids: Vec<Uuid>,
+    ) -> Result<(), GameError>;
+
+    async fn accept_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+        pseudo: &str,
+    ) -> Result<AcceptInviteOutcome, GameError>;
+
+    #[allow(dead_code)]
+    async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError>;
 }
 
 /// Thin orchestration layer between API handlers and domain services.
@@ -90,6 +156,32 @@ pub struct GameOrchestrator {
     db: DatabaseConnection,
     game_service: GameService,
     bot_scheduler: BotScheduler,
+}
+
+fn map_service_error(e: crate::game::service::GameServiceError) -> GameError {
+    use crate::game::service::GameServiceError;
+    match e {
+        GameServiceError::GameNotFound => GameError::GameNotFound,
+        GameServiceError::PlayerNotFound => GameError::PlayerNotFound,
+        GameServiceError::CardNotFound => GameError::CardNotFound,
+        GameServiceError::NotYourTurn => GameError::NotYourTurn,
+        GameServiceError::InvalidCard => GameError::InvalidCard,
+        GameServiceError::GameFinished => GameError::GameFinished,
+        GameServiceError::RoundNotComplete => GameError::RoundNotComplete,
+        GameServiceError::InsufficientCredits => GameError::InsufficientCredits,
+        GameServiceError::GameNotPending => GameError::GameNotPending,
+        GameServiceError::NotCreator => GameError::NotCreator,
+        GameServiceError::NotInvited => GameError::NotInvited,
+        GameServiceError::AlreadyJoined => GameError::AlreadyJoined,
+        GameServiceError::GameFull => GameError::GameFull,
+        GameServiceError::InviteExpired => GameError::InviteExpired,
+        GameServiceError::CreatorCannotJoin => GameError::CreatorCannotJoin,
+        GameServiceError::GameNotReady => GameError::GameNotReady,
+        GameServiceError::Internal(msg) => {
+            GameError::Internal(Box::new(std::io::Error::other(msg)))
+        }
+        GameServiceError::Database(e) => GameError::Internal(e),
+    }
 }
 
 impl GameOrchestrator {
@@ -131,21 +223,7 @@ impl GameOrchestrator {
             .game_service
             .update_card_play(game_id, player_id, card_index, correlation_id.map(|c| c.0))
             .await
-            .map_err(|e| match e {
-                crate::game::service::GameServiceError::GameNotFound => GameError::GameNotFound,
-                crate::game::service::GameServiceError::PlayerNotFound => GameError::PlayerNotFound,
-                crate::game::service::GameServiceError::CardNotFound => GameError::CardNotFound,
-                crate::game::service::GameServiceError::NotYourTurn => GameError::NotYourTurn,
-                crate::game::service::GameServiceError::InvalidCard => GameError::InvalidCard,
-                crate::game::service::GameServiceError::GameFinished => GameError::GameFinished,
-                crate::game::service::GameServiceError::RoundNotComplete => {
-                    GameError::RoundNotComplete
-                }
-                crate::game::service::GameServiceError::Internal(msg) => {
-                    GameError::Internal(Box::new(std::io::Error::other(msg)))
-                }
-                crate::game::service::GameServiceError::Database(e) => GameError::Internal(e),
-            })?;
+            .map_err(map_service_error)?;
 
         let next_is_bot = result
             .players
@@ -170,7 +248,94 @@ impl GameOrchestrator {
             card_id: result.card.id,
             next_turn,
             game_ended: result.game_ended,
+            round_completed: result.round_completed,
+            current_round: result.current_round,
         })
+    }
+
+    pub async fn create_multiplayer_game(
+        &self,
+        user_id: Uuid,
+        pseudo: &str,
+        bet: i32,
+        max_players: i16,
+    ) -> Result<MultiplayerCreationOutcome, GameError> {
+        let outcome: MultiplayerGameOutcome = self
+            .game_service
+            .create_multiplayer_game(user_id, pseudo, bet, max_players)
+            .await
+            .map_err(map_service_error)?;
+
+        Ok(MultiplayerCreationOutcome {
+            game_id: outcome.game_id,
+            status: "pending".to_string(),
+            bet: outcome.bet,
+            max_players: outcome.max_players,
+            invite_expires_at: outcome.invite_expires_at.to_rfc3339(),
+        })
+    }
+
+    pub async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
+        self.game_service
+            .start_game(game_id, user_id)
+            .await
+            .map_err(map_service_error)
+    }
+
+    pub async fn send_invites(
+        &self,
+        game_id: Uuid,
+        creator_user_id: Uuid,
+        invited_user_ids: Vec<Uuid>,
+    ) -> Result<(), GameError> {
+        self.game_service
+            .send_invites(game_id, creator_user_id, &invited_user_ids)
+            .await
+            .map_err(map_service_error)
+    }
+
+    pub async fn accept_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+        pseudo: &str,
+    ) -> Result<AcceptInviteOutcome, GameError> {
+        let player = self
+            .game_service
+            .accept_invite(game_id, user_id, pseudo)
+            .await
+            .map_err(map_service_error)?;
+
+        let player_count = crate::database::repositories::PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await
+            .map_err(GameError::Database)?
+            .len() as i32;
+
+        let game = crate::database::repositories::GameRepository::new(self.db.clone())
+            .find_by_id(game_id)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or(GameError::GameNotFound)?;
+
+        Ok(AcceptInviteOutcome {
+            player_id: player.id,
+            position: player.position,
+            player_count,
+            max_players: game.max_players as i32,
+            game_status: match game.status {
+                GameStatus::Ready => "ready".to_string(),
+                _ => "pending".to_string(),
+            },
+        })
+    }
+
+    #[allow(dead_code)]
+    pub async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
+        self.game_service
+            .cancel_game(game_id)
+            .await
+            .map_err(map_service_error)
     }
 
     /// Create a quick game with 1 human + 3 bots, distribute cards,
@@ -285,6 +450,7 @@ impl GameOrchestrator {
                     player_type: player_type.to_string(),
                     name: player.name.clone(),
                     position: player.position,
+                    display_position: player.position,
                     cards,
                     cards_count: 5,
                 }
@@ -428,6 +594,7 @@ impl GameOrchestrator {
                     player_type: player_type.to_string(),
                     name: player.name.clone(),
                     position: player.position,
+                    display_position: player.position,
                     cards,
                     cards_count: 5,
                 }
@@ -485,6 +652,44 @@ impl GameOrchestratorTrait for GameOrchestrator {
     ) -> Result<QuickGameOutcome, GameError> {
         self.create_quick_game_for_user(user_id, db).await
     }
+
+    async fn create_multiplayer_game(
+        &self,
+        user_id: Uuid,
+        pseudo: &str,
+        bet: i32,
+        max_players: i16,
+    ) -> Result<MultiplayerCreationOutcome, GameError> {
+        self.create_multiplayer_game(user_id, pseudo, bet, max_players)
+            .await
+    }
+
+    async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
+        self.start_game(game_id, user_id).await
+    }
+
+    async fn send_invites(
+        &self,
+        game_id: Uuid,
+        creator_user_id: Uuid,
+        invited_user_ids: Vec<Uuid>,
+    ) -> Result<(), GameError> {
+        self.send_invites(game_id, creator_user_id, invited_user_ids)
+            .await
+    }
+
+    async fn accept_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+        pseudo: &str,
+    ) -> Result<AcceptInviteOutcome, GameError> {
+        self.accept_invite(game_id, user_id, pseudo).await
+    }
+
+    async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
+        self.cancel_game(game_id).await
+    }
 }
 
 #[cfg(test)]
@@ -492,9 +697,16 @@ pub mod mock {
     use super::*;
     use std::sync::Mutex;
 
+    #[allow(dead_code)]
     pub struct MockGameOrchestrator {
         play_card_result: Mutex<Option<Result<PlayCardOutcome, GameError>>>,
         create_quick_game_result: Mutex<Option<Result<QuickGameOutcome, GameError>>>,
+        create_multiplayer_game_result:
+            Mutex<Option<Result<MultiplayerCreationOutcome, GameError>>>,
+        send_invites_result: Mutex<Option<Result<(), GameError>>>,
+        accept_invite_result: Mutex<Option<Result<AcceptInviteOutcome, GameError>>>,
+        cancel_game_result: Mutex<Option<Result<(), GameError>>>,
+        start_game_result: Mutex<Option<Result<(), GameError>>>,
     }
 
     impl MockGameOrchestrator {
@@ -505,6 +717,11 @@ pub mod mock {
             Self {
                 play_card_result: Mutex::new(Some(play_card_result)),
                 create_quick_game_result: Mutex::new(Some(create_quick_game_result)),
+                create_multiplayer_game_result: Mutex::new(None),
+                send_invites_result: Mutex::new(None),
+                accept_invite_result: Mutex::new(None),
+                cancel_game_result: Mutex::new(None),
+                start_game_result: Mutex::new(None),
             }
         }
 
@@ -513,6 +730,8 @@ pub mod mock {
                 card_id: Uuid::new_v4(),
                 next_turn: Some(Uuid::new_v4()),
                 game_ended: false,
+                round_completed: false,
+                current_round: 1,
             };
             let quick_outcome = QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -563,6 +782,62 @@ pub mod mock {
                 .unwrap()
                 .take()
                 .expect("mock orchestrator create_quick_game_for_user called more than once")
+        }
+
+        async fn create_multiplayer_game(
+            &self,
+            _user_id: Uuid,
+            _pseudo: &str,
+            _bet: i32,
+            _max_players: i16,
+        ) -> Result<MultiplayerCreationOutcome, GameError> {
+            self.create_multiplayer_game_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("mock orchestrator create_multiplayer_game called more than once")
+        }
+
+        async fn start_game(&self, _game_id: Uuid, _user_id: Uuid) -> Result<(), GameError> {
+            self.start_game_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("mock orchestrator start_game called more than once")
+        }
+
+        async fn send_invites(
+            &self,
+            _game_id: Uuid,
+            _creator_user_id: Uuid,
+            _invited_user_ids: Vec<Uuid>,
+        ) -> Result<(), GameError> {
+            self.send_invites_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("mock orchestrator send_invites called more than once")
+        }
+
+        async fn accept_invite(
+            &self,
+            _game_id: Uuid,
+            _user_id: Uuid,
+            _pseudo: &str,
+        ) -> Result<AcceptInviteOutcome, GameError> {
+            self.accept_invite_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("mock orchestrator accept_invite called more than once")
+        }
+
+        async fn cancel_game(&self, _game_id: Uuid) -> Result<(), GameError> {
+            self.cancel_game_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("mock orchestrator cancel_game called more than once")
         }
     }
 }

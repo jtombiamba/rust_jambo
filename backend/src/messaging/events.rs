@@ -36,6 +36,55 @@ pub enum GameEvent {
         current_turn: Uuid,
         correlation_id: Option<Uuid>,
     },
+    PlayerJoined {
+        game_id: Uuid,
+        player_id: Uuid,
+        user_id: Uuid,
+        pseudo: String,
+        position: i32,
+        player_count: i32,
+        max_players: i32,
+    },
+    GameCancelled {
+        game_id: Uuid,
+        reason: String,
+    },
+    GameReady {
+        game_id: Uuid,
+        correlation_id: Option<Uuid>,
+    },
+    CardsDealt {
+        game_id: Uuid,
+        player_id: Uuid,
+        cards: Vec<i32>,
+    },
+    GameStarted {
+        game_id: Uuid,
+        players: Vec<GameStartedPlayer>,
+        current_turn: Uuid,
+        correlation_id: Option<Uuid>,
+    },
+    PlayerDisconnected {
+        game_id: Uuid,
+        player_id: Uuid,
+        player_position: i32,
+        disconnected_at: Option<String>,
+    },
+    PlayerReconnected {
+        game_id: Uuid,
+        player_id: Uuid,
+        player_position: i32,
+        reconnected_at: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GameStartedPlayer {
+    pub id: Uuid,
+    pub name: String,
+    pub position: i32,
+    pub display_position: i32,
+    pub cards_count: i32,
 }
 
 impl GameEvent {
@@ -45,7 +94,14 @@ impl GameEvent {
             GameEvent::CardPlayed { game_id, .. }
             | GameEvent::RoundCompleted { game_id, .. }
             | GameEvent::GameFinished { game_id, .. }
-            | GameEvent::TurnChanged { game_id, .. } => format!("game:{}", game_id),
+            | GameEvent::TurnChanged { game_id, .. }
+            | GameEvent::PlayerJoined { game_id, .. }
+            | GameEvent::GameCancelled { game_id, .. }
+            | GameEvent::GameReady { game_id, .. }
+            | GameEvent::CardsDealt { game_id, .. }
+            | GameEvent::GameStarted { game_id, .. }
+            | GameEvent::PlayerDisconnected { game_id, .. }
+            | GameEvent::PlayerReconnected { game_id, .. } => format!("game:{}", game_id),
         }
     }
 

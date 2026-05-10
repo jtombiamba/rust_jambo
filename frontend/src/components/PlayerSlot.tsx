@@ -54,13 +54,13 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
 
   return (
     <div
-      className={`flex flex-col items-center p-4 ${positionStyles[position]} ${ringClass} rounded-lg`}
+      className={`flex flex-col items-center p-2 sm:p-4 ${positionStyles[position]} ${ringClass} rounded-lg`}
       data-testid={`player-slot-${playerId}`}
     >
-      <div className="text-lg font-semibold mb-2">
+      <div className="text-base sm:text-lg font-semibold mb-1 sm:mb-2">
         {name} {type === 'bot' && '🤖'}
       </div>
-      <div className="flex flex-wrap gap-2 justify-center">
+      <div className="flex flex-wrap gap-1 sm:gap-2 justify-center">
         {displayCards.length > 0 ? (
           displayCards.map((cardIndex) => (
             <Card
@@ -71,10 +71,10 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
             />
           ))
         ) : (
-          <div className="text-gray-500 italic">No cards</div>
+          <div className="text-gray-500 italic text-sm">No cards</div>
         )}
       </div>
-      <div className="mt-2 text-sm text-gray-600">
+      <div className="mt-1 sm:mt-2 text-xs sm:text-sm text-gray-600">
         {position.toUpperCase()} – {type}
       </div>
     </div>

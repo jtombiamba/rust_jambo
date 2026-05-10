@@ -3,13 +3,8 @@ import { useGameStore, GameResult } from '../stores/useGameStore';
 import { useWebSocket, GameEvent } from './useWebSocket';
 import { updateAnonymousStatsAfterGame } from '../utils/storage';
 import { useAuthStore } from '../stores/useAuthStore';
+import { useToast } from '../components/useToast';
 
-/**
- * A hook that connects WebSocket events to the game store.
- * It automatically subscribes to the game's WebSocket channel and updates the store accordingly.
- *
- * @param gameId The game ID to connect to.
- */
 export function useGameWebSocket(gameId: string | null) {
   const {
     applyCardPlayed,
@@ -23,6 +18,7 @@ export function useGameWebSocket(gameId: string | null) {
     bet,
   } = useGameStore();
 
+  const { showToast } = useToast();
   const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const deckClearTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -32,11 +28,9 @@ export function useGameWebSocket(gameId: string | null) {
       switch (event.type) {
         case 'card_played':
           applyCardPlayed(event.player_id, event.card_index, event.next_turn);
-          // Clear round winner when new card is played (new round starts)
           clearRoundWinner();
           break;
         case 'round_completed': {
-          // Clear deck slots after 1 second delay for human eye to read result
           if (deckClearTimerRef.current) {
             clearTimeout(deckClearTimerRef.current);
           }
@@ -44,7 +38,6 @@ export function useGameWebSocket(gameId: string | null) {
             clearDeckSlots();
           }, 1000);
 
-          // Set round winner for visualization
           const winType = (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal';
           setRoundWinner({
             playerId: event.winner_id,
@@ -52,7 +45,6 @@ export function useGameWebSocket(gameId: string | null) {
             winType,
           });
 
-          // Auto-clear winner after 3 seconds
           if (roundWinnerTimerRef.current) {
             clearTimeout(roundWinnerTimerRef.current);
           }
@@ -64,7 +56,6 @@ export function useGameWebSocket(gameId: string | null) {
         case 'game_finished': {
           setGameStatus(event.status);
 
-          // Set game over state
           const winner = event.winner_id ? players.find(p => p.id === event.winner_id) : null;
           const gameResult: GameResult = {
             status: event.status as 'finished' | 'kora' | 'doubleKora',
@@ -78,7 +69,6 @@ export function useGameWebSocket(gameId: string | null) {
             result: gameResult,
           });
 
-          // Update stats: anonymous users use localStorage, authenticated users are updated server-side
           const { isAuthenticated } = useAuthStore.getState();
           if (!isAuthenticated) {
             const humanPlayer = players.find(p => p.type === 'human');
@@ -90,17 +80,38 @@ export function useGameWebSocket(gameId: string | null) {
           break;
         }
         case 'turn_changed': {
-          // Find player position by ID
           const player = players.find((p) => p.id === event.current_turn);
           if (player) {
             setCurrentTurn(player.position);
           }
           break;
         }
-        default: {
-          const _exhaustive: never = event;
-          console.warn('Unhandled game event type:', (_exhaustive as { type: string }).type);
+        case 'player_disconnected': {
+          const player = players.find(p => p.id === event.player_id);
+          const name = player?.name || `Player ${event.player_position}`;
+          showToast(`${name} disconnected`, 'warning');
+          break;
         }
+        case 'player_reconnected': {
+          const player = players.find(p => p.id === event.player_id);
+          const name = player?.name || `Player ${event.player_position}`;
+          showToast(`${name} reconnected`, 'success');
+          break;
+        }
+        case 'player_joined': {
+          showToast(`${event.pseudo} joined the game`, 'info');
+          break;
+        }
+        case 'game_cancelled': {
+          showToast(`Game cancelled: ${event.reason}`, 'warning');
+          break;
+        }
+        case 'game_ready': {
+          showToast('All players ready!', 'success');
+          break;
+        }
+        default:
+          console.warn('Unhandled game event type:', (event as { type: string }).type);
       }
     },
     onError: (error) => {
@@ -112,7 +123,6 @@ export function useGameWebSocket(gameId: string | null) {
     autoReconnect: true,
   });
 
-  // Send a ping every 30 seconds to keep connection alive
   useEffect(() => {
     if (!isConnected) return;
     const interval = setInterval(() => {
@@ -121,7 +131,6 @@ export function useGameWebSocket(gameId: string | null) {
     return () => clearInterval(interval);
   }, [isConnected, send]);
 
-  // Cleanup timers on unmount
   useEffect(() => {
     return () => {
       if (roundWinnerTimerRef.current) {

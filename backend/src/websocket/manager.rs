@@ -1,7 +1,9 @@
+use crate::messaging::events::GameEvent;
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
 use anyhow::Context;
+use chrono::Utc;
 use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,6 +44,8 @@ struct TrackedConnection {
     #[allow(dead_code)]
     correlation_id: CorrelationId,
     last_activity: Instant,
+    player_id: Option<Uuid>,
+    player_position: Option<i32>,
 }
 
 /// Inner shared state for the WebSocket manager.
@@ -81,6 +85,13 @@ impl WebSocketManager {
         let connection_id = ConnectionId::new();
         let cid_display = correlation_id.to_string();
         let conn_uuid = connection_id.uuid();
+
+        let _was_reconnect = inner
+            .connections
+            .get(&game_id)
+            .map(|conns| conns.iter().any(|c| c.player_id.is_some()))
+            .unwrap_or(false);
+
         inner
             .connections
             .entry(game_id)
@@ -90,6 +101,8 @@ impl WebSocketManager {
                 id: connection_id,
                 correlation_id,
                 last_activity: Instant::now(),
+                player_id: None,
+                player_position: None,
             });
         tracing::info!(
             "New WebSocket connection {} for game {} (correlation_id={})",
@@ -99,6 +112,53 @@ impl WebSocketManager {
         );
         metrics::WS_CONNECTIONS_ACTIVE.inc();
         connection_id
+    }
+
+    /// Associate a player ID and position with a connection.
+    /// If a previous connection for this player_id exists, it's a reconnect.
+    pub async fn set_player_for_connection(
+        &self,
+        game_id: Uuid,
+        connection_id: ConnectionId,
+        player_id: Uuid,
+        player_position: i32,
+    ) {
+        let mut inner = self.inner.write().await;
+        let was_previously_connected = if let Some(connections) = inner.connections.get(&game_id) {
+            connections
+                .iter()
+                .any(|c| c.player_id == Some(player_id) && c.id != connection_id)
+        } else {
+            false
+        };
+
+        if let Some(connections) = inner.connections.get_mut(&game_id) {
+            for conn in connections.iter_mut() {
+                if conn.id == connection_id {
+                    conn.player_id = Some(player_id);
+                    conn.player_position = Some(player_position);
+                    break;
+                }
+            }
+        }
+
+        drop(inner);
+
+        if was_previously_connected {
+            let event = GameEvent::PlayerReconnected {
+                game_id,
+                player_id,
+                player_position,
+                reconnected_at: Some(Utc::now().to_rfc3339()),
+            };
+            self.broadcast_to_game(game_id, &event.to_json()).await;
+            tracing::info!(
+                "Player {} (position {}) reconnected to game {}",
+                player_id,
+                player_position,
+                game_id
+            );
+        }
     }
 
     /// Update the last activity time for a connection.
@@ -117,38 +177,67 @@ impl WebSocketManager {
 
     /// Remove a WebSocket connection from a game using its connection ID.
     pub async fn remove_connection(&self, game_id: Uuid, connection_id: ConnectionId) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.connections.get_mut(&game_id) {
-            let before = connections.len();
-            connections.retain(|c| c.id != connection_id);
-            let after = connections.len();
-            tracing::debug!(
-                "Removed connection {} for game {}, connections before: {}, after: {}",
-                connection_id.uuid(),
-                game_id,
-                before,
-                after
-            );
-            if connections.is_empty() {
-                inner.connections.remove(&game_id);
-                tracing::info!("No more connections for game {}, removed from map", game_id);
+        let (removed_player_id, removed_position) = {
+            let mut inner = self.inner.write().await;
+            if let Some(connections) = inner.connections.get_mut(&game_id) {
+                let before = connections.len();
+                let player_info = connections
+                    .iter()
+                    .find(|c| c.id == connection_id)
+                    .map(|c| (c.player_id, c.player_position));
+                connections.retain(|c| c.id != connection_id);
+                let after = connections.len();
+                tracing::debug!(
+                    "Removed connection {} for game {}, connections before: {}, after: {}",
+                    connection_id.uuid(),
+                    game_id,
+                    before,
+                    after
+                );
+                if connections.is_empty() {
+                    inner.connections.remove(&game_id);
+                    tracing::info!("No more connections for game {}, removed from map", game_id);
+                }
+                player_info.unwrap_or((None, None))
+            } else {
+                tracing::warn!(
+                    "Attempted to remove connection {} for game {} but no connections found",
+                    connection_id.uuid(),
+                    game_id
+                );
+                (None, None)
             }
-        } else {
-            tracing::warn!(
-                "Attempted to remove connection {} for game {} but no connections found",
-                connection_id.uuid(),
+        };
+
+        metrics::WS_CONNECTIONS_ACTIVE.dec();
+        metrics::WS_DISCONNECTS_TOTAL.inc();
+
+        if let (Some(player_id), Some(position)) = (removed_player_id, removed_position) {
+            let event = GameEvent::PlayerDisconnected {
+                game_id,
+                player_id,
+                player_position: position,
+                disconnected_at: Some(Utc::now().to_rfc3339()),
+            };
+            self.broadcast_to_game(game_id, &event.to_json()).await;
+            tracing::info!(
+                "Player {} (position {}) disconnected from game {}",
+                player_id,
+                position,
                 game_id
             );
         }
-        metrics::WS_CONNECTIONS_ACTIVE.dec();
     }
 
     /// Remove all connections for a specific game (e.g., when game ends).
     #[allow(dead_code)]
     pub async fn remove_all_connections(&self, game_id: Uuid) {
         let mut inner = self.inner.write().await;
-        if inner.connections.remove(&game_id).is_some() {
-            tracing::info!("Removed all connections for game {}", game_id);
+        if let Some(conns) = inner.connections.remove(&game_id) {
+            let count = conns.len();
+            metrics::WS_CONNECTIONS_ACTIVE.sub(count as f64);
+            metrics::WS_DISCONNECTS_TOTAL.inc_by(count as f64);
+            tracing::info!("Removed all {} connections for game {}", count, game_id);
         }
     }
 
@@ -183,6 +272,40 @@ impl WebSocketManager {
             .get(&game_id)
             .map(|c| c.len())
             .unwrap_or(0)
+    }
+
+    /// Check if a specific player has an active connection for a game.
+    #[allow(dead_code)]
+    pub async fn is_player_connected(&self, game_id: Uuid, player_id: Uuid) -> bool {
+        let inner = self.inner.read().await;
+        inner
+            .connections
+            .get(&game_id)
+            .map(|conns| conns.iter().any(|c| c.player_id == Some(player_id)))
+            .unwrap_or(false)
+    }
+
+    /// Set player identity on the most recently added connection for a game.
+    /// Used during WS join when player_id/position arrive after initial connection.
+    pub async fn set_player_for_latest_connection(
+        manager: &WebSocketManager,
+        game_id: Uuid,
+        player_id: Uuid,
+        player_position: i32,
+    ) {
+        let conn_id = {
+            let inner = manager.inner.read().await;
+            inner
+                .connections
+                .get(&game_id)
+                .and_then(|conns| conns.last())
+                .map(|c| c.id)
+        };
+        if let Some(cid) = conn_id {
+            manager
+                .set_player_for_connection(game_id, cid, player_id, player_position)
+                .await;
+        }
     }
 
     /// Get total number of active connections across all games.

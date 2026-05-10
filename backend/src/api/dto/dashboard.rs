@@ -16,6 +16,7 @@ pub struct GameHistoryItem {
     pub result: String,
     pub played_at: String,
     pub credits_after: i32,
+    pub player_count: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,4 +31,35 @@ pub struct GameHistoryResponse {
 pub struct PaginationParams {
     pub page: Option<u64>,
     pub per_page: Option<u64>,
+    pub status: Option<String>,
+    pub order_by: Option<String>,
+    pub bet_min: Option<i32>,
+    pub bet_max: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GameFilter {
+    pub statuses: Vec<String>,
+    pub order_by: String,
+    pub bet_min: Option<i32>,
+    pub bet_max: Option<i32>,
+}
+
+impl PaginationParams {
+    pub fn to_filter(&self) -> GameFilter {
+        let statuses = self
+            .status
+            .as_ref()
+            .map(|s| s.split(',').map(|x| x.trim().to_lowercase()).collect())
+            .unwrap_or_default();
+
+        let order_by = self.order_by.as_deref().unwrap_or("date_desc").to_string();
+
+        GameFilter {
+            statuses,
+            order_by,
+            bet_min: self.bet_min,
+            bet_max: self.bet_max,
+        }
+    }
 }

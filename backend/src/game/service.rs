@@ -1,16 +1,20 @@
 use chrono::Utc;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, TransactionTrait,
 };
+use serde_json::json;
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::database::models::Player;
-use crate::database::models::{game, game_card, player, GameStatus};
+use crate::database::models::{
+    game, game_card, game_invite, player, player_profile, GameMode, GameStatus, InviteStatus,
+    PlayerType,
+};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::card_mapping::Card;
-use crate::game::constants::CARDS_PER_PLAYER;
+use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
 use crate::game::payment::calculate_payment;
 use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
 use crate::game::turn_order::next_player;
@@ -18,6 +22,11 @@ use crate::messaging::ai_task::{AITask, PlayerInfo};
 use crate::messaging::{events::GameEvent, RedisClient};
 use tracing::{error, info};
 
+pub fn compute_display_position(actual_pos: usize, num_players: usize, my_pos: usize) -> usize {
+    (num_players + actual_pos - my_pos) % num_players
+}
+
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum GameServiceError {
     #[error("Database error: {0}")]
@@ -36,6 +45,24 @@ pub enum GameServiceError {
     RoundNotComplete,
     #[error("Game already finished")]
     GameFinished,
+    #[error("Insufficient credits for bet")]
+    InsufficientCredits,
+    #[error("Game is not pending")]
+    GameNotPending,
+    #[error("User is not the game creator")]
+    NotCreator,
+    #[error("User is not invited to this game")]
+    NotInvited,
+    #[error("User is already a player in this game")]
+    AlreadyJoined,
+    #[error("Game is full")]
+    GameFull,
+    #[error("Invite has expired")]
+    InviteExpired,
+    #[error("Creator cannot join their own game")]
+    CreatorCannotJoin,
+    #[error("Game is not in ready state")]
+    GameNotReady,
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -48,6 +75,19 @@ pub struct CardPlayResult {
     pub next_player_id: Uuid,
     pub players: Vec<player::Model>,
     pub game_ended: bool,
+    pub round_completed: bool,
+    pub current_round: i32,
+}
+
+/// Result of creating a multiplayer game.
+#[allow(dead_code)]
+pub struct MultiplayerGameOutcome {
+    pub game_id: Uuid,
+    pub player_id: Uuid,
+    pub status: GameStatus,
+    pub bet: i32,
+    pub max_players: i16,
+    pub invite_expires_at: chrono::DateTime<Utc>,
 }
 
 /// Result of evaluating a completed round inside a transaction.
@@ -82,6 +122,615 @@ impl GameService {
     #[allow(dead_code)]
     pub fn redis_client(&self) -> Option<RedisClient> {
         self.redis_client.clone()
+    }
+
+    pub async fn create_multiplayer_game(
+        &self,
+        creator_user_id: Uuid,
+        creator_pseudo: &str,
+        bet: i32,
+        max_players: i16,
+    ) -> Result<MultiplayerGameOutcome, GameServiceError> {
+        const INVITE_TIMEOUT_MINUTES: i64 = 6;
+
+        let txn = self.db.begin().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let profile = player_profile::Entity::find()
+            .filter(player_profile::Column::UserId.eq(creator_user_id))
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or_else(|| GameServiceError::Internal("Player profile not found".to_string()))?;
+
+        if profile.credit < bet {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::InsufficientCredits);
+        }
+
+        let creator_credit_before = profile.credit;
+        let new_credit = creator_credit_before - bet;
+        let mut profile_active: player_profile::ActiveModel = profile.into();
+        profile_active.credit = sea_orm::ActiveValue::Set(new_credit);
+        profile_active.updated_at = sea_orm::ActiveValue::Set(chrono::Utc::now());
+        profile_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let game_id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+        let expires_at = now + chrono::Duration::minutes(INVITE_TIMEOUT_MINUTES);
+
+        let game_active = game::ActiveModel {
+            id: sea_orm::ActiveValue::Set(game_id),
+            status: sea_orm::ActiveValue::Set(GameStatus::Pending),
+            bet: sea_orm::ActiveValue::Set(bet),
+            created_at: sea_orm::ActiveValue::Set(now),
+            updated_at: sea_orm::ActiveValue::Set(now),
+            finished_at: sea_orm::ActiveValue::NotSet,
+            rank: sea_orm::ActiveValue::NotSet,
+            roll: sea_orm::ActiveValue::Set(1),
+            auto: sea_orm::ActiveValue::Set(false),
+            winner_id: sea_orm::ActiveValue::NotSet,
+            player_positions: sea_orm::ActiveValue::Set(json!({})),
+            current_winning_card: sea_orm::ActiveValue::NotSet,
+            current_winning_player_position: sea_orm::ActiveValue::NotSet,
+            creator_id: sea_orm::ActiveValue::Set(Some(creator_user_id)),
+            game_mode: sea_orm::ActiveValue::Set(GameMode::Multiplayer),
+            max_players: sea_orm::ActiveValue::Set(max_players),
+            invite_expires_at: sea_orm::ActiveValue::Set(Some(expires_at)),
+        };
+        let insert_result = game::Entity::insert(game_active)
+            .exec(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        let inserted_game_id = insert_result.last_insert_id;
+
+        let player_id = Uuid::new_v4();
+        let player_active = player::ActiveModel {
+            id: sea_orm::ActiveValue::Set(player_id),
+            game_id: sea_orm::ActiveValue::Set(inserted_game_id),
+            player_type: sea_orm::ActiveValue::Set(crate::database::models::PlayerType::Human),
+            name: sea_orm::ActiveValue::Set(creator_pseudo.to_string()),
+            position: sea_orm::ActiveValue::Set(0),
+            credits: sea_orm::ActiveValue::Set(new_credit),
+            created_at: sea_orm::ActiveValue::Set(now),
+            user_id: sea_orm::ActiveValue::Set(Some(creator_user_id)),
+        };
+        player::Entity::insert(player_active)
+            .exec(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        let player_positions: std::collections::HashMap<i32, Uuid> =
+            std::collections::HashMap::from([(0, creator_user_id)]);
+        let game_model = game::Entity::find_by_id(inserted_game_id)
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or_else(|| GameServiceError::Internal("Game not found after insert".to_string()))?;
+        let mut game_active: game::ActiveModel = game_model.into();
+        game_active.player_positions =
+            sea_orm::ActiveValue::Set(serde_json::to_value(player_positions).map_err(|e| {
+                GameServiceError::Internal(format!("Failed to serialize player_positions: {}", e))
+            })?);
+        game_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        txn.commit().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        info!(
+            "Multiplayer game created: game_id={}, creator_id={}, bet={}, expires_at={}",
+            inserted_game_id, creator_user_id, bet, expires_at
+        );
+
+        Ok(MultiplayerGameOutcome {
+            game_id: inserted_game_id,
+            player_id,
+            status: GameStatus::Pending,
+            bet,
+            max_players,
+            invite_expires_at: expires_at,
+        })
+    }
+
+    pub async fn send_invites(
+        &self,
+        game_id: Uuid,
+        creator_user_id: Uuid,
+        invited_user_ids: &[Uuid],
+    ) -> Result<(), GameServiceError> {
+        let game = game::Entity::find_by_id(game_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::GameNotFound)?;
+
+        if game.status != GameStatus::Pending {
+            return Err(GameServiceError::GameNotPending);
+        }
+        if game.creator_id != Some(creator_user_id) {
+            return Err(GameServiceError::NotCreator);
+        }
+
+        let invite_repo = crate::database::repositories::GameInviteRepository::new(self.db.clone());
+        for &user_id in invited_user_ids {
+            if user_id == creator_user_id {
+                continue;
+            }
+            if crate::database::repositories::PlayerRepository::new(self.db.clone())
+                .find_by_game_and_user(game_id, user_id)
+                .await
+                .map_err(|e| {
+                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                })?
+                .is_some()
+            {
+                continue;
+            }
+            let existing = invite_repo
+                .find_invite(game_id, user_id)
+                .await
+                .map_err(|e| {
+                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                })?;
+            if existing.is_none() {
+                invite_repo
+                    .create_invite(game_id, user_id)
+                    .await
+                    .map_err(|e| {
+                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                    })?;
+                info!(
+                    "Invite sent: game_id={}, invited_user_id={}",
+                    game_id, user_id
+                );
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn accept_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+        user_pseudo: &str,
+    ) -> Result<crate::database::models::player::Model, GameServiceError> {
+        let txn = self.db.begin().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let game_model = game::Entity::find_by_id(game_id)
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::GameNotFound)?;
+
+        if game_model.status != GameStatus::Pending {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::GameNotPending);
+        }
+        if Some(user_id) == game_model.creator_id {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::CreatorCannotJoin);
+        }
+
+        let existing_player = player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .filter(player::Column::UserId.eq(user_id))
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        if existing_player.is_some() {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::AlreadyJoined);
+        }
+
+        let invite = game_invite::Entity::find()
+            .filter(game_invite::Column::GameId.eq(game_id))
+            .filter(game_invite::Column::InvitedUserId.eq(user_id))
+            .filter(game_invite::Column::Status.eq(InviteStatus::Pending))
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::NotInvited)?;
+
+        let player_count: u64 = player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .count(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        if player_count >= game_model.max_players as u64 {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::GameFull);
+        }
+
+        let next_position = player_count as i32;
+        let max_players_val = game_model.max_players;
+        let bet = game_model.bet;
+
+        let profile = player_profile::Entity::find()
+            .filter(player_profile::Column::UserId.eq(user_id))
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or_else(|| GameServiceError::Internal("Player profile not found".to_string()))?;
+
+        if profile.credit < bet {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::InsufficientCredits);
+        }
+
+        let now = chrono::Utc::now();
+        let new_credit = profile.credit - bet;
+        let mut profile_active: player_profile::ActiveModel = profile.into();
+        profile_active.credit = sea_orm::ActiveValue::Set(new_credit);
+        profile_active.updated_at = sea_orm::ActiveValue::Set(now);
+        profile_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let new_player_id = Uuid::new_v4();
+        let player_active = player::ActiveModel {
+            id: sea_orm::ActiveValue::Set(new_player_id),
+            game_id: sea_orm::ActiveValue::Set(game_id),
+            player_type: sea_orm::ActiveValue::Set(PlayerType::Human),
+            name: sea_orm::ActiveValue::Set(user_pseudo.to_string()),
+            position: sea_orm::ActiveValue::Set(next_position),
+            credits: sea_orm::ActiveValue::Set(new_credit),
+            created_at: sea_orm::ActiveValue::Set(now),
+            user_id: sea_orm::ActiveValue::Set(Some(user_id)),
+        };
+        player::Entity::insert(player_active)
+            .exec(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        let mut invite_active: game_invite::ActiveModel = invite.into();
+        invite_active.status = sea_orm::ActiveValue::Set(InviteStatus::Accepted);
+        invite_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let current_positions: std::collections::HashMap<i32, Uuid> =
+            if game_model.player_positions.is_null() {
+                std::collections::HashMap::new()
+            } else {
+                serde_json::from_value(game_model.player_positions.clone()).map_err(|e| {
+                    GameServiceError::Internal(format!("Failed to parse player_positions: {}", e))
+                })?
+            };
+        let mut updated_positions = current_positions;
+        updated_positions.insert(next_position, user_id);
+
+        let new_status = if (player_count + 1) >= max_players_val as u64 {
+            GameStatus::Ready
+        } else {
+            GameStatus::Pending
+        };
+
+        let mut game_active: game::ActiveModel = game_model.into();
+        game_active.player_positions =
+            sea_orm::ActiveValue::Set(serde_json::to_value(&updated_positions).map_err(|e| {
+                GameServiceError::Internal(format!("Failed to serialize player_positions: {}", e))
+            })?);
+        game_active.status = sea_orm::ActiveValue::Set(new_status);
+        game_active.updated_at = sea_orm::ActiveValue::Set(now);
+        game_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        txn.commit().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        info!(
+            "Player joined game: game_id={}, user_id={}, position={}, status={}",
+            game_id,
+            user_id,
+            next_position,
+            match new_status {
+                GameStatus::Ready => "ready",
+                _ => "pending",
+            }
+        );
+
+        if let Some(ref redis) = self.redis_client {
+            let event = GameEvent::PlayerJoined {
+                game_id,
+                player_id: new_player_id,
+                user_id,
+                pseudo: user_pseudo.to_string(),
+                position: next_position,
+                player_count: (player_count + 1) as i32,
+                max_players: max_players_val as i32,
+            };
+            if let Err(e) = redis.clone().publish_game_event(&event).await {
+                error!("Failed to publish PlayerJoined event: {}", e);
+            }
+            if new_status == GameStatus::Ready {
+                let event = GameEvent::GameReady {
+                    game_id,
+                    correlation_id: None,
+                };
+                if let Err(e) = redis.clone().publish_game_event(&event).await {
+                    error!("Failed to publish GameReady event: {}", e);
+                }
+            }
+        }
+
+        player::Entity::find_by_id(new_player_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::PlayerNotFound)
+    }
+
+    pub async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameServiceError> {
+        let txn = self.db.begin().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let game_model = game::Entity::find_by_id(game_id)
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::GameNotFound)?;
+
+        if game_model.status != GameStatus::Pending {
+            txn.rollback().await.ok();
+            return Ok(());
+        }
+
+        let players = player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .all(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        for p in &players {
+            if let Some(uid) = p.user_id {
+                let profile = player_profile::Entity::find()
+                    .filter(player_profile::Column::UserId.eq(uid))
+                    .one(&txn)
+                    .await
+                    .map_err(|e| {
+                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                    })?;
+                if let Some(profile_model) = profile {
+                    let mut profile_active: player_profile::ActiveModel = profile_model.into();
+                    profile_active.credit =
+                        sea_orm::ActiveValue::Set(profile_active.credit.unwrap() + game_model.bet);
+                    profile_active.updated_at = sea_orm::ActiveValue::Set(chrono::Utc::now());
+                    profile_active.update(&txn).await.map_err(|e| {
+                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                    })?;
+                }
+            }
+        }
+
+        let mut game_active: game::ActiveModel = game_model.into();
+        game_active.status = sea_orm::ActiveValue::Set(GameStatus::Cancelled);
+        game_active.updated_at = sea_orm::ActiveValue::Set(chrono::Utc::now());
+        game_active.finished_at = sea_orm::ActiveValue::Set(Some(chrono::Utc::now()));
+        game_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        txn.commit().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        info!("Game cancelled: game_id={}", game_id);
+
+        if let Some(ref redis) = self.redis_client {
+            let event = GameEvent::GameCancelled {
+                game_id,
+                reason: "Not enough players joined before timeout".to_string(),
+            };
+            if let Err(e) = redis.clone().publish_game_event(&event).await {
+                error!("Failed to publish GameCancelled event: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn cancel_expired_games(&self) -> Result<u64, GameServiceError> {
+        let now = chrono::Utc::now();
+
+        let expired_games = game::Entity::find()
+            .filter(game::Column::Status.eq(GameStatus::Pending))
+            .filter(game::Column::GameMode.eq(GameMode::Multiplayer))
+            .filter(game::Column::InviteExpiresAt.lte(now))
+            .all(&self.db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        let mut cancelled = 0u64;
+        for g in expired_games {
+            if let Err(e) = self.cancel_game(g.id).await {
+                error!("Failed to cancel expired game {}: {}", g.id, e);
+            } else {
+                cancelled += 1;
+            }
+        }
+
+        if cancelled > 0 {
+            info!("Cancelled {} expired games", cancelled);
+        }
+        Ok(cancelled)
+    }
+
+    pub async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameServiceError> {
+        use rand::{seq::SliceRandom, thread_rng};
+
+        let cards: Vec<i32> = {
+            let mut cards: Vec<i32> = (0..TOTAL_CARDS as i32).collect();
+            let mut rng = thread_rng();
+            cards.shuffle(&mut rng);
+            cards
+        };
+
+        let txn = self.db.begin().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let game_model = game::Entity::find_by_id(game_id)
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::GameNotFound)?;
+
+        if game_model.status != GameStatus::Ready {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::GameNotReady);
+        }
+        if game_model.creator_id != Some(user_id) {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::NotCreator);
+        }
+
+        let players = player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .order_by_asc(player::Column::Position)
+            .all(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        let num_players = players.len();
+        if num_players < 2 {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::Internal(
+                "Not enough players to start".to_string(),
+            ));
+        }
+
+        let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
+
+        let now = chrono::Utc::now();
+        for (i, &pid) in player_ids.iter().enumerate() {
+            let start = i * CARDS_PER_PLAYER;
+            let end = start + CARDS_PER_PLAYER;
+            for &card_index in &cards[start..end] {
+                game_card::Entity::insert(game_card::ActiveModel {
+                    id: sea_orm::ActiveValue::Set(Uuid::new_v4()),
+                    game_id: sea_orm::ActiveValue::Set(game_id),
+                    player_id: sea_orm::ActiveValue::Set(Some(pid)),
+                    card_index: sea_orm::ActiveValue::Set(card_index),
+                    played: sea_orm::ActiveValue::Set(false),
+                    played_at: sea_orm::ActiveValue::NotSet,
+                    round: sea_orm::ActiveValue::NotSet,
+                    created_at: sea_orm::ActiveValue::Set(now),
+                })
+                .exec(&txn)
+                .await
+                .map_err(|e| {
+                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                })?;
+            }
+        }
+
+        let initial_rank = 0i32;
+        let first_player_id = player_ids[0];
+
+        let mut game_active: game::ActiveModel = game_model.into();
+        game_active.status = sea_orm::ActiveValue::Set(GameStatus::Active);
+        game_active.rank = sea_orm::ActiveValue::Set(Some(initial_rank));
+        game_active.roll = sea_orm::ActiveValue::Set(1);
+        game_active.updated_at = sea_orm::ActiveValue::Set(now);
+        game_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        txn.commit().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        info!(
+            "Game started: game_id={}, players={}, first_turn={}",
+            game_id, num_players, first_player_id
+        );
+
+        if let Some(ref redis) = self.redis_client {
+            for &pid in &player_ids {
+                let player_cards: Vec<i32> = {
+                    let offset =
+                        players.iter().position(|p| p.id == pid).unwrap_or(0) * CARDS_PER_PLAYER;
+                    cards[offset..offset + CARDS_PER_PLAYER].to_vec()
+                };
+                let event = GameEvent::CardsDealt {
+                    game_id,
+                    player_id: pid,
+                    cards: player_cards,
+                };
+                if let Err(e) = redis.clone().publish_game_event(&event).await {
+                    error!("Failed to publish CardsDealt event: {}", e);
+                }
+            }
+
+            let game_started_players: Vec<crate::messaging::events::GameStartedPlayer> = players
+                .iter()
+                .map(|p| crate::messaging::events::GameStartedPlayer {
+                    id: p.id,
+                    name: p.name.clone(),
+                    position: p.position,
+                    display_position: p.position,
+                    cards_count: CARDS_PER_PLAYER as i32,
+                })
+                .collect();
+
+            let event = GameEvent::GameStarted {
+                game_id,
+                players: game_started_players,
+                current_turn: first_player_id,
+                correlation_id: None,
+            };
+            if let Err(e) = redis.clone().publish_game_event(&event).await {
+                error!("Failed to publish GameStarted event: {}", e);
+            }
+        }
+
+        Ok(())
     }
 
     /// Validate if a card can be played by a player in the current game state.
@@ -294,7 +943,9 @@ impl GameService {
         // === PHASE 2: Post-transaction operations (best-effort, non-critical) ===
 
         // 10. Determine next player and game-ended status (before consuming data for events)
+        let round_completed = round_result.is_some();
         let game_ended = round_result.as_ref().map(|r| r.game_ended).unwrap_or(false);
+        let current_round = game.roll;
         let next_player_id = if let Some(ref result) = round_result {
             players
                 .get(result.winner_position)
@@ -356,6 +1007,8 @@ impl GameService {
             next_player_id,
             players,
             game_ended,
+            round_completed,
+            current_round,
         })
     }
 

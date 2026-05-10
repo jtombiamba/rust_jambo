@@ -198,7 +198,7 @@ async fn handle_message(
     session: &mut Session,
     text: &str,
     game_id: Uuid,
-    _manager: &web::Data<WebSocketManager>,
+    manager: &web::Data<WebSocketManager>,
 ) -> Result<(), anyhow::Error> {
     let span = tracing::info_span!(
         "ws_message",
@@ -216,10 +216,12 @@ async fn handle_message(
                     let response = OutgoingMessage::Pong;
                     session.text(serde_json::to_string(&response)?).await?;
                 }
-                IncomingMessage::JoinGame { game_id: join_id } => {
+                IncomingMessage::JoinGame {
+                    game_id: join_id,
+                    player_id,
+                    player_position,
+                } => {
                     trace!("Processing join game: {}", join_id);
-                    // The client may want to join a different game; we ignore because path already defines game.
-                    // Log if mismatch.
                     if join_id != game_id {
                         tracing::warn!(
                             "Client attempted to join game {} but connected to {}",
@@ -227,11 +229,22 @@ async fn handle_message(
                             game_id
                         );
                     }
+                    // Set player identity if provided (for disconnect/reconnect tracking)
+                    if let (Some(pid), Some(pos)) = (player_id, player_position) {
+                        // We need the connection_id to set player. Since this is called from
+                        // the incoming handler, we don't have it directly. Register via
+                        // a simple method: set_player_for_latest_connection.
+                        crate::websocket::manager::WebSocketManager::set_player_for_latest_connection(
+                            manager.get_ref(),
+                            game_id,
+                            pid,
+                            pos,
+                        ).await;
+                    }
                     let response = OutgoingMessage::GameJoined { game_id };
                     session.text(serde_json::to_string(&response)?).await?;
                 }
                 IncomingMessage::LeaveGame => {
-                    // Notify client they left? For now just ignore.
                     tracing::info!("Client left game {}", game_id);
                 }
             }

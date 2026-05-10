@@ -29,7 +29,7 @@ const Card: React.FC<CardProps> = ({ index, faceUp = true, onClick }) => {
 
   return (
     <div
-      className={`relative w-16 h-24 rounded-lg border border-gray-300 shadow-md flex items-center justify-center cursor-pointer transition-transform hover:scale-105 ${
+      className={`relative w-12 h-[4.5rem] sm:w-14 sm:h-20 md:w-16 md:h-24 rounded-lg border border-gray-300 shadow-md flex items-center justify-center cursor-pointer transition-transform hover:scale-105 active:scale-95 ${
         faceUp ? 'bg-white' : 'bg-blue-800'
       }`}
       onClick={onClick}
@@ -38,13 +38,13 @@ const Card: React.FC<CardProps> = ({ index, faceUp = true, onClick }) => {
     >
       {faceUp ? (
         <div className="flex flex-col items-center">
-          <div className={`text-2xl font-bold ${color}`}>{suitSymbol}</div>
-          <div className="text-lg font-semibold mt-1">{rank}</div>
-          <div className="text-xs mt-2 text-gray-600">{suit}</div>
+          <div className={`text-lg sm:text-xl md:text-2xl font-bold ${color}`}>{suitSymbol}</div>
+          <div className="text-sm sm:text-base md:text-lg font-semibold mt-0.5 sm:mt-1">{rank}</div>
+          <div className="text-[10px] sm:text-xs mt-1 sm:mt-2 text-gray-600">{suit}</div>
         </div>
       ) : (
         <div className="w-full h-full rounded-lg bg-gradient-to-br from-blue-900 to-blue-700 flex items-center justify-center">
-          <div className="text-white text-3xl">🂠</div>
+          <div className="text-white text-xl sm:text-2xl md:text-3xl">🂠</div>
         </div>
       )}
     </div>
