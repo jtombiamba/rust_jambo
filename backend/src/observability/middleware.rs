@@ -88,7 +88,7 @@ where
             let method_str = method.as_str();
             let path_segments: Vec<&str> = path.split('/').collect();
             let normalized_path = if path_segments.len() >= 4 && path_segments[1] == "api" {
-                let parts: Vec<&str> = path_segments[0..4]
+                let parts: Vec<&str> = path_segments
                     .iter()
                     .map(|seg| {
                         if Uuid::parse_str(seg).is_ok() {
@@ -98,7 +98,7 @@ where
                         }
                     })
                     .collect();
-                format!("/{}", parts.join("/"))
+                parts.join("/").to_string()
             } else {
                 path.clone()
             };
