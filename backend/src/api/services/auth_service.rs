@@ -48,26 +48,38 @@ impl actix_web::ResponseError for AuthError {
         match self {
             AuthError::Validation { error, field } => {
                 actix_web::HttpResponse::build(StatusCode::BAD_REQUEST).json(ErrorResponse {
+                    success: false,
                     error: error.clone(),
                     field: field.clone(),
                 })
             }
             AuthError::Conflict { error, field } => {
                 actix_web::HttpResponse::build(StatusCode::CONFLICT).json(ErrorResponse {
+                    success: false,
                     error: error.clone(),
                     field: field.clone(),
                 })
             }
             AuthError::Unauthorized { error } => {
                 actix_web::HttpResponse::build(StatusCode::UNAUTHORIZED).json(ErrorResponse {
+                    success: false,
                     error: error.clone(),
                     field: None,
                 })
             }
-            AuthError::Internal { error } => actix_web::HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": error})),
+            AuthError::Internal { error } => {
+                actix_web::HttpResponse::InternalServerError().json(ErrorResponse {
+                    success: false,
+                    error: error.clone(),
+                    field: None,
+                })
+            }
             AuthError::NotFound { error } => {
-                actix_web::HttpResponse::NotFound().json(serde_json::json!({"error": error}))
+                actix_web::HttpResponse::NotFound().json(ErrorResponse {
+                    success: false,
+                    error: error.clone(),
+                    field: None,
+                })
             }
         }
     }
@@ -193,7 +205,7 @@ impl<R: UserRepoTrait> AuthService<R> {
                 }
             })?;
 
-        let token = jwt::generate_token(user.id, &self.config).map_err(|e| {
+        let token = jwt::generate_token(user.id, &user.pseudo, &self.config).map_err(|e| {
             tracing::error!("JWT generation failed: {}", e);
             AuthError::Internal {
                 error: "Internal server error".into(),
@@ -257,7 +269,7 @@ impl<R: UserRepoTrait> AuthService<R> {
             }
         }
 
-        let token = jwt::generate_token(user.id, &self.config).map_err(|e| {
+        let token = jwt::generate_token(user.id, &user.pseudo, &self.config).map_err(|e| {
             tracing::error!("JWT generation failed: {}", e);
             AuthError::Internal {
                 error: "Internal server error".into(),

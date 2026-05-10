@@ -7,6 +7,7 @@ use super::config::AuthConfig;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     pub sub: Uuid,
+    pub pseudo: String,
     pub exp: usize,
     pub iat: usize,
 }
@@ -20,11 +21,13 @@ pub struct ResetClaims {
 
 pub fn generate_token(
     user_id: Uuid,
+    pseudo: &str,
     config: &AuthConfig,
 ) -> Result<String, jsonwebtoken::errors::Error> {
     let now = chrono::Utc::now();
     let claims = Claims {
         sub: user_id,
+        pseudo: pseudo.to_string(),
         exp: (now + chrono::Duration::hours(config.jwt_expiry_hours)).timestamp() as usize,
         iat: now.timestamp() as usize,
     };

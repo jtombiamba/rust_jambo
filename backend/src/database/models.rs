@@ -26,6 +26,10 @@ pub mod game {
         pub player_positions: Value,
         pub current_winning_card: Option<i32>,
         pub current_winning_player_position: Option<i32>,
+        pub creator_id: Option<Uuid>,
+        pub game_mode: super::GameMode,
+        pub max_players: i16,
+        pub invite_expires_at: Option<DateTime<Utc>>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -36,6 +40,12 @@ pub mod game {
             to = "super::player::Column::Id"
         )]
         Winner,
+        #[sea_orm(
+            belongs_to = "super::user::Entity",
+            from = "Column::CreatorId",
+            to = "super::user::Column::Id"
+        )]
+        Creator,
     }
 
     impl ActiveModelBehavior for ActiveModel {}
@@ -66,11 +76,23 @@ pub mod player {
             to = "super::user::Column::Id"
         )]
         User,
+        #[sea_orm(
+            belongs_to = "super::game::Entity",
+            from = "Column::GameId",
+            to = "super::game::Column::Id"
+        )]
+        Game,
     }
 
     impl Related<super::user::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::User.def()
+        }
+    }
+
+    impl Related<super::game::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Game.def()
         }
     }
 
@@ -144,6 +166,28 @@ pub enum GameStatus {
     Kora,
     #[sea_orm(string_value = "double_kora")]
     DoubleKora,
+    #[sea_orm(string_value = "ready")]
+    Ready,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "game_mode")]
+pub enum GameMode {
+    #[sea_orm(string_value = "solo")]
+    Solo,
+    #[sea_orm(string_value = "multiplayer")]
+    Multiplayer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "invite_status")]
+pub enum InviteStatus {
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "accepted")]
+    Accepted,
+    #[sea_orm(string_value = "declined")]
+    Declined,
 }
 
 impl std::fmt::Display for GameStatus {
@@ -155,6 +199,7 @@ impl std::fmt::Display for GameStatus {
             GameStatus::Cancelled => "cancelled",
             GameStatus::Kora => "kora",
             GameStatus::DoubleKora => "double_kora",
+            GameStatus::Ready => "ready",
         };
         write!(f, "{}", s)
     }
@@ -212,6 +257,51 @@ pub mod player_profile {
             to = "super::user::Column::Id"
         )]
         User,
+    }
+
+    impl Related<super::user::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::User.def()
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod game_invite {
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+    #[sea_orm(table_name = "game_invites")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: Uuid,
+        pub game_id: Uuid,
+        pub invited_user_id: Uuid,
+        pub status: super::InviteStatus,
+        pub created_at: DateTime<Utc>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::game::Entity",
+            from = "Column::GameId",
+            to = "super::game::Column::Id"
+        )]
+        Game,
+        #[sea_orm(
+            belongs_to = "super::user::Entity",
+            from = "Column::InvitedUserId",
+            to = "super::user::Column::Id"
+        )]
+        User,
+    }
+
+    impl Related<super::game::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Game.def()
+        }
     }
 
     impl Related<super::user::Entity> for Entity {

@@ -1,25 +1,41 @@
 use std::sync::Arc;
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, ResponseError};
 use uuid::Uuid;
 
 use crate::api::dto::dashboard::PaginationParams;
-use crate::api::services::dashboard_service::DashboardService;
+use crate::api::dto::requests::{
+    CreateGameRequest, PlayCardRequest, SendInvitesRequest, UserSearchQuery,
+};
+use crate::api::dto::responses::{AcceptInviteResponse, PlayCardResponse};
+use crate::api::services::dashboard_service::{DashboardService, SendInvitesParams};
 use crate::auth::extractors::AuthenticatedUser;
 use crate::database::repositories::DashboardRepository;
+use crate::error::AppError;
+use crate::observability::CorrelationId;
 
 pub type DashboardServiceType = DashboardService<DashboardRepository>;
+
+macro_rules! service_response {
+    ($result:expr) => {{
+        match $result {
+            Ok(data) => HttpResponse::Ok().json(data),
+            Err(e) => e.error_response(),
+        }
+    }};
+    ($result:expr, $status:expr) => {{
+        match $result {
+            Ok(data) => HttpResponse::build($status).json(data),
+            Err(e) => e.error_response(),
+        }
+    }};
+}
 
 pub async fn get_profile(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    service
-        .get_profile(auth_user.user_id)
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(service.get_profile(auth_user.user_id).await)
 }
 
 pub async fn list_games(
@@ -27,12 +43,11 @@ pub async fn list_games(
     query: web::Query<PaginationParams>,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    service
-        .list_games(auth_user.user_id, query.into_inner())
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(
+        service
+            .list_games(auth_user.user_id, query.into_inner())
+            .await
+    )
 }
 
 pub async fn get_game(
@@ -40,44 +55,255 @@ pub async fn get_game(
     service: web::Data<Arc<DashboardServiceType>>,
     path: web::Path<Uuid>,
 ) -> HttpResponse {
-    service
-        .get_game(auth_user.user_id, path.into_inner())
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
 }
 
 pub async fn get_active_game(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    service
-        .get_active_game(auth_user.user_id)
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(service.get_active_game(auth_user.user_id).await)
 }
 
 pub async fn create_game(
     auth_user: AuthenticatedUser,
-    orchestrator: web::Data<std::sync::Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    body: web::Json<CreateGameRequest>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
     db: web::Data<sea_orm::DatabaseConnection>,
 ) -> HttpResponse {
-    let result = orchestrator
-        .create_quick_game_for_user(auth_user.user_id, db.get_ref())
-        .await;
+    if let Err(e) = body.validate() {
+        return AppError::from(e).error_response();
+    }
 
-    match result {
-        Ok(outcome) => {
-            let response: crate::api::dto::responses::QuickGameResponse = outcome.into();
-            HttpResponse::Created().json(response)
+    match body.game_mode.as_str() {
+        "multiplayer" => {
+            match orchestrator
+                .create_multiplayer_game(
+                    auth_user.user_id,
+                    &auth_user.pseudo,
+                    body.bet,
+                    body.max_players,
+                )
+                .await
+            {
+                Ok(outcome) => {
+                    let response: crate::api::dto::responses::MultiplayerGameResponse =
+                        outcome.into();
+                    HttpResponse::Created().json(response)
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to create multiplayer game for user {}: {}",
+                        auth_user.user_id,
+                        e
+                    );
+                    AppError::from(e).error_response()
+                }
+            }
         }
-        Err(e) => {
-            tracing::error!("Failed to create game for user: {}", e);
-            HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "Failed to create game"}))
+        _ => {
+            match orchestrator
+                .create_quick_game_for_user(auth_user.user_id, db.get_ref())
+                .await
+            {
+                Ok(outcome) => {
+                    let response: crate::api::dto::responses::QuickGameResponse = outcome.into();
+                    HttpResponse::Created().json(response)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create solo game for user: {}", e);
+                    AppError::from(e).error_response()
+                }
+            }
         }
     }
+}
+
+pub async fn send_invites(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    body: web::Json<SendInvitesRequest>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    service: web::Data<Arc<DashboardServiceType>>,
+) -> HttpResponse {
+    let game_id = path.into_inner();
+
+    let (invited_user_ids, seen_uuid, duplicates) = match service
+        .resolve_invite_user_ids(&SendInvitesParams {
+            user_ids: body.user_ids.clone(),
+            pseudos: body.pseudos.clone(),
+        })
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => return e.error_response(),
+    };
+
+    if !duplicates.is_empty() {
+        return AppError::BadRequest(format!(
+            "Duplicate players in invite list: {}",
+            duplicates.join(", ")
+        ))
+        .error_response();
+    }
+
+    if seen_uuid.contains(&auth_user.user_id) {
+        return AppError::BadRequest("You cannot invite yourself".into()).error_response();
+    }
+
+    let existing_ids = match service.check_existing_players(game_id).await {
+        Ok(ids) => ids,
+        Err(e) => return e.error_response(),
+    };
+
+    let already_in: Vec<String> = invited_user_ids
+        .iter()
+        .filter(|id| existing_ids.contains(id))
+        .map(|id| id.to_string())
+        .collect();
+    if !already_in.is_empty() {
+        return AppError::Conflict("Some users are already players in this game".into())
+            .error_response();
+    }
+
+    if invited_user_ids.is_empty() {
+        return HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": "No valid users to invite"
+        }));
+    }
+
+    match orchestrator
+        .send_invites(game_id, auth_user.user_id, invited_user_ids)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": "Invites sent"
+        })),
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+pub async fn accept_invite(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+) -> HttpResponse {
+    let game_id = path.into_inner();
+
+    match orchestrator
+        .accept_invite(game_id, auth_user.user_id, &auth_user.pseudo)
+        .await
+    {
+        Ok(outcome) => HttpResponse::Ok().json(AcceptInviteResponse {
+            success: true,
+            message: match outcome.game_status.as_str() {
+                "ready" => "Game is ready to start!".to_string(),
+                _ => "Joined game successfully".to_string(),
+            },
+            player_id: outcome.player_id,
+            position: outcome.position,
+            player_count: outcome.player_count,
+            max_players: outcome.max_players,
+            game_status: outcome.game_status,
+        }),
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+pub async fn decline_invite(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+) -> HttpResponse {
+    let game_id = path.into_inner();
+
+    match orchestrator
+        .decline_invite(game_id, auth_user.user_id)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "message": "Invitation declined"
+        })),
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+pub async fn get_invitations(
+    auth_user: AuthenticatedUser,
+    service: web::Data<Arc<DashboardServiceType>>,
+) -> HttpResponse {
+    service_response!(service.get_invitations(auth_user.user_id).await)
+}
+
+pub async fn start_game(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    service: web::Data<Arc<DashboardServiceType>>,
+) -> HttpResponse {
+    let game_id = path.into_inner();
+
+    match orchestrator.start_game(game_id, auth_user.user_id).await {
+        Ok(()) => service_response!(service.get_game(auth_user.user_id, game_id).await),
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+pub async fn play_game(
+    req: HttpRequest,
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    payload: web::Json<PlayCardRequest>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    service: web::Data<Arc<DashboardServiceType>>,
+) -> HttpResponse {
+    let game_id = path.into_inner();
+    let correlation_id = req.extensions().get::<CorrelationId>().copied();
+
+    if let Err(e) = payload.validate() {
+        return AppError::from(e).error_response();
+    }
+
+    let game = match service.get_game(auth_user.user_id, game_id).await {
+        Ok(g) => g,
+        Err(e) => return e.error_response(),
+    };
+
+    let player = match game.players.iter().find(|p| p.is_current_user) {
+        Some(p) => p,
+        None => {
+            return AppError::Forbidden("You are not a player in this game".into())
+                .error_response();
+        }
+    };
+
+    match orchestrator
+        .play_card(game_id, player.id, payload.card_index, correlation_id)
+        .await
+    {
+        Ok(outcome) => {
+            let response: PlayCardResponse = outcome.into();
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+pub async fn game_state(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    service: web::Data<Arc<DashboardServiceType>>,
+) -> HttpResponse {
+    service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
+}
+
+pub async fn search_users(
+    _auth_user: AuthenticatedUser,
+    query: web::Query<UserSearchQuery>,
+    service: web::Data<Arc<DashboardServiceType>>,
+) -> HttpResponse {
+    service_response!(service.search_users(&query.into_inner()).await)
 }

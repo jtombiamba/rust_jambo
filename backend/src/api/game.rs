@@ -1,30 +1,13 @@
 use std::sync::Arc;
 
-use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder, ResponseError};
-use serde_json::json;
+use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, ResponseError};
 use uuid::Uuid;
 
 use crate::api::dto::requests::PlayCardRequest;
-use crate::api::dto::responses::{GameListItem, PlayCardResponse};
+use crate::api::dto::responses::PlayCardResponse;
 use crate::error::AppError;
 use crate::game::orchestrator::GameOrchestratorTrait;
 use crate::observability::CorrelationId;
-
-#[get("/games")]
-pub async fn list_games() -> impl Responder {
-    let games = vec![GameListItem {
-        id: Uuid::new_v4(),
-        status: "active".to_string(),
-        bet: 10,
-    }];
-    HttpResponse::Ok().json(games)
-}
-
-#[get("/games/{id}/me")]
-pub async fn get_my_cards(_id: web::Path<Uuid>) -> impl Responder {
-    let cards = vec![1, 5, 9, 13, 17];
-    HttpResponse::Ok().json(cards)
-}
 
 #[post("/game/{id}/play")]
 pub async fn play_card(
@@ -55,11 +38,6 @@ pub async fn play_card(
         }
         Err(e) => AppError::from(e).error_response(),
     }
-}
-
-#[post("/games/{id}/start")]
-pub async fn start_game(_id: web::Path<Uuid>) -> impl Responder {
-    HttpResponse::Ok().json(json!({ "status": "started" }))
 }
 
 #[cfg(test)]
@@ -215,6 +193,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -239,6 +219,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -263,6 +245,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -287,6 +271,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -311,6 +297,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -335,6 +323,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -359,6 +349,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -385,6 +377,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -411,6 +405,8 @@ mod tests {
                 status: "active".into(),
                 current_turn: 0,
                 bet: 10,
+                max_players: 4,
+                invite_expires_at: None,
                 deck_slots: None,
             }),
         ));
@@ -423,56 +419,5 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 500);
-    }
-
-    // ── stub endpoint tests ──
-
-    #[actix_web::test]
-    async fn test_list_games() {
-        let app = test::init_service(App::new().service(list_games)).await;
-        let req = test::TestRequest::get().uri("/games").to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert!(body.is_array());
-        assert_eq!(body[0]["status"], "active");
-        assert_eq!(body[0]["bet"], 10);
-    }
-
-    #[actix_web::test]
-    async fn test_get_my_cards() {
-        let app = test::init_service(App::new().service(get_my_cards)).await;
-        let game_id = Uuid::new_v4();
-        let req = test::TestRequest::get()
-            .uri(&format!("/games/{}/me", game_id))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert!(body.is_array());
-        assert_eq!(body.as_array().unwrap().len(), 5);
-    }
-
-    #[actix_web::test]
-    async fn test_get_my_cards_non_uuid_path() {
-        let app = test::init_service(App::new().service(get_my_cards)).await;
-        let req = test::TestRequest::get()
-            .uri("/games/not-a-uuid/me")
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 404);
-    }
-
-    #[actix_web::test]
-    async fn test_start_game() {
-        let app = test::init_service(App::new().service(start_game)).await;
-        let game_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/games/{}/start", game_id))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["status"], "started");
     }
 }

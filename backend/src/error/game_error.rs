@@ -27,6 +27,31 @@ pub enum GameError {
     #[error("Game already finished")]
     GameFinished,
 
+    #[error("Insufficient credits for bet")]
+    InsufficientCredits,
+
+    #[error("Game is not in pending state")]
+    GameNotPending,
+
+    #[error("User is not the game creator")]
+    NotCreator,
+
+    #[error("User is not invited to this game")]
+    NotInvited,
+
+    #[error("User is already a player in this game")]
+    AlreadyJoined,
+
+    #[error("Game is full")]
+    GameFull,
+
+    #[error("Invite has expired")]
+    InviteExpired,
+
+    #[error("Creator cannot join their own game")]
+    CreatorCannotJoin,
+    #[error("Game is not in ready state")]
+    GameNotReady,
     #[error("{0}")]
     Internal(#[source] Box<dyn std::error::Error + Send>),
 }

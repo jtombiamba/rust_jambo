@@ -2,15 +2,20 @@ use async_trait::async_trait;
 use sea_orm::DbErr;
 use uuid::Uuid;
 
+use crate::database::models::game_invite;
 use crate::database::models::{
     Game, GameCard, GameStatus, Player, PlayerProfile, PlayerType, User,
 };
+
+use crate::api::dto::dashboard::GameFilter;
 
 #[async_trait]
 pub trait UserRepoTrait: Send + Sync {
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, DbErr>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>, DbErr>;
     async fn find_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr>;
+    #[allow(dead_code)]
+    async fn find_by_pseudo_prefix(&self, prefix: &str, limit: u64) -> Result<Vec<User>, DbErr>;
     async fn create_user_with_profile(
         &self,
         pseudo: &str,
@@ -110,4 +115,46 @@ pub trait DashboardRepoTrait: Send + Sync {
         unplayed_only: bool,
     ) -> Result<Vec<GameCard>, DbErr>;
     async fn find_all_cards_for_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr>;
+    async fn list_players_for_user_filtered(
+        &self,
+        user_id: Uuid,
+        filter: GameFilter,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<(Player, Game)>, u64), DbErr>;
+    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, DbErr>;
+    async fn find_user_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr>;
+    async fn find_users_by_pseudo_prefix(
+        &self,
+        prefix: &str,
+        limit: u64,
+    ) -> Result<Vec<User>, DbErr>;
+    async fn list_pending_invites_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(game_invite::Model, Game)>, DbErr>;
+}
+
+#[allow(dead_code)]
+#[async_trait]
+pub trait GameInviteRepoTrait: Send + Sync {
+    async fn create_invite(
+        &self,
+        game_id: Uuid,
+        invited_user_id: Uuid,
+    ) -> Result<game_invite::Model, DbErr>;
+    async fn find_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<game_invite::Model>, DbErr>;
+    async fn update_invite_status(
+        &self,
+        invite_id: Uuid,
+        status: crate::database::models::InviteStatus,
+    ) -> Result<game_invite::Model, DbErr>;
+    async fn list_pending_invites_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(game_invite::Model, Game)>, DbErr>;
 }

@@ -5,8 +5,14 @@ use uuid::Uuid;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum IncomingMessage {
-    /// Join a specific game.
-    JoinGame { game_id: Uuid },
+    /// Join a specific game with optional player identification.
+    JoinGame {
+        game_id: Uuid,
+        #[serde(default)]
+        player_id: Option<Uuid>,
+        #[serde(default)]
+        player_position: Option<i32>,
+    },
     /// Leave the current game.
     LeaveGame,
     /// Heartbeat to keep connection alive.
@@ -41,7 +47,11 @@ mod tests {
         let json = format!(r#"{{"type":"join_game","game_id":"{}"}}"#, game_id);
         let msg: IncomingMessage = serde_json::from_str(&json).unwrap();
         match msg {
-            IncomingMessage::JoinGame { game_id: gid } => assert_eq!(gid, game_id),
+            IncomingMessage::JoinGame {
+                game_id: gid,
+                player_id: _,
+                player_position: _,
+            } => assert_eq!(gid, game_id),
             _ => panic!("Expected JoinGame"),
         }
     }

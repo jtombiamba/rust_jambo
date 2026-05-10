@@ -82,7 +82,7 @@ pub fn evaluate_round(ctx: &RoundContext) -> Option<RoundResult> {
 
     // Find the highest rank among same-suit cards
     same_suit.iter().max_by_key(|p| p.card.rank).map(|winner| {
-        let is_kora = winner.card.index % 8 == 0;
+        let is_kora = winner.card.index.is_multiple_of(8);
         RoundResult {
             winner_position: winner.player_position,
             is_kora,
