@@ -8,6 +8,7 @@ use crate::api::dto::auth::{
 use crate::auth::config::AuthConfig;
 use crate::auth::{jwt, password};
 use crate::database::traits::UserRepoTrait;
+use crate::mailer::Mailer;
 
 #[derive(Debug)]
 pub enum AuthError {
@@ -109,11 +110,16 @@ pub struct LoginResult {
 pub struct AuthService<R: UserRepoTrait> {
     repo: Arc<R>,
     config: AuthConfig,
+    mailer: Arc<dyn Mailer>,
 }
 
 impl<R: UserRepoTrait> AuthService<R> {
-    pub fn new(repo: Arc<R>, config: AuthConfig) -> Self {
-        Self { repo, config }
+    pub fn new(repo: Arc<R>, config: AuthConfig, mailer: Arc<dyn Mailer>) -> Self {
+        Self {
+            repo,
+            config,
+            mailer,
+        }
     }
 
     pub async fn register(
@@ -300,7 +306,10 @@ impl<R: UserRepoTrait> AuthService<R> {
                         "{}/password-reset?token={}",
                         self.config.frontend_url, token
                     );
-                    tracing::info!("Password reset link for {}: {}", email, reset_link);
+
+                    if let Err(e) = self.mailer.send_password_reset(&email, &reset_link).await {
+                        tracing::error!("Failed to send password reset email to {email}: {e}");
+                    }
                 }
             }
         }

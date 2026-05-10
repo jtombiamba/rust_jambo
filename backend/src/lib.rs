@@ -5,6 +5,7 @@ pub mod config;
 pub mod database;
 pub mod error;
 pub mod game;
+pub mod mailer;
 pub mod messaging;
 pub mod observability;
 pub mod websocket;

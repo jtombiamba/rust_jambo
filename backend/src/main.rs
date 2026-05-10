@@ -11,6 +11,7 @@ mod config;
 mod database;
 mod error;
 mod game;
+mod mailer;
 mod messaging;
 mod observability;
 mod websocket;
@@ -27,6 +28,7 @@ use cache::UserCache;
 use config::Config;
 use database::repositories::{DashboardRepository, UserRepository};
 use game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
+use mailer::{create_mailer, MailerConfig};
 use messaging::RedisClient;
 use observability::middleware::CorrelationIdMiddleware;
 use websocket::manager::WebSocketManager;
@@ -106,12 +108,16 @@ async fn main() -> std::io::Result<()> {
     let auth_config = AuthConfig::from_env().expect("Failed to load auth configuration");
     let auth_config_data = web::Data::new(auth_config.clone());
 
+    let mailer_config = MailerConfig::from_env();
+    let mailer = create_mailer(mailer_config).expect("Failed to create mailer");
+    let mailer_data = web::Data::new(mailer.clone());
+
     let db_clone = db_connection.clone();
 
     let user_repo = Arc::new(UserRepository::new(db_connection.clone()));
     let dashboard_repo = Arc::new(DashboardRepository::new(db_connection.clone()));
     let auth_service: Arc<api::auth::AuthServiceType> = Arc::new(
-        api::services::auth_service::AuthService::new(user_repo, auth_config),
+        api::services::auth_service::AuthService::new(user_repo, auth_config, mailer),
     );
 
     let user_cache = Arc::new(UserCache::new());
@@ -178,6 +184,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(auth_service_data.clone())
             .app_data(dashboard_service_data.clone())
             .app_data(user_cache_data.clone())
+            .app_data(mailer_data.clone())
             .service(health_check)
             .service(metrics)
             .service(

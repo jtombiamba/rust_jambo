@@ -3,7 +3,7 @@ use std::env;
 use config::{Config as ConfigBuilder, ConfigError, Environment};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 #[allow(dead_code)]
 pub struct Config {
     pub host: String,
@@ -17,6 +17,27 @@ pub struct Config {
     pub jwt_expiry_hours: i64,
     pub ip_hash_pepper: String,
     pub frontend_url: String,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database_url", &self.database_url)
+            .field("rabbitmq_url", &self.rabbitmq_url)
+            .field("redis_url", &self.redis_url)
+            .field("log_level", &self.log_level)
+            .field(
+                "max_rabbitmq_connection_retries",
+                &self.max_rabbitmq_connection_retries,
+            )
+            .field("jwt_secret", &"***")
+            .field("jwt_expiry_hours", &self.jwt_expiry_hours)
+            .field("ip_hash_pepper", &"***")
+            .field("frontend_url", &self.frontend_url)
+            .finish()
+    }
 }
 
 impl Config {

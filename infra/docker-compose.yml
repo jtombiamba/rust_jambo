@@ -64,6 +64,9 @@ services:
       JWT_EXPIRY_HOURS: 24
       IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
       FRONTEND_URL: http://localhost:3000
+      MAILER_MODE: console
+      SMTP_FROM_EMAIL: noreply@fapfap.local
+      SMTP_FROM_NAME: "FapFap Game"
     ports:
       - "8080:8080"
     volumes:
@@ -110,6 +113,9 @@ services:
       JWT_EXPIRY_HOURS: 24
       IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
       FRONTEND_URL: http://localhost:3000
+      MAILER_MODE: console
+      SMTP_FROM_EMAIL: noreply@fapfap.local
+      SMTP_FROM_NAME: "FapFap Game"
     volumes:
       - ../backend/migrations:/app/migrations:ro
     healthcheck:

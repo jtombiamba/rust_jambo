@@ -234,7 +234,7 @@ function ForgotPasswordForm() {
 }
 
 export default function AuthModal() {
-  const { authModalOpen, authView, closeAuthModal, setAuthView } = useAuthStore()
+  const { authModalOpen, authView, closeAuthModal, setAuthView, pendingInviteMessage } = useAuthStore()
 
   if (!authModalOpen) return null
 
@@ -248,6 +248,12 @@ export default function AuthModal() {
           &times;
         </button>
 
+        {pendingInviteMessage && (
+          <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded text-sm">
+            {pendingInviteMessage}
+          </div>
+        )}
+
         {authView === 'register' && <RegisterForm />}
         {authView === 'login' && <LoginForm />}
         {authView === 'forgot-password' && <ForgotPasswordForm />}
@@ -255,6 +261,11 @@ export default function AuthModal() {
         {authView === 'choice' && (
           <div>
             <h2 className="text-xl font-semibold mb-6 text-center">Welcome</h2>
+            {pendingInviteMessage && (
+              <p className="text-sm text-emerald-700 mb-4 text-center">
+                {pendingInviteMessage}
+              </p>
+            )}
             <div className="space-y-3">
               <button
                 onClick={() => setAuthView('register')}

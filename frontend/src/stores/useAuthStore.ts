@@ -28,9 +28,11 @@ interface AuthState {
   authView: AuthView
   authError: { error: string; field?: string } | null
   authLoading: boolean
-  openAuthModal: () => void
+  pendingInviteMessage: string | null
+  openAuthModal: (message?: string) => void
   closeAuthModal: () => void
   setAuthView: (view: AuthView) => void
+  clearPendingInvite: () => void
   checkAuth: () => Promise<void>
   register: (data: RegisterPayload) => Promise<boolean>
   login: (data: LoginPayload) => Promise<boolean>
@@ -45,10 +47,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   authView: 'choice',
   authError: null,
   authLoading: false,
+  pendingInviteMessage: null,
 
-  openAuthModal: () => set({ authModalOpen: true, authView: 'choice', authError: null }),
+  openAuthModal: (message) => set({ authModalOpen: true, authView: 'choice', authError: null, pendingInviteMessage: message || null }),
   closeAuthModal: () => set({ authModalOpen: false, authError: null }),
   setAuthView: (view) => set({ authView: view, authError: null }),
+  clearPendingInvite: () => set({ pendingInviteMessage: null }),
 
   checkAuth: async () => {
     try {

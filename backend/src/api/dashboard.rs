@@ -12,6 +12,7 @@ use crate::api::services::dashboard_service::{DashboardService, SendInvitesParam
 use crate::auth::extractors::AuthenticatedUser;
 use crate::database::repositories::DashboardRepository;
 use crate::error::AppError;
+use crate::mailer::Mailer;
 use crate::observability::CorrelationId;
 
 pub type DashboardServiceType = DashboardService<DashboardRepository>;
@@ -125,6 +126,7 @@ pub async fn send_invites(
     body: web::Json<SendInvitesRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
     service: web::Data<Arc<DashboardServiceType>>,
+    mailer: web::Data<Arc<dyn Mailer>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
 
@@ -174,13 +176,31 @@ pub async fn send_invites(
     }
 
     match orchestrator
-        .send_invites(game_id, auth_user.user_id, invited_user_ids)
+        .send_invites(game_id, auth_user.user_id, invited_user_ids.clone())
         .await
     {
-        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
-            "success": true,
-            "message": "Invites sent"
-        })),
+        Ok(()) => {
+            let users = match service.find_users_by_ids(&invited_user_ids).await {
+                Ok(u) => u,
+                Err(e) => return e.error_response(),
+            };
+            let mut email_errors = 0u32;
+            for user in &users {
+                let game_id_str = game_id.to_string();
+                if let Err(e) = mailer
+                    .send_invitation(&user.email, &auth_user.pseudo, &game_id_str)
+                    .await
+                {
+                    tracing::error!("Failed to send invitation email to {}: {}", user.email, e);
+                    email_errors += 1;
+                }
+            }
+            HttpResponse::Ok().json(serde_json::json!({
+                "success": true,
+                "message": "Invites sent",
+                "email_errors": email_errors
+            }))
+        }
         Err(e) => AppError::from(e).error_response(),
     }
 }

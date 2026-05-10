@@ -12,7 +12,7 @@ use crate::api::dto::responses::{
     UserSearchResponse,
 };
 use crate::cache::UserCache;
-use crate::database::models::{GameStatus, PlayerType};
+use crate::database::models::{GameStatus, PlayerType, User};
 use crate::database::traits::DashboardRepoTrait;
 use crate::error::AppError;
 use crate::game::service::compute_display_position;
@@ -304,6 +304,21 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             .collect();
 
         Ok(UserSearchResponse { users: items })
+    }
+
+    pub async fn find_users_by_ids(&self, ids: &[Uuid]) -> Result<Vec<User>, AppError> {
+        let mut users = Vec::with_capacity(ids.len());
+        for &id in ids {
+            if let Some(user) = self
+                .repo
+                .find_user_by_id(id)
+                .await
+                .map_err(AppError::Database)?
+            {
+                users.push(user);
+            }
+        }
+        Ok(users)
     }
 }
 
