@@ -113,14 +113,14 @@ async fn main() -> std::io::Result<()> {
     let auth_service: Arc<api::auth::AuthServiceType> = Arc::new(
         api::services::auth_service::AuthService::new(user_repo, auth_config),
     );
+
+    let user_cache = Arc::new(UserCache::new());
     let dashboard_service: Arc<api::dashboard::DashboardServiceType> = Arc::new(
-        api::services::dashboard_service::DashboardService::new(dashboard_repo),
+        api::services::dashboard_service::DashboardService::new(dashboard_repo, user_cache.clone()),
     );
 
     let auth_service_data = web::Data::new(auth_service);
     let dashboard_service_data = web::Data::new(dashboard_service);
-
-    let user_cache = Arc::new(UserCache::new());
     let user_cache_data = web::Data::new(user_cache.clone());
 
     let orchestrator: Arc<dyn GameOrchestratorTrait> = Arc::new(GameOrchestrator::new(

@@ -1,48 +1,58 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use actix_web::HttpResponse;
-use serde_json::json;
 use uuid::Uuid;
 
 use crate::api::dto::dashboard::{
     GameHistoryItem, GameHistoryResponse, PaginationParams, PlayerProfileResponse,
 };
-use crate::api::dto::responses::{PlayerInfoDto, QuickGameResponse};
+use crate::api::dto::requests::UserSearchQuery;
+use crate::api::dto::responses::{
+    InvitationItem, InvitationsResponse, PlayerInfoDto, QuickGameResponse, UserSearchItem,
+    UserSearchResponse,
+};
+use crate::cache::UserCache;
 use crate::database::models::{GameStatus, PlayerType};
 use crate::database::traits::DashboardRepoTrait;
+use crate::error::AppError;
 use crate::game::service::compute_display_position;
 
 pub struct DashboardService<R: DashboardRepoTrait> {
     repo: Arc<R>,
+    user_cache: Arc<UserCache>,
+}
+
+#[derive(Debug)]
+pub struct SendInvitesParams {
+    pub user_ids: Vec<Uuid>,
+    pub pseudos: Vec<String>,
 }
 
 impl<R: DashboardRepoTrait> DashboardService<R> {
-    pub fn new(repo: Arc<R>) -> Self {
-        Self { repo }
+    pub fn new(repo: Arc<R>, user_cache: Arc<UserCache>) -> Self {
+        Self { repo, user_cache }
     }
 
-    pub async fn get_profile(&self, user_id: Uuid) -> Result<HttpResponse, actix_web::Error> {
-        let profile = self.repo.find_profile_by_user_id(user_id).await;
+    pub async fn get_profile(&self, user_id: Uuid) -> Result<PlayerProfileResponse, AppError> {
+        let profile = self
+            .repo
+            .find_profile_by_user_id(user_id)
+            .await
+            .map_err(AppError::Database)?;
 
         match profile {
-            Ok(Some(p)) => Ok(HttpResponse::Ok().json(PlayerProfileResponse {
+            Some(p) => Ok(PlayerProfileResponse {
                 credit: p.credit,
                 game_played: p.game_played,
                 wins: p.wins,
                 kora_wins: p.kora_wins,
-            })),
-            Ok(None) => Ok(HttpResponse::Ok().json(PlayerProfileResponse {
+            }),
+            None => Ok(PlayerProfileResponse {
                 credit: 500,
                 game_played: 0,
                 wins: 0,
                 kora_wins: 0,
-            })),
-            Err(e) => {
-                tracing::error!("Failed to fetch profile: {}", e);
-                Ok(HttpResponse::InternalServerError()
-                    .json(json!({"error": "Internal server error"})))
-            }
+            }),
         }
     }
 
@@ -50,23 +60,16 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
         &self,
         user_id: Uuid,
         query: PaginationParams,
-    ) -> Result<HttpResponse, actix_web::Error> {
+    ) -> Result<GameHistoryResponse, AppError> {
         let page = query.page.unwrap_or(1).max(1);
         let per_page = query.per_page.unwrap_or(10).clamp(1, 100);
         let filter = query.to_filter();
 
-        let (pairs, total) = match self
+        let (pairs, total) = self
             .repo
             .list_players_for_user_filtered(user_id, filter, page, per_page)
             .await
-        {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!("Failed to fetch filtered player records: {}", e);
-                return Ok(HttpResponse::InternalServerError()
-                    .json(json!({"error": "Internal server error"})));
-            }
-        };
+            .map_err(AppError::Database)?;
 
         let mut game_items = Vec::new();
         for (player, game) in pairs {
@@ -101,83 +104,206 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             });
         }
 
-        Ok(HttpResponse::Ok().json(GameHistoryResponse {
+        Ok(GameHistoryResponse {
             games: game_items,
             total,
             page,
             per_page,
-        }))
+        })
     }
 
     pub async fn get_game(
         &self,
         user_id: Uuid,
         game_id: Uuid,
-    ) -> Result<HttpResponse, actix_web::Error> {
-        let _player = match self
+    ) -> Result<QuickGameResponse, AppError> {
+        let _player = self
             .repo
             .find_player_by_game_and_user(game_id, user_id)
             .await
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                return Ok(HttpResponse::NotFound()
-                    .json(json!({"error": "Game not found or you are not a participant"})));
-            }
-            Err(e) => {
-                tracing::error!("Failed to fetch player: {}", e);
-                return Ok(HttpResponse::InternalServerError()
-                    .json(json!({"error": "Internal server error"})));
-            }
-        };
+            .map_err(AppError::Database)?
+            .ok_or_else(|| {
+                AppError::NotFound("Game not found or you are not a participant".into())
+            })?;
 
-        let game = match self.repo.find_game_by_id(game_id).await {
-            Ok(Some(g)) => g,
-            Ok(None) => {
-                return Ok(HttpResponse::NotFound().json(json!({"error": "Game not found"})));
-            }
-            Err(e) => {
-                tracing::error!("Failed to fetch game: {}", e);
-                return Ok(HttpResponse::InternalServerError()
-                    .json(json!({"error": "Internal server error"})));
-            }
-        };
+        let game = self
+            .repo
+            .find_game_by_id(game_id)
+            .await
+            .map_err(AppError::Database)?
+            .ok_or_else(|| AppError::NotFound("Game not found".into()))?;
 
         match game.status {
             GameStatus::Active | GameStatus::Pending | GameStatus::Ready => {}
             _ => {
-                return Ok(HttpResponse::Gone().json(json!({
-                    "error": "Game already finished",
-                    "status": format!("{:?}", game.status),
-                })));
+                return Err(AppError::Conflict(format!(
+                    "Game already finished: {:?}",
+                    game.status
+                )));
             }
         }
 
         build_game_state_response(&*self.repo, &game, user_id).await
     }
 
-    pub async fn get_active_game(&self, user_id: Uuid) -> Result<HttpResponse, actix_web::Error> {
-        let players = match self.repo.list_players_for_user(user_id).await {
-            Ok(rows) if !rows.is_empty() => rows,
-            Ok(_) => {
-                return Ok(HttpResponse::NotFound().json(json!({"error": "No active game found"})));
-            }
-            Err(e) => {
-                tracing::error!("Failed to fetch players: {}", e);
-                return Ok(HttpResponse::InternalServerError()
-                    .json(json!({"error": "Internal server error"})));
-            }
-        };
+    pub async fn get_active_game(&self, user_id: Uuid) -> Result<QuickGameResponse, AppError> {
+        let players = self
+            .repo
+            .list_players_for_user(user_id)
+            .await
+            .map_err(AppError::Database)?;
+
+        if players.is_empty() {
+            return Err(AppError::NotFound("No active game found".into()));
+        }
 
         for p in &players {
-            if let Ok(Some(game)) = self.repo.find_game_by_id(p.game_id).await {
+            if let Ok(Some(game)) = self
+                .repo
+                .find_game_by_id(p.game_id)
+                .await
+                .map_err(AppError::Database)
+            {
                 if game.status == GameStatus::Active {
                     return build_game_state_response(&*self.repo, &game, user_id).await;
                 }
             }
         }
 
-        Ok(HttpResponse::NotFound().json(json!({"error": "No active game found"})))
+        Err(AppError::NotFound("No active game found".into()))
+    }
+
+    pub async fn resolve_invite_user_ids(
+        &self,
+        params: &SendInvitesParams,
+    ) -> Result<(Vec<Uuid>, HashSet<Uuid>, Vec<String>), AppError> {
+        let mut invited_user_ids: Vec<Uuid> = params.user_ids.clone();
+        let mut resolved_from_pseudos: Vec<(Uuid, String)> = Vec::new();
+
+        for pseudo in &params.pseudos {
+            let trimmed = pseudo.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(uuid) = self.user_cache.get_uuid_by_pseudo(trimmed).await {
+                resolved_from_pseudos.push((uuid, trimmed.to_string()));
+                continue;
+            }
+            if let Some(user) = self
+                .repo
+                .find_user_by_pseudo(trimmed)
+                .await
+                .map_err(AppError::Database)?
+            {
+                self.user_cache
+                    .put(user.id, user.pseudo.clone(), user.email)
+                    .await;
+                resolved_from_pseudos.push((user.id, user.pseudo));
+            }
+        }
+
+        let mut seen_uuid = HashSet::new();
+        let mut seen_pseudo = HashSet::new();
+        let mut duplicates: Vec<String> = Vec::new();
+
+        for (uuid, pseudo) in &resolved_from_pseudos {
+            if !seen_uuid.insert(*uuid) {
+                duplicates.push(pseudo.clone());
+            }
+            seen_pseudo.insert(pseudo.clone());
+        }
+
+        for uid in &invited_user_ids {
+            if !seen_uuid.insert(*uid) {
+                duplicates.push(uid.to_string());
+            }
+        }
+
+        invited_user_ids.extend(resolved_from_pseudos.into_iter().map(|(u, _)| u));
+
+        Ok((invited_user_ids, seen_uuid, duplicates))
+    }
+
+    pub async fn check_existing_players(&self, game_id: Uuid) -> Result<HashSet<Uuid>, AppError> {
+        let existing_players = self
+            .repo
+            .list_players_by_game_ordered(game_id)
+            .await
+            .map_err(AppError::Database)?;
+        Ok(existing_players.iter().filter_map(|p| p.user_id).collect())
+    }
+
+    pub async fn get_invitations(&self, user_id: Uuid) -> Result<InvitationsResponse, AppError> {
+        let pending = self
+            .repo
+            .list_pending_invites_for_user(user_id)
+            .await
+            .map_err(AppError::Database)?;
+
+        let mut items = Vec::new();
+        for (invite, game) in pending {
+            let player_count = self
+                .repo
+                .list_players_by_game_ordered(game.id)
+                .await
+                .map_err(AppError::Database)?
+                .len() as i64;
+
+            let creator_pseudo = match game.creator_id {
+                Some(uid) => self
+                    .repo
+                    .find_user_by_id(uid)
+                    .await
+                    .map_err(AppError::Database)?
+                    .map(|u| u.pseudo)
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                None => "Unknown".to_string(),
+            };
+
+            items.push(InvitationItem {
+                invite_id: invite.id,
+                game_id: game.id,
+                creator_pseudo,
+                bet: game.bet,
+                player_count,
+                max_players: game.max_players as i32,
+                created_at: invite.created_at.to_rfc3339(),
+                expires_at: game.invite_expires_at.map(|t| t.to_rfc3339()),
+            });
+        }
+
+        Ok(InvitationsResponse { invitations: items })
+    }
+
+    pub async fn search_users(
+        &self,
+        query: &UserSearchQuery,
+    ) -> Result<UserSearchResponse, AppError> {
+        if query.q.trim().len() < 2 {
+            return Ok(UserSearchResponse { users: vec![] });
+        }
+
+        let users = self
+            .repo
+            .find_users_by_pseudo_prefix(query.q.trim(), query.limit)
+            .await
+            .map_err(AppError::Database)?;
+
+        let bulk: Vec<(Uuid, String, String)> = users
+            .iter()
+            .map(|u| (u.id, u.pseudo.clone(), u.email.clone()))
+            .collect();
+        self.user_cache.populate_bulk(&bulk).await;
+
+        let items: Vec<UserSearchItem> = users
+            .into_iter()
+            .map(|u| UserSearchItem {
+                id: u.id,
+                pseudo: u.pseudo,
+            })
+            .collect();
+
+        Ok(UserSearchResponse { users: items })
     }
 }
 
@@ -185,42 +311,30 @@ async fn build_game_state_response(
     repo: &dyn DashboardRepoTrait,
     game: &crate::database::models::Game,
     user_id: Uuid,
-) -> Result<HttpResponse, actix_web::Error> {
-    let all_players = match repo.list_players_by_game_ordered(game.id).await {
-        Ok(rows) => rows,
-        Err(e) => {
-            tracing::error!("Failed to fetch game players: {}", e);
-            return Ok(
-                HttpResponse::InternalServerError().json(json!({"error": "Internal server error"}))
-            );
-        }
-    };
+) -> Result<QuickGameResponse, AppError> {
+    let all_players = repo
+        .list_players_by_game_ordered(game.id)
+        .await
+        .map_err(AppError::Database)?;
 
     let num_players = all_players.len();
 
     let my_player = all_players.iter().find(|p| p.user_id == Some(user_id));
-
     let my_position = my_player.map(|p| p.position as usize).unwrap_or(0);
 
     let my_cards: Vec<i32> = if let Some(mp) = my_player {
         match repo.find_cards_for_player(mp.id, true).await {
             Ok(cards) => cards.iter().map(|c| c.card_index).collect(),
-            Err(e) => {
-                tracing::error!("Failed to fetch my cards: {}", e);
-                Vec::new()
-            }
+            Err(_) => Vec::new(),
         }
     } else {
         Vec::new()
     };
 
-    let all_game_cards = match repo.find_all_cards_for_game(game.id).await {
-        Ok(cards) => cards,
-        Err(e) => {
-            tracing::error!("Failed to fetch game cards: {}", e);
-            Vec::new()
-        }
-    };
+    let all_game_cards = repo
+        .find_all_cards_for_game(game.id)
+        .await
+        .unwrap_or_default();
 
     let mut remaining_counts: HashMap<Uuid, usize> = HashMap::new();
     for player in &all_players {
@@ -273,7 +387,7 @@ async fn build_game_state_response(
     let current_turn_display =
         compute_display_position(current_turn as usize, num_players, my_position) as i32;
 
-    Ok(HttpResponse::Ok().json(QuickGameResponse {
+    Ok(QuickGameResponse {
         game_id: game.id,
         players: players_json,
         status: match game.status {
@@ -286,7 +400,7 @@ async fn build_game_state_response(
         max_players: game.max_players as i32,
         invite_expires_at: game.invite_expires_at.map(|t| t.to_rfc3339()),
         deck_slots: Some(deck_slots),
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -294,7 +408,6 @@ mod tests {
     use super::*;
     use crate::api::dto::dashboard::GameFilter;
     use crate::database::models::{Game, GameCard, Player, PlayerProfile};
-    use actix_web::http::StatusCode;
     use async_trait::async_trait;
     use sea_orm::DbErr;
     use std::sync::Mutex;
@@ -403,20 +516,55 @@ mod tests {
             }
             Ok((pairs, total))
         }
+
+        async fn find_user_by_id(
+            &self,
+            _id: Uuid,
+        ) -> Result<Option<crate::database::models::User>, DbErr> {
+            Ok(None)
+        }
+
+        async fn find_user_by_pseudo(
+            &self,
+            _pseudo: &str,
+        ) -> Result<Option<crate::database::models::User>, DbErr> {
+            Ok(None)
+        }
+
+        async fn find_users_by_pseudo_prefix(
+            &self,
+            _prefix: &str,
+            _limit: u64,
+        ) -> Result<Vec<crate::database::models::User>, DbErr> {
+            Ok(vec![])
+        }
+
+        async fn list_pending_invites_for_user(
+            &self,
+            _user_id: Uuid,
+        ) -> Result<Vec<(crate::database::models::game_invite::Model, Game)>, DbErr> {
+            Ok(vec![])
+        }
+    }
+
+    fn make_service(repo: Arc<MockDashboardRepo>) -> DashboardService<MockDashboardRepo> {
+        let cache = Arc::new(UserCache::new());
+        DashboardService::new(repo, cache)
     }
 
     #[tokio::test]
     async fn test_get_profile_not_found_returns_defaults() {
         let repo = Arc::new(MockDashboardRepo::new());
-        let service = DashboardService::new(repo);
+        let service = make_service(repo);
         let resp = service.get_profile(Uuid::new_v4()).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.credit, 500);
+        assert_eq!(resp.game_played, 0);
     }
 
     #[tokio::test]
     async fn test_list_games_empty() {
         let repo = Arc::new(MockDashboardRepo::new());
-        let service = DashboardService::new(repo);
+        let service = make_service(repo);
         let resp = service
             .list_games(
                 Uuid::new_v4(),
@@ -431,6 +579,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.games.len(), 0);
+        assert_eq!(resp.total, 0);
     }
 }

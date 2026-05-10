@@ -876,6 +876,51 @@ impl DashboardRepoTrait for DashboardRepository {
         self.list_players_for_user_filtered(user_id, filter, page, per_page)
             .await
     }
+
+    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, DbErr> {
+        user::Entity::find_by_id(id).one(&self.connection).await
+    }
+
+    async fn find_user_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr> {
+        user::Entity::find()
+            .filter(user::Column::Pseudo.eq(pseudo))
+            .one(&self.connection)
+            .await
+    }
+
+    async fn find_users_by_pseudo_prefix(
+        &self,
+        prefix: &str,
+        limit: u64,
+    ) -> Result<Vec<User>, DbErr> {
+        user::Entity::find()
+            .filter(user::Column::Pseudo.starts_with(prefix))
+            .limit(limit)
+            .all(&self.connection)
+            .await
+    }
+
+    async fn list_pending_invites_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(game_invite::Model, Game)>, DbErr> {
+        let invites = game_invite::Entity::find()
+            .filter(game_invite::Column::InvitedUserId.eq(user_id))
+            .filter(game_invite::Column::Status.eq(InviteStatus::Pending))
+            .all(&self.connection)
+            .await?;
+
+        let mut results = Vec::new();
+        for invite in invites {
+            if let Some(game) = game::Entity::find_by_id(invite.game_id)
+                .one(&self.connection)
+                .await?
+            {
+                results.push((invite, game));
+            }
+        }
+        Ok(results)
+    }
 }
 
 pub struct GameInviteRepository {

@@ -55,6 +55,7 @@ pub struct ResetPasswordResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
+    pub success: bool,
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,

@@ -7,30 +7,35 @@ use crate::api::dto::dashboard::PaginationParams;
 use crate::api::dto::requests::{
     CreateGameRequest, PlayCardRequest, SendInvitesRequest, UserSearchQuery,
 };
-use crate::api::dto::responses::{
-    AcceptInviteResponse, InvitationItem, InvitationsResponse, PlayCardResponse, UserSearchItem,
-    UserSearchResponse,
-};
-use crate::api::services::dashboard_service::DashboardService;
+use crate::api::dto::responses::{AcceptInviteResponse, PlayCardResponse};
+use crate::api::services::dashboard_service::{DashboardService, SendInvitesParams};
 use crate::auth::extractors::AuthenticatedUser;
-use crate::database::repositories::{
-    DashboardRepository, GameInviteRepository, PlayerRepository, UserRepository,
-};
+use crate::database::repositories::DashboardRepository;
 use crate::error::AppError;
 use crate::observability::CorrelationId;
 
 pub type DashboardServiceType = DashboardService<DashboardRepository>;
 
+macro_rules! service_response {
+    ($result:expr) => {{
+        match $result {
+            Ok(data) => HttpResponse::Ok().json(data),
+            Err(e) => e.error_response(),
+        }
+    }};
+    ($result:expr, $status:expr) => {{
+        match $result {
+            Ok(data) => HttpResponse::build($status).json(data),
+            Err(e) => e.error_response(),
+        }
+    }};
+}
+
 pub async fn get_profile(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    service
-        .get_profile(auth_user.user_id)
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(service.get_profile(auth_user.user_id).await)
 }
 
 pub async fn list_games(
@@ -38,12 +43,11 @@ pub async fn list_games(
     query: web::Query<PaginationParams>,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    service
-        .list_games(auth_user.user_id, query.into_inner())
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(
+        service
+            .list_games(auth_user.user_id, query.into_inner())
+            .await
+    )
 }
 
 pub async fn get_game(
@@ -51,48 +55,37 @@ pub async fn get_game(
     service: web::Data<Arc<DashboardServiceType>>,
     path: web::Path<Uuid>,
 ) -> HttpResponse {
-    service
-        .get_game(auth_user.user_id, path.into_inner())
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
 }
 
 pub async fn get_active_game(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    service
-        .get_active_game(auth_user.user_id)
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(service.get_active_game(auth_user.user_id).await)
 }
 
 pub async fn create_game(
     auth_user: AuthenticatedUser,
     body: web::Json<CreateGameRequest>,
-    orchestrator: web::Data<std::sync::Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
     db: web::Data<sea_orm::DatabaseConnection>,
 ) -> HttpResponse {
     if let Err(e) = body.validate() {
-        return HttpResponse::BadRequest().json(serde_json::json!({"error": e.to_string()}));
+        return AppError::from(e).error_response();
     }
 
     match body.game_mode.as_str() {
         "multiplayer" => {
-            let result = orchestrator
+            match orchestrator
                 .create_multiplayer_game(
                     auth_user.user_id,
                     &auth_user.pseudo,
                     body.bet,
                     body.max_players,
                 )
-                .await;
-
-            match result {
+                .await
+            {
                 Ok(outcome) => {
                     let response: crate::api::dto::responses::MultiplayerGameResponse =
                         outcome.into();
@@ -104,31 +97,22 @@ pub async fn create_game(
                         auth_user.user_id,
                         e
                     );
-                    match &e {
-                        crate::error::GameError::InsufficientCredits => {
-                            HttpResponse::PaymentRequired()
-                                .json(serde_json::json!({"error": e.to_string()}))
-                        }
-                        _ => HttpResponse::InternalServerError()
-                            .json(serde_json::json!({"error": "Failed to create game"})),
-                    }
+                    AppError::from(e).error_response()
                 }
             }
         }
         _ => {
-            let result = orchestrator
+            match orchestrator
                 .create_quick_game_for_user(auth_user.user_id, db.get_ref())
-                .await;
-
-            match result {
+                .await
+            {
                 Ok(outcome) => {
                     let response: crate::api::dto::responses::QuickGameResponse = outcome.into();
                     HttpResponse::Created().json(response)
                 }
                 Err(e) => {
                     tracing::error!("Failed to create solo game for user: {}", e);
-                    HttpResponse::InternalServerError()
-                        .json(serde_json::json!({"error": "Failed to create game"}))
+                    AppError::from(e).error_response()
                 }
             }
         }
@@ -140,71 +124,37 @@ pub async fn send_invites(
     path: web::Path<Uuid>,
     body: web::Json<SendInvitesRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
-    cache: web::Data<Arc<crate::cache::UserCache>>,
-    db: web::Data<sea_orm::DatabaseConnection>,
+    service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
-    let mut invited_user_ids: Vec<Uuid> = body.user_ids.clone();
-    let user_repo = UserRepository::new(db.get_ref().clone());
-    let mut resolved_from_pseudos = Vec::new();
 
-    for pseudo in &body.pseudos {
-        let trimmed = pseudo.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Some(uuid) = cache.get_uuid_by_pseudo(trimmed).await {
-            resolved_from_pseudos.push((uuid, trimmed.to_string()));
-            continue;
-        }
-        if let Ok(Some(user)) = user_repo.find_by_pseudo(trimmed).await {
-            cache.put(user.id, user.pseudo.clone(), user.email).await;
-            resolved_from_pseudos.push((user.id, user.pseudo));
-        }
-    }
-
-    let mut seen_uuid = std::collections::HashSet::new();
-    let mut seen_pseudo = std::collections::HashSet::new();
-    let mut duplicates: Vec<String> = Vec::new();
-
-    for (uuid, pseudo) in &resolved_from_pseudos {
-        if !seen_uuid.insert(*uuid) {
-            duplicates.push(pseudo.clone());
-        }
-        seen_pseudo.insert(pseudo.clone());
-    }
-
-    for uid in &invited_user_ids {
-        if !seen_uuid.insert(*uid) {
-            duplicates.push(uid.to_string());
-        }
-    }
+    let (invited_user_ids, seen_uuid, duplicates) = match service
+        .resolve_invite_user_ids(&SendInvitesParams {
+            user_ids: body.user_ids.clone(),
+            pseudos: body.pseudos.clone(),
+        })
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => return e.error_response(),
+    };
 
     if !duplicates.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": format!("Duplicate players in invite list: {}", duplicates.join(", "))
-        }));
+        return AppError::BadRequest(format!(
+            "Duplicate players in invite list: {}",
+            duplicates.join(", ")
+        ))
+        .error_response();
     }
-
-    invited_user_ids.extend(resolved_from_pseudos.into_iter().map(|(u, _)| u));
 
     if seen_uuid.contains(&auth_user.user_id) {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "You cannot invite yourself"
-        }));
+        return AppError::BadRequest("You cannot invite yourself".into()).error_response();
     }
 
-    let player_repo = PlayerRepository::new(db.get_ref().clone());
-    let existing_players = match player_repo.list_by_game(game_id).await {
-        Ok(players) => players,
-        Err(e) => {
-            tracing::error!("Failed to check existing players: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "Internal server error"}));
-        }
+    let existing_ids = match service.check_existing_players(game_id).await {
+        Ok(ids) => ids,
+        Err(e) => return e.error_response(),
     };
-    let existing_ids: std::collections::HashSet<Uuid> =
-        existing_players.iter().filter_map(|p| p.user_id).collect();
 
     let already_in: Vec<String> = invited_user_ids
         .iter()
@@ -212,9 +162,8 @@ pub async fn send_invites(
         .map(|id| id.to_string())
         .collect();
     if !already_in.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "Some users are already players in this game"
-        }));
+        return AppError::Conflict("Some users are already players in this game".into())
+            .error_response();
     }
 
     if invited_user_ids.is_empty() {
@@ -232,15 +181,7 @@ pub async fn send_invites(
             "success": true,
             "message": "Invites sent"
         })),
-        Err(e) => {
-            let status = match &e {
-                crate::error::GameError::NotCreator => actix_web::http::StatusCode::FORBIDDEN,
-                crate::error::GameError::GameNotPending => actix_web::http::StatusCode::CONFLICT,
-                crate::error::GameError::GameNotFound => actix_web::http::StatusCode::NOT_FOUND,
-                _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            HttpResponse::build(status).json(serde_json::json!({"error": e.to_string()}))
-        }
+        Err(e) => AppError::from(e).error_response(),
     }
 }
 
@@ -267,23 +208,7 @@ pub async fn accept_invite(
             max_players: outcome.max_players,
             game_status: outcome.game_status,
         }),
-        Err(e) => {
-            let status = match &e {
-                crate::error::GameError::NotInvited
-                | crate::error::GameError::CreatorCannotJoin => {
-                    actix_web::http::StatusCode::FORBIDDEN
-                }
-                crate::error::GameError::GameNotPending
-                | crate::error::GameError::AlreadyJoined
-                | crate::error::GameError::GameFull => actix_web::http::StatusCode::CONFLICT,
-                crate::error::GameError::InsufficientCredits => {
-                    actix_web::http::StatusCode::PAYMENT_REQUIRED
-                }
-                crate::error::GameError::GameNotFound => actix_web::http::StatusCode::NOT_FOUND,
-                _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            HttpResponse::build(status).json(serde_json::json!({"error": e.to_string()}))
-        }
+        Err(e) => AppError::from(e).error_response(),
     }
 }
 
@@ -302,70 +227,15 @@ pub async fn decline_invite(
             "success": true,
             "message": "Invitation declined"
         })),
-        Err(e) => {
-            let status = match &e {
-                crate::error::GameError::NotInvited => actix_web::http::StatusCode::FORBIDDEN,
-                crate::error::GameError::GameNotPending => actix_web::http::StatusCode::CONFLICT,
-                crate::error::GameError::GameNotFound => actix_web::http::StatusCode::NOT_FOUND,
-                _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            HttpResponse::build(status).json(serde_json::json!({"error": e.to_string()}))
-        }
+        Err(e) => AppError::from(e).error_response(),
     }
 }
 
 pub async fn get_invitations(
     auth_user: AuthenticatedUser,
-    db: web::Data<sea_orm::DatabaseConnection>,
+    service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    let invite_repo = GameInviteRepository::new(db.get_ref().clone());
-    let user_repo = UserRepository::new(db.get_ref().clone());
-
-    let pending = match invite_repo
-        .list_pending_invites_for_user(auth_user.user_id)
-        .await
-    {
-        Ok(row) => row,
-        Err(e) => {
-            tracing::error!("Failed to fetch invitations: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "Internal server error"}));
-        }
-    };
-
-    let mut items = Vec::new();
-    for (invite, game) in pending {
-        let player_count =
-            crate::database::repositories::PlayerRepository::new(db.get_ref().clone())
-                .list_by_game(game.id)
-                .await
-                .map(|p| p.len() as i64)
-                .unwrap_or(0);
-
-        let creator_pseudo = match game.creator_id {
-            Some(uid) => user_repo
-                .find_by_id(uid)
-                .await
-                .ok()
-                .flatten()
-                .map(|u| u.pseudo)
-                .unwrap_or_else(|| "Unknown".to_string()),
-            None => "Unknown".to_string(),
-        };
-
-        items.push(InvitationItem {
-            invite_id: invite.id,
-            game_id: game.id,
-            creator_pseudo,
-            bet: game.bet,
-            player_count,
-            max_players: game.max_players as i32,
-            created_at: invite.created_at.to_rfc3339(),
-            expires_at: game.invite_expires_at.map(|t| t.to_rfc3339()),
-        });
-    }
-
-    HttpResponse::Ok().json(InvitationsResponse { invitations: items })
+    service_response!(service.get_invitations(auth_user.user_id).await)
 }
 
 pub async fn start_game(
@@ -377,22 +247,8 @@ pub async fn start_game(
     let game_id = path.into_inner();
 
     match orchestrator.start_game(game_id, auth_user.user_id).await {
-        Ok(()) => service
-            .get_game(auth_user.user_id, game_id)
-            .await
-            .unwrap_or_else(|e| {
-                HttpResponse::InternalServerError()
-                    .json(serde_json::json!({"error": e.to_string()}))
-            }),
-        Err(e) => {
-            let status = match &e {
-                crate::error::GameError::NotCreator => actix_web::http::StatusCode::FORBIDDEN,
-                crate::error::GameError::GameNotReady => actix_web::http::StatusCode::CONFLICT,
-                crate::error::GameError::GameNotFound => actix_web::http::StatusCode::NOT_FOUND,
-                _ => actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            HttpResponse::build(status).json(serde_json::json!({"error": e.to_string()}))
-        }
+        Ok(()) => service_response!(service.get_game(auth_user.user_id, game_id).await),
+        Err(e) => AppError::from(e).error_response(),
     }
 }
 
@@ -402,7 +258,7 @@ pub async fn play_game(
     path: web::Path<Uuid>,
     payload: web::Json<PlayCardRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
-    db: web::Data<sea_orm::DatabaseConnection>,
+    service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
     let correlation_id = req.extensions().get::<CorrelationId>().copied();
@@ -411,15 +267,16 @@ pub async fn play_game(
         return AppError::from(e).error_response();
     }
 
-    let player_repo = PlayerRepository::new(db.get_ref().clone());
-    let player = match player_repo
-        .find_by_game_and_user(game_id, auth_user.user_id)
-        .await
-    {
-        Ok(Some(p)) => p,
-        _ => {
-            return HttpResponse::Forbidden()
-                .json(serde_json::json!({"error": "You are not a player in this game"}));
+    let game = match service.get_game(auth_user.user_id, game_id).await {
+        Ok(g) => g,
+        Err(e) => return e.error_response(),
+    };
+
+    let player = match game.players.iter().find(|p| p.is_current_user) {
+        Some(p) => p,
+        None => {
+            return AppError::Forbidden("You are not a player in this game".into())
+                .error_response();
         }
     };
 
@@ -440,50 +297,13 @@ pub async fn game_state(
     path: web::Path<Uuid>,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    let game_id = path.into_inner();
-    service
-        .get_game(auth_user.user_id, game_id)
-        .await
-        .unwrap_or_else(|e| {
-            HttpResponse::InternalServerError().json(serde_json::json!({"error": e.to_string()}))
-        })
+    service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
 }
 
 pub async fn search_users(
     _auth_user: AuthenticatedUser,
     query: web::Query<UserSearchQuery>,
-    db: web::Data<sea_orm::DatabaseConnection>,
-    cache: web::Data<Arc<crate::cache::UserCache>>,
+    service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
-    if query.q.trim().len() < 2 {
-        return HttpResponse::Ok().json(UserSearchResponse { users: vec![] });
-    }
-
-    let user_repo = UserRepository::new(db.get_ref().clone());
-    match user_repo
-        .find_by_pseudo_prefix(query.q.trim(), query.limit)
-        .await
-    {
-        Ok(users) => {
-            let bulk: Vec<(Uuid, String, String)> = users
-                .iter()
-                .map(|u| (u.id, u.pseudo.clone(), u.email.clone()))
-                .collect();
-            cache.populate_bulk(&bulk).await;
-
-            let items: Vec<UserSearchItem> = users
-                .into_iter()
-                .map(|u| UserSearchItem {
-                    id: u.id,
-                    pseudo: u.pseudo,
-                })
-                .collect();
-            HttpResponse::Ok().json(UserSearchResponse { users: items })
-        }
-        Err(e) => {
-            tracing::error!("User search failed: {}", e);
-            HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "Internal server error"}))
-        }
-    }
+    service_response!(service.search_users(&query.into_inner()).await)
 }

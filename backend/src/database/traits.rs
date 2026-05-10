@@ -122,6 +122,17 @@ pub trait DashboardRepoTrait: Send + Sync {
         page: u64,
         per_page: u64,
     ) -> Result<(Vec<(Player, Game)>, u64), DbErr>;
+    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, DbErr>;
+    async fn find_user_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr>;
+    async fn find_users_by_pseudo_prefix(
+        &self,
+        prefix: &str,
+        limit: u64,
+    ) -> Result<Vec<User>, DbErr>;
+    async fn list_pending_invites_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<(game_invite::Model, Game)>, DbErr>;
 }
 
 #[allow(dead_code)]
