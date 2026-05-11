@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import axios from 'axios'
 import { useAuthStore } from '../stores/useAuthStore'
+import { useWebSocket, GameEvent } from '../hooks/useWebSocket'
 
 interface LobbyPlayer {
   pseudo: string
@@ -37,7 +38,6 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
   const [slotInviting, setSlotInviting] = useState<Record<number, boolean>>({})
   const [activeSlot, setActiveSlot] = useState<number | null>(null)
   const searchTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
-  const pollTimer = useRef<ReturnType<typeof setInterval>>()
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -85,13 +85,59 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
 
   useEffect(() => {
     refreshLobby()
-    pollTimer.current = setInterval(refreshLobby, 5000)
     const searchTimersRef = searchTimers.current
     return () => {
-      if (pollTimer.current) clearInterval(pollTimer.current)
       Object.values(searchTimersRef).forEach(clearTimeout)
     }
   }, [refreshLobby])
+
+  const handleGameStarted = useCallback((event: Extract<GameEvent, { type: 'game_started' }>) => {
+    const turnPlayer = event.players.find(p => p.id === event.current_turn)
+    onGameStart({
+      game_id: event.game_id,
+      players: event.players.map(p => ({
+        id: p.id,
+        type: 'bot' as const,
+        name: p.name,
+        position: p.position,
+        display_position: p.display_position,
+        cards: [],
+        cards_count: p.cards_count,
+      })),
+      status: 'active',
+      current_turn: turnPlayer?.display_position ?? 0,
+      bet: bet,
+    })
+  }, [onGameStart, bet])
+
+  useWebSocket({
+    gameId,
+    onMessage: useCallback((event: GameEvent) => {
+      switch (event.type) {
+        case 'player_joined':
+          setPlayers(prev => {
+            if (prev.some(p => p.position === event.position)) return prev
+            return [...prev, {
+              pseudo: event.pseudo,
+              position: event.position,
+              isCurrentUser: false,
+            }]
+          })
+          break
+        case 'game_ready':
+          setStatus('ready')
+          break
+        case 'game_cancelled':
+          showToast(event.reason || 'Game has been cancelled.')
+          onBack()
+          break
+        case 'game_started':
+          handleGameStarted(event)
+          break
+      }
+    }, [onBack, handleGameStarted]),
+    autoReconnect: true,
+  })
 
   useEffect(() => {
     if (!expiresAt) {

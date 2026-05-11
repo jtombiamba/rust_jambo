@@ -12,6 +12,7 @@ pub struct MailerConfig {
     pub smtp_port: u16,
     pub smtp_username: String,
     pub smtp_password: String,
+    pub smtp_tls: bool,
     pub smtp_from_email: String,
     pub smtp_from_name: String,
     pub frontend_url: String,
@@ -25,6 +26,7 @@ impl std::fmt::Debug for MailerConfig {
             .field("smtp_port", &self.smtp_port)
             .field("smtp_username", &self.smtp_username)
             .field("smtp_password", &"***")
+            .field("smtp_tls", &self.smtp_tls)
             .field("smtp_from_email", &self.smtp_from_email)
             .field("smtp_from_name", &self.smtp_from_name)
             .field("frontend_url", &self.frontend_url)
@@ -42,6 +44,10 @@ impl MailerConfig {
             .unwrap_or(587);
         let smtp_username = std::env::var("SMTP_USERNAME").unwrap_or_default();
         let smtp_password = std::env::var("SMTP_PASSWORD").unwrap_or_default();
+        let smtp_tls = std::env::var("SMTP_TLS")
+            .unwrap_or_else(|_| "true".to_string())
+            .parse()
+            .unwrap_or(true);
         let smtp_from_email =
             std::env::var("SMTP_FROM_EMAIL").unwrap_or_else(|_| "noreply@example.com".to_string());
         let smtp_from_name =
@@ -55,6 +61,7 @@ impl MailerConfig {
             smtp_port,
             smtp_username,
             smtp_password,
+            smtp_tls,
             smtp_from_email,
             smtp_from_name,
             frontend_url,
@@ -109,12 +116,21 @@ impl SmtpMailer {
             config.smtp_password.clone(),
         );
 
-        let transport =
+        let transport = if config.smtp_tls {
             lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&config.smtp_host)
                 .map_err(|e| format!("Failed to create SMTP transport: {e}"))?
                 .port(config.smtp_port)
                 .credentials(creds)
-                .build();
+                .build()
+        } else {
+            // builder_dangerous defaults to Tls::None (plain/unencrypted SMTP, e.g. MailHog)
+            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(
+                &config.smtp_host,
+            )
+            .port(config.smtp_port)
+            .credentials(creds)
+            .build()
+        };
 
         let mut handlebars = Handlebars::new();
         handlebars.set_strict_mode(true);
@@ -342,6 +358,7 @@ mod tests {
             smtp_port: 0,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
+            smtp_tls: true,
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
@@ -361,6 +378,7 @@ mod tests {
             smtp_port: 0,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
+            smtp_tls: true,
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
@@ -407,6 +425,7 @@ mod tests {
             smtp_port: 0,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
+            smtp_tls: true,
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
@@ -426,6 +445,7 @@ mod tests {
             smtp_port: 0,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
+            smtp_tls: true,
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test Game".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
@@ -449,6 +469,7 @@ mod tests {
             smtp_port: 0,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
+            smtp_tls: true,
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test Game".to_string(),
             frontend_url: "http://localhost:3000".to_string(),

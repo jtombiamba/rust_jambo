@@ -56,6 +56,25 @@ function AppContent() {
   const { showToast } = useToast()
   useGameWebSocket(gameId)
 
+  const processInvite = useCallback((gameId: string, action: string) => {
+    const endpoint = action === 'accept'
+      ? `/api/games/${gameId}/join`
+      : `/api/games/${gameId}/decline`
+    axios.post(endpoint)
+      .then((res) => {
+        if (action === 'accept') {
+          showToast(res.data.message || 'Joined game!', 'success')
+          setLobbyGameId(gameId)
+        } else {
+          showToast('Invitation declined', 'success')
+        }
+      })
+      .catch((err) => {
+        const msg = err.response?.data?.error || 'Failed to process invitation'
+        showToast(msg, 'error')
+      })
+  }, [showToast])
+
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
@@ -114,25 +133,6 @@ function AppContent() {
         setLoading(false)
       })
   }, [isAuthenticated, showToast])
-
-  const processInvite = useCallback((gameId: string, action: string) => {
-    const endpoint = action === 'accept'
-      ? `/api/games/${gameId}/join`
-      : `/api/games/${gameId}/decline`
-    axios.post(endpoint)
-      .then((res) => {
-        if (action === 'accept') {
-          showToast(res.data.message || 'Joined game!', 'success')
-          setLobbyGameId(gameId)
-        } else {
-          showToast('Invitation declined', 'success')
-        }
-      })
-      .catch((err) => {
-        const msg = err.response?.data?.error || 'Failed to process invitation'
-        showToast(msg, 'error')
-      })
-  }, [showToast])
 
   const startGame = () => {
     setStartingGame(true)
@@ -320,7 +320,7 @@ function AppContent() {
       <AuthModal />
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
       <button
-        onClick={openAuthModal}
+        onClick={() => openAuthModal()}
         className="fixed top-4 right-4 z-40 px-4 sm:px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 shadow-lg text-sm sm:text-base"
       >
         Create account / Connect
