@@ -798,6 +798,10 @@ pub mod mock {
             };
             Self::new(Ok(play_outcome), Ok(quick_outcome))
         }
+
+        pub fn set_accept_invite_result(&self, result: Result<AcceptInviteOutcome, GameError>) {
+            *self.accept_invite_result.lock().unwrap() = Some(result);
+        }
     }
 
     #[async_trait]

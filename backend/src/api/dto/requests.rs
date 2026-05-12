@@ -70,6 +70,22 @@ impl CreateGameRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct InviteActionQuery {
+    pub action: String,
+}
+
+impl InviteActionQuery {
+    pub fn validate(&self) -> Result<&str, ValidationError> {
+        match self.action.as_str() {
+            "accept" | "decline" => Ok(self.action.as_str()),
+            _ => Err(ValidationError::MissingField(
+                "action must be 'accept' or 'decline'".to_string(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SendInvitesRequest {
     #[serde(default)]
     pub user_ids: Vec<Uuid>,
@@ -86,4 +102,43 @@ pub struct UserSearchQuery {
 
 fn default_search_limit() -> u64 {
     10
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_action_accept() {
+        let query = InviteActionQuery {
+            action: "accept".to_string(),
+        };
+        assert_eq!(query.validate().unwrap(), "accept");
+    }
+
+    #[test]
+    fn test_validate_action_decline() {
+        let query = InviteActionQuery {
+            action: "decline".to_string(),
+        };
+        assert_eq!(query.validate().unwrap(), "decline");
+    }
+
+    #[test]
+    fn test_validate_action_invalid() {
+        let query = InviteActionQuery {
+            action: "foo".to_string(),
+        };
+        let err = query.validate().unwrap_err();
+        assert!(matches!(err, ValidationError::MissingField(_)));
+    }
+
+    #[test]
+    fn test_validate_action_empty() {
+        let query = InviteActionQuery {
+            action: String::new(),
+        };
+        let err = query.validate().unwrap_err();
+        assert!(matches!(err, ValidationError::MissingField(_)));
+    }
 }

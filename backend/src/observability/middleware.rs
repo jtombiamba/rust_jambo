@@ -5,7 +5,6 @@ use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage,
 };
-use tracing::Instrument;
 use uuid::Uuid;
 
 use super::metrics;
@@ -73,17 +72,23 @@ where
         );
 
         let fut = self.service.call(req);
-        let fut = fut.instrument(span.clone());
 
         Box::pin(async move {
+            // Enter the span manually so that record() calls happen while the span is active.
+            // Using .instrument() on the future would exit the span before we can record fields.
+            let _guard = span.enter();
             let result = fut.await;
             let duration = start.elapsed();
-            span.record("http.duration_ms", duration.as_millis() as u64);
 
             let status_code = match &result {
                 Ok(resp) => resp.status().as_u16(),
                 Err(_) => 500u16,
             };
+
+            span.record("http.duration_ms", duration.as_millis() as u64);
+            span.record("http.status_code", status_code);
+
+            tracing::info!("request completed");
 
             let method_str = method.as_str();
             let path_segments: Vec<&str> = path.split('/').collect();
@@ -112,7 +117,6 @@ where
 
             match result {
                 Ok(response) => {
-                    span.record("http.status_code", status_code);
                     let correlation_id_str = correlation_id.to_string();
                     let mut response = response;
                     let headers = response.headers_mut();
@@ -125,10 +129,7 @@ where
                     );
                     Ok(response)
                 }
-                Err(e) => {
-                    span.record("http.status_code", 500u16);
-                    Err(e)
-                }
+                Err(e) => Err(e),
             }
         })
     }

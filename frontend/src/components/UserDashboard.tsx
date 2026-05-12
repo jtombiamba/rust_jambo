@@ -219,7 +219,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const handleAcceptInvite = async (gameId: string) => {
     setJoiningGameId(gameId)
     try {
-      const res = await axios.post(`/api/games/${gameId}/join`)
+      const res = await axios.post(`/api/games/${gameId}/respond?action=accept`)
       showToast(res.data.message)
       setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
       onViewLobby(gameId)
@@ -233,7 +233,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const handleDeclineInvite = async (gameId: string) => {
     setJoiningGameId(gameId)
     try {
-      await axios.post(`/api/games/${gameId}/decline`)
+      await axios.post(`/api/games/${gameId}/respond?action=decline`)
       setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
       showToast('Invitation declined')
     } catch (err: unknown) {
