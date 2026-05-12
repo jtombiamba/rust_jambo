@@ -15,6 +15,8 @@ export interface GameOverModalProps {
   onPlayAgain: () => void;
   /** Callback for Return to Lobby action */
   onReturnToLobby: () => void;
+  /** Whether to show the Play Again button (hidden for human-only multiplayer) */
+  showPlayAgain?: boolean;
 }
 
 /**
@@ -28,6 +30,7 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
   gameResult,
   onPlayAgain,
   onReturnToLobby,
+  showPlayAgain = true,
 }) => {
   // Close modal on Escape key press
   useEffect(() => {
@@ -139,6 +142,7 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
 
           {/* Action buttons */}
           <div className="action-buttons buttons-animate">
+            {showPlayAgain && (
             <button
               className="btn-primary"
               onClick={onPlayAgain}
@@ -146,6 +150,7 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
             >
               Play Again
             </button>
+            )}
             <button
               className="btn-secondary"
               onClick={onReturnToLobby}
