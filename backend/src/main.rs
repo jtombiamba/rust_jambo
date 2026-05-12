@@ -276,12 +276,8 @@ async fn main() -> std::io::Result<()> {
                                 web::post().to(api::dashboard::send_invites),
                             )
                             .route(
-                                "/{game_id}/join",
-                                web::post().to(api::dashboard::accept_invite),
-                            )
-                            .route(
-                                "/{game_id}/decline",
-                                web::post().to(api::dashboard::decline_invite),
+                                "/{game_id}/respond",
+                                web::post().to(api::dashboard::respond_to_invite),
                             )
                             .route(
                                 "/{game_id}/start",

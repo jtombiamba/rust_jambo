@@ -58,9 +58,7 @@ function AppContent() {
   useGameWebSocket(gameId)
 
   const processInvite = useCallback((gameId: string, action: string) => {
-    const endpoint = action === 'accept'
-      ? `/api/games/${gameId}/join`
-      : `/api/games/${gameId}/decline`
+    const endpoint = `/api/games/${gameId}/respond?action=${encodeURIComponent(action)}`
     axios.post(endpoint)
       .then((res) => {
         if (action === 'accept') {

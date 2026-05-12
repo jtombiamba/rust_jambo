@@ -65,14 +65,20 @@ pub struct AnonymousStatsResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AcceptInviteResponse {
+pub struct RespondToInviteResponse {
     pub success: bool,
     pub message: String,
-    pub player_id: Uuid,
-    pub position: i32,
-    pub player_count: i32,
-    pub max_players: i32,
-    pub game_status: String,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_count: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_players: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_status: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
