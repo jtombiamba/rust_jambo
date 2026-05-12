@@ -17,6 +17,12 @@ pub struct Config {
     pub jwt_expiry_hours: i64,
     pub ip_hash_pepper: String,
     pub frontend_url: String,
+    pub rabbitmq_publish_max_retries: u32,
+    pub rabbitmq_publish_initial_retry_delay_ms: u64,
+    pub rabbitmq_publish_max_retry_delay_ms: u64,
+    pub circuit_breaker_failure_threshold: u32,
+    pub circuit_breaker_cooldown_secs: u64,
+    pub game_staleness_threshold_secs: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -36,6 +42,30 @@ impl std::fmt::Debug for Config {
             .field("jwt_expiry_hours", &self.jwt_expiry_hours)
             .field("ip_hash_pepper", &"***")
             .field("frontend_url", &self.frontend_url)
+            .field(
+                "rabbitmq_publish_max_retries",
+                &self.rabbitmq_publish_max_retries,
+            )
+            .field(
+                "rabbitmq_publish_initial_retry_delay_ms",
+                &self.rabbitmq_publish_initial_retry_delay_ms,
+            )
+            .field(
+                "rabbitmq_publish_max_retry_delay_ms",
+                &self.rabbitmq_publish_max_retry_delay_ms,
+            )
+            .field(
+                "circuit_breaker_failure_threshold",
+                &self.circuit_breaker_failure_threshold,
+            )
+            .field(
+                "circuit_breaker_cooldown_secs",
+                &self.circuit_breaker_cooldown_secs,
+            )
+            .field(
+                "game_staleness_threshold_secs",
+                &self.game_staleness_threshold_secs,
+            )
             .finish()
     }
 }
@@ -82,6 +112,32 @@ impl Config {
                 .unwrap_or_else(|_| "ip-pepper-change-me-1234567890abcdef".to_string()),
             frontend_url: env::var("FRONTEND_URL")
                 .unwrap_or_else(|_| "http://localhost:5173".to_string()),
+            rabbitmq_publish_max_retries: env::var("RABBITMQ_PUBLISH_MAX_RETRIES")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .unwrap_or(3),
+            rabbitmq_publish_initial_retry_delay_ms: env::var(
+                "RABBITMQ_PUBLISH_INITIAL_RETRY_DELAY_MS",
+            )
+            .unwrap_or_else(|_| "100".to_string())
+            .parse()
+            .unwrap_or(100),
+            rabbitmq_publish_max_retry_delay_ms: env::var("RABBITMQ_PUBLISH_MAX_RETRY_DELAY_MS")
+                .unwrap_or_else(|_| "5000".to_string())
+                .parse()
+                .unwrap_or(5000),
+            circuit_breaker_failure_threshold: env::var("CIRCUIT_BREAKER_FAILURE_THRESHOLD")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .unwrap_or(5),
+            circuit_breaker_cooldown_secs: env::var("CIRCUIT_BREAKER_COOLDOWN_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()
+                .unwrap_or(30),
+            game_staleness_threshold_secs: env::var("GAME_STALENESS_THRESHOLD_SECS")
+                .unwrap_or_else(|_| "60".to_string())
+                .parse()
+                .unwrap_or(60),
         }
     }
 }

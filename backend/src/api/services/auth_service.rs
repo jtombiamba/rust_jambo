@@ -307,6 +307,7 @@ impl<R: UserRepoTrait> AuthService<R> {
                         self.config.frontend_url, token
                     );
 
+                    tracing::info!("Send password reset link for {}", email);
                     if let Err(e) = self.mailer.send_password_reset(&email, &reset_link).await {
                         tracing::error!("Failed to send password reset email to {email}: {e}");
                     }

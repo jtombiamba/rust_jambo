@@ -111,6 +111,38 @@ pub static WS_DISCONNECTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
     .unwrap()
 });
 
+pub static BOT_CHAIN_FALLBACK_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "bot_chain_fallback_total",
+        "Total number of times the bot chain fell back to synchronous execution"
+    )
+    .unwrap()
+});
+
+pub static BOT_CHAIN_PUBLISH_FAILURES_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "bot_chain_publish_failures_total",
+        "Total number of publish failures within the bot chain"
+    )
+    .unwrap()
+});
+
+pub static GAMES_STALLED_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "games_stalled_total",
+        "Total number of games detected as stalled and recovered"
+    )
+    .unwrap()
+});
+
+pub static CIRCUIT_BREAKER_STATE: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "circuit_breaker_state",
+        "Circuit breaker state: 0 = closed, 1 = open, 2 = half-open"
+    )
+    .unwrap()
+});
+
 pub fn init_all() {
     RABBITMQ_PUBLISH_TOTAL.with_label_values(&["ai_tasks"]);
     RABBITMQ_PUBLISH_ERRORS_TOTAL.with_label_values(&["ai_tasks"]);
@@ -127,4 +159,8 @@ pub fn init_all() {
     ACTIVE_GAMES.set(0.0);
     RATE_LIMIT_HITS_TOTAL.inc_by(0.0);
     WS_DISCONNECTS_TOTAL.inc_by(0.0);
+    BOT_CHAIN_FALLBACK_TOTAL.inc_by(0.0);
+    BOT_CHAIN_PUBLISH_FAILURES_TOTAL.inc_by(0.0);
+    GAMES_STALLED_TOTAL.inc_by(0.0);
+    CIRCUIT_BREAKER_STATE.set(0.0);
 }

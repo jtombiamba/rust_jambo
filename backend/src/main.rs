@@ -90,20 +90,33 @@ async fn main() -> std::io::Result<()> {
         None => None,
     };
 
-    let rabbitmq_client =
-        match messaging::connect_to_rabbitmq_with_retry(&config.rabbitmq_url, 10).await {
-            Ok(client) => {
-                tracing::info!("Successfully connected to RabbitMQ");
-                Some(client)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to connect to RabbitMQ after retries: {}, proceeding without RabbitMQ",
-                    e
-                );
-                None
-            }
-        };
+    let publish_config = messaging::RabbitMQPublishConfig {
+        max_retries: config.rabbitmq_publish_max_retries,
+        initial_retry_delay_ms: config.rabbitmq_publish_initial_retry_delay_ms,
+        max_retry_delay_ms: config.rabbitmq_publish_max_retry_delay_ms,
+        circuit_breaker_failure_threshold: config.circuit_breaker_failure_threshold,
+        circuit_breaker_cooldown_secs: config.circuit_breaker_cooldown_secs,
+    };
+
+    let rabbitmq_client = match messaging::connect_to_rabbitmq_with_retry(
+        &config.rabbitmq_url,
+        config.max_rabbitmq_connection_retries,
+        publish_config,
+    )
+    .await
+    {
+        Ok(client) => {
+            tracing::info!("Successfully connected to RabbitMQ");
+            Some(client)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to connect to RabbitMQ after retries: {}, proceeding without RabbitMQ",
+                e
+            );
+            None
+        }
+    };
 
     let auth_config = AuthConfig::from_env().expect("Failed to load auth configuration");
     let auth_config_data = web::Data::new(auth_config.clone());
@@ -166,6 +179,27 @@ async fn main() -> std::io::Result<()> {
                     tracing::error!("Error cancelling expired games: {}", e);
                 }
             }
+        }
+    });
+
+    let db_for_staleness = db_connection.clone();
+    let redis_for_staleness = redis_client.clone();
+    let staleness_threshold =
+        chrono::Duration::seconds(config.game_staleness_threshold_secs as i64);
+    tokio::spawn(async move {
+        let check_interval = std::cmp::max(
+            Duration::from_secs(config.game_staleness_threshold_secs),
+            Duration::from_secs(60),
+        );
+        let mut interval = tokio::time::interval(check_interval);
+        loop {
+            interval.tick().await;
+            game::service::GameService::detect_and_recover_stalled_games(
+                db_for_staleness.clone(),
+                redis_for_staleness.clone(),
+                staleness_threshold,
+            )
+            .await;
         }
     });
 
