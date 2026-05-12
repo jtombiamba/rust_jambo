@@ -4,6 +4,7 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY templates ./templates
 COPY migration ./migration
 # Build both binaries
 RUN cargo build --release --bin jambo-backend --bin ai-worker

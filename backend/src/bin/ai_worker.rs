@@ -12,9 +12,11 @@ use jambo_backend::config::Config;
 use jambo_backend::database;
 use jambo_backend::database::models::PlayerType;
 use jambo_backend::game::bot::execute_bot_move_from_task;
+use jambo_backend::game::bot_scheduler::BotScheduler;
 use jambo_backend::game::constants::BOT_THINKING_DELAY_SECS;
 use jambo_backend::game::service::GameService;
-use jambo_backend::messaging::{self, AITask, RabbitMQClient, RedisClient};
+use jambo_backend::messaging::{self, AITask, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
+use jambo_backend::observability::metrics;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -56,9 +58,21 @@ async fn main() -> Result<()> {
         None => None,
     };
 
-    let rabbitmq_client = messaging::connect_to_rabbitmq_with_retry(&config.rabbitmq_url, 10)
-        .await
-        .context("Failed to connect to RabbitMQ after retries")?;
+    let publish_config = RabbitMQPublishConfig {
+        max_retries: config.rabbitmq_publish_max_retries,
+        initial_retry_delay_ms: config.rabbitmq_publish_initial_retry_delay_ms,
+        max_retry_delay_ms: config.rabbitmq_publish_max_retry_delay_ms,
+        circuit_breaker_failure_threshold: config.circuit_breaker_failure_threshold,
+        circuit_breaker_cooldown_secs: config.circuit_breaker_cooldown_secs,
+    };
+
+    let rabbitmq_client = messaging::connect_to_rabbitmq_with_retry(
+        &config.rabbitmq_url,
+        config.max_rabbitmq_connection_retries,
+        publish_config,
+    )
+    .await
+    .context("Failed to connect to RabbitMQ after retries")?;
     info!("Connected to RabbitMQ");
 
     let mut consumer: Consumer = rabbitmq_client
@@ -303,7 +317,20 @@ async fn process_bot_move(
                                 "Published AI task for bot {} in game {}",
                                 result.next_player_id, game_id
                             ),
-                            Err(e) => error!("Failed to publish AI task to RabbitMQ: {}", e),
+                            Err(e) => {
+                                error!(
+                                    "Failed to publish AI task to RabbitMQ: {}, falling back to sync chain",
+                                    e
+                                );
+                                metrics::BOT_CHAIN_PUBLISH_FAILURES_TOTAL.inc();
+                                metrics::BOT_CHAIN_FALLBACK_TOTAL.inc();
+                                let db = db_connection.clone();
+                                let redis = redis_client.clone();
+                                let next_id = result.next_player_id;
+                                tokio::spawn(async move {
+                                    BotScheduler::run_sync_chain(db, redis, game_id, next_id).await;
+                                });
+                            }
                         }
                     } else {
                         warn!("RabbitMQ client not available, cannot schedule next bot move");
@@ -352,7 +379,8 @@ async fn process_bot_move_with_db(
                 result.chosen_card
             );
 
-            if let Some(mut client) = redis_client {
+            let redis_for_event = redis_client.clone();
+            if let Some(mut client) = redis_for_event {
                 let event = GameEvent::CardPlayed {
                     game_id,
                     player_id,
@@ -376,7 +404,18 @@ async fn process_bot_move_with_db(
                                 next_player, game_id
                             ),
                             Err(e) => {
-                                error!("Failed to publish AI task to RabbitMQ: {}", e)
+                                error!(
+                                    "Failed to publish AI task to RabbitMQ: {}, falling back to sync chain",
+                                    e
+                                );
+                                metrics::BOT_CHAIN_PUBLISH_FAILURES_TOTAL.inc();
+                                metrics::BOT_CHAIN_FALLBACK_TOTAL.inc();
+                                let db = db_connection.clone();
+                                let redis = redis_client.clone();
+                                let next_id = next_player;
+                                tokio::spawn(async move {
+                                    BotScheduler::run_sync_chain(db, redis, game_id, next_id).await;
+                                });
                             }
                         }
                     } else {

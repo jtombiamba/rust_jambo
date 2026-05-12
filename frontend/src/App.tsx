@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import axios from 'axios'
 import './App.css'
 import GameTable from './components/GameTable'
@@ -49,15 +49,65 @@ function AppContent() {
   const [playingCard, setPlayingCard] = useState<number | null>(null)
   const [rulesOpen, setRulesOpen] = useState(false)
   const [lobbyGameId, setLobbyGameId] = useState<string | null>(null)
+  const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
   const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver } = useGameStore()
-  const { isAuthenticated, openAuthModal, checkAuth } = useAuthStore()
+  const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite } = useAuthStore()
   const { isConnected } = useWebSocket({ gameId: gameId || '' })
   const { showToast } = useToast()
   useGameWebSocket(gameId)
 
+  const processInvite = useCallback((gameId: string, action: string) => {
+    const endpoint = action === 'accept'
+      ? `/api/games/${gameId}/join`
+      : `/api/games/${gameId}/decline`
+    axios.post(endpoint)
+      .then((res) => {
+        if (action === 'accept') {
+          showToast(res.data.message || 'Joined game!', 'success')
+          setLobbyGameId(gameId)
+        } else {
+          showToast('Invitation declined', 'success')
+        }
+      })
+      .catch((err) => {
+        const msg = err.response?.data?.error || 'Failed to process invitation'
+        showToast(msg, 'error')
+      })
+  }, [showToast])
+
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const inviteGameId = params.get('invite_game_id')
+    const inviteAction = params.get('invite_action')
+    if (inviteGameId && inviteAction) {
+      if (isAuthenticated) {
+        processInvite(inviteGameId, inviteAction)
+        const url = new URL(window.location.href)
+        url.searchParams.delete('invite_game_id')
+        url.searchParams.delete('invite_action')
+        window.history.replaceState({}, '', url.toString())
+      } else {
+        setPendingInvite({ gameId: inviteGameId, action: inviteAction })
+        openAuthModal('Log in to respond to the game invitation.')
+      }
+    }
+  }, [isAuthenticated, openAuthModal, processInvite])
+
+  useEffect(() => {
+    if (isAuthenticated && pendingInvite) {
+      processInvite(pendingInvite.gameId, pendingInvite.action)
+      setPendingInvite(null)
+      clearPendingInvite()
+      const url = new URL(window.location.href)
+      url.searchParams.delete('invite_game_id')
+      url.searchParams.delete('invite_action')
+      window.history.replaceState({}, '', url.toString())
+    }
+  }, [isAuthenticated, pendingInvite, clearPendingInvite, processInvite])
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -270,7 +320,7 @@ function AppContent() {
       <AuthModal />
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
       <button
-        onClick={openAuthModal}
+        onClick={() => openAuthModal()}
         className="fixed top-4 right-4 z-40 px-4 sm:px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 shadow-lg text-sm sm:text-base"
       >
         Create account / Connect

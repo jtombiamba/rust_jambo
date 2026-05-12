@@ -41,6 +41,12 @@ services:
       timeout: 5s
       retries: 5
 
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   backend:
     build:
       context: ../backend
@@ -52,6 +58,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailhog:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
@@ -60,10 +68,22 @@ services:
       PORT: 8080
       LOG_LEVEL: info
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
+      RABBITMQ_PUBLISH_MAX_RETRIES: 3
+      RABBITMQ_PUBLISH_INITIAL_RETRY_DELAY_MS: 100
+      RABBITMQ_PUBLISH_MAX_RETRY_DELAY_MS: 5000
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
+      CIRCUIT_BREAKER_COOLDOWN_SECS: 30
+      GAME_STALENESS_THRESHOLD_SECS: 60
       JWT_SECRET: super-secret-key-change-me-in-production-please-do-it-now
       JWT_EXPIRY_HOURS: 24
       IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
       FRONTEND_URL: http://localhost:3000
+      MAILER_MODE: smtp
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_TLS: "false"
+      SMTP_FROM_EMAIL: noreply@fapfap.local
+      SMTP_FROM_NAME: "FapFap Game"
     ports:
       - "8080:8080"
     volumes:
@@ -98,6 +118,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailhog:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
@@ -106,10 +128,22 @@ services:
       PORT: 8080
       LOG_LEVEL: info
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
+      RABBITMQ_PUBLISH_MAX_RETRIES: 3
+      RABBITMQ_PUBLISH_INITIAL_RETRY_DELAY_MS: 100
+      RABBITMQ_PUBLISH_MAX_RETRY_DELAY_MS: 5000
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
+      CIRCUIT_BREAKER_COOLDOWN_SECS: 30
+      GAME_STALENESS_THRESHOLD_SECS: 60
       JWT_SECRET: super-secret-key-change-me-in-production-please-do-it-now
       JWT_EXPIRY_HOURS: 24
       IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
       FRONTEND_URL: http://localhost:3000
+      MAILER_MODE: smtp
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_TLS: "false"
+      SMTP_FROM_EMAIL: noreply@fapfap.local
+      SMTP_FROM_NAME: "FapFap Game"
     volumes:
       - ../backend/migrations:/app/migrations:ro
     healthcheck:

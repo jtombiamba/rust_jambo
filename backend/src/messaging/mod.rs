@@ -2,6 +2,7 @@ use crate::observability::metrics;
 use lapin::{
     options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties, Consumer,
 };
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -13,9 +14,141 @@ pub use ai_task::AITask;
 pub use redis::RedisClient;
 
 const AI_TASKS_QUEUE: &str = "ai_tasks";
-const MAX_RETRIES: u32 = 3;
-const INITIAL_RETRY_DELAY_MS: u64 = 100;
-const MAX_RETRY_DELAY_MS: u64 = 5000;
+const AI_TASKS_DLX: &str = "ai_tasks_dlx";
+const AI_TASKS_DLQ: &str = "ai_tasks_dlq";
+
+#[derive(Debug, Clone)]
+pub struct RabbitMQPublishConfig {
+    pub max_retries: u32,
+    pub initial_retry_delay_ms: u64,
+    pub max_retry_delay_ms: u64,
+    pub circuit_breaker_failure_threshold: u32,
+    pub circuit_breaker_cooldown_secs: u64,
+}
+
+impl Default for RabbitMQPublishConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_retry_delay_ms: 100,
+            max_retry_delay_ms: 5000,
+            circuit_breaker_failure_threshold: 5,
+            circuit_breaker_cooldown_secs: 30,
+        }
+    }
+}
+
+impl RabbitMQPublishConfig {
+    #[allow(dead_code)]
+    pub fn from_env() -> Self {
+        use std::env;
+        Self {
+            max_retries: env::var("RABBITMQ_PUBLISH_MAX_RETRIES")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .unwrap_or(3),
+            initial_retry_delay_ms: env::var("RABBITMQ_PUBLISH_INITIAL_RETRY_DELAY_MS")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .unwrap_or(100),
+            max_retry_delay_ms: env::var("RABBITMQ_PUBLISH_MAX_RETRY_DELAY_MS")
+                .unwrap_or_else(|_| "5000".to_string())
+                .parse()
+                .unwrap_or(5000),
+            circuit_breaker_failure_threshold: env::var("CIRCUIT_BREAKER_FAILURE_THRESHOLD")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .unwrap_or(5),
+            circuit_breaker_cooldown_secs: env::var("CIRCUIT_BREAKER_COOLDOWN_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()
+                .unwrap_or(30),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum CircuitState {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
+#[derive(Debug)]
+struct CircuitBreaker {
+    state: std::sync::Mutex<CircuitState>,
+    consecutive_failures: AtomicU32,
+    last_failure_time: std::sync::Mutex<Option<std::time::Instant>>,
+    cooldown_start: std::sync::Mutex<Option<std::time::Instant>>,
+    failure_threshold: u32,
+    cooldown_duration: Duration,
+}
+
+impl CircuitBreaker {
+    fn new(failure_threshold: u32, cooldown_secs: u64) -> Self {
+        Self {
+            state: std::sync::Mutex::new(CircuitState::Closed),
+            consecutive_failures: AtomicU32::new(0),
+            last_failure_time: std::sync::Mutex::new(None),
+            cooldown_start: std::sync::Mutex::new(None),
+            failure_threshold,
+            cooldown_duration: Duration::from_secs(cooldown_secs),
+        }
+    }
+
+    fn record_success(&self) {
+        self.consecutive_failures.store(0, Ordering::SeqCst);
+        let mut state = self.state.lock().unwrap();
+        if *state == CircuitState::HalfOpen {
+            *state = CircuitState::Closed;
+            metrics::CIRCUIT_BREAKER_STATE.set(0.0);
+            info!("Circuit breaker transitioned to Closed");
+        }
+    }
+
+    fn record_failure(&self) {
+        let failures = self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut last_time = self.last_failure_time.lock().unwrap();
+        *last_time = Some(std::time::Instant::now());
+
+        if failures >= self.failure_threshold {
+            let mut state = self.state.lock().unwrap();
+            if *state == CircuitState::Closed {
+                *state = CircuitState::Open;
+                let mut cooldown = self.cooldown_start.lock().unwrap();
+                *cooldown = Some(std::time::Instant::now());
+                metrics::CIRCUIT_BREAKER_STATE.set(1.0);
+                warn!(
+                    "Circuit breaker OPEN after {} consecutive failures",
+                    failures
+                );
+            }
+        }
+    }
+
+    fn allow_request(&self) -> bool {
+        let state = *self.state.lock().unwrap();
+        match state {
+            CircuitState::Closed => true,
+            CircuitState::Open => {
+                let cooldown = self.cooldown_start.lock().unwrap();
+                if let Some(start) = *cooldown {
+                    if start.elapsed() >= self.cooldown_duration {
+                        drop(cooldown);
+                        let mut s = self.state.lock().unwrap();
+                        *s = CircuitState::HalfOpen;
+                        metrics::CIRCUIT_BREAKER_STATE.set(2.0);
+                        info!("Circuit breaker transitioned to HalfOpen");
+                        return true;
+                    }
+                }
+                false
+            }
+            CircuitState::HalfOpen => true,
+        }
+    }
+}
 
 /// Connect to RabbitMQ with exponential backoff retry.
 /// Shared between the main server and the ai-worker binary.
@@ -23,6 +156,7 @@ const MAX_RETRY_DELAY_MS: u64 = 5000;
 pub async fn connect_to_rabbitmq_with_retry(
     url: &str,
     max_retries: u32,
+    publish_config: RabbitMQPublishConfig,
 ) -> Result<RabbitMQClient, lapin::Error> {
     let initial_delay_ms = 1000;
     let max_delay_ms = 30000;
@@ -30,7 +164,7 @@ pub async fn connect_to_rabbitmq_with_retry(
     let mut last_error = None;
 
     for attempt in 0..max_retries {
-        match RabbitMQClient::new(url).await {
+        match RabbitMQClient::new(url, publish_config.clone()).await {
             Ok(client) => {
                 if attempt > 0 {
                     info!(
@@ -79,15 +213,26 @@ pub struct RabbitMQMetrics {
 pub struct RabbitMQClient {
     connection: std::sync::Arc<Connection>,
     metrics: std::sync::Arc<std::sync::Mutex<RabbitMQMetrics>>,
+    circuit_breaker: std::sync::Arc<CircuitBreaker>,
+    publish_config: RabbitMQPublishConfig,
 }
 
 impl RabbitMQClient {
-    pub async fn new(url: &str) -> Result<Self, lapin::Error> {
+    pub async fn new(
+        url: &str,
+        publish_config: RabbitMQPublishConfig,
+    ) -> Result<Self, lapin::Error> {
         let connection = Connection::connect(url, ConnectionProperties::default()).await?;
         info!("Connected to RabbitMQ");
+        let cb = CircuitBreaker::new(
+            publish_config.circuit_breaker_failure_threshold,
+            publish_config.circuit_breaker_cooldown_secs,
+        );
         Ok(Self {
             connection: std::sync::Arc::new(connection),
             metrics: std::sync::Arc::new(std::sync::Mutex::new(RabbitMQMetrics::default())),
+            circuit_breaker: std::sync::Arc::new(cb),
+            publish_config,
         })
     }
 
@@ -110,11 +255,24 @@ impl RabbitMQClient {
         queue: &str,
         message: &[u8],
     ) -> Result<(), lapin::Error> {
+        if !self.circuit_breaker.allow_request() {
+            warn!(
+                "Circuit breaker is open, refusing publish to queue '{}'",
+                queue
+            );
+            return Err(lapin::ErrorKind::InvalidChannelState(
+                lapin::ChannelState::Error,
+                "circuit breaker is open",
+            )
+            .into());
+        }
+
         let mut last_error = None;
 
-        for attempt in 0..MAX_RETRIES {
+        for attempt in 0..self.publish_config.max_retries {
             match self.publish_internal(queue, message).await {
                 Ok(_) => {
+                    self.circuit_breaker.record_success();
                     let mut metrics = self.metrics.lock().unwrap();
                     metrics.publish_success_count += 1;
                     if attempt > 0 {
@@ -129,8 +287,8 @@ impl RabbitMQClient {
                 Err(e) => {
                     last_error = Some(e);
 
-                    if attempt == MAX_RETRIES - 1 {
-                        // Last attempt failed
+                    if attempt == self.publish_config.max_retries - 1 {
+                        self.circuit_breaker.record_failure();
                         let mut metrics = self.metrics.lock().unwrap();
                         metrics.publish_failure_count += 1;
                         metrics::RABBITMQ_PUBLISH_ERRORS_TOTAL
@@ -141,8 +299,8 @@ impl RabbitMQClient {
 
                     // Calculate exponential backoff delay
                     let delay_ms = std::cmp::min(
-                        INITIAL_RETRY_DELAY_MS * 2u64.pow(attempt),
-                        MAX_RETRY_DELAY_MS,
+                        self.publish_config.initial_retry_delay_ms * 2u64.pow(attempt),
+                        self.publish_config.max_retry_delay_ms,
                     );
 
                     warn!(
@@ -165,12 +323,26 @@ impl RabbitMQClient {
         let queue_name: lapin::types::ShortString = queue.into();
         let exchange: lapin::types::ShortString = "".into();
 
-        // Declare queue (idempotent)
+        let queue_args = if queue == AI_TASKS_QUEUE {
+            let mut args = FieldTable::default();
+            args.insert(
+                "x-dead-letter-exchange".into(),
+                lapin::types::AMQPValue::LongString(AI_TASKS_DLX.into()),
+            );
+            args.insert(
+                "x-dead-letter-routing-key".into(),
+                lapin::types::AMQPValue::LongString(AI_TASKS_DLQ.into()),
+            );
+            args
+        } else {
+            FieldTable::default()
+        };
+
         let _ = channel
             .queue_declare(
                 queue_name.clone(),
                 QueueDeclareOptions::default(),
-                FieldTable::default(),
+                queue_args,
             )
             .await?;
 
@@ -219,12 +391,24 @@ impl RabbitMQClient {
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = AI_TASKS_QUEUE.into();
 
-        // Declare queue (idempotent)
+        let queue_args = {
+            let mut args = FieldTable::default();
+            args.insert(
+                "x-dead-letter-exchange".into(),
+                lapin::types::AMQPValue::LongString(AI_TASKS_DLX.into()),
+            );
+            args.insert(
+                "x-dead-letter-routing-key".into(),
+                lapin::types::AMQPValue::LongString(AI_TASKS_DLQ.into()),
+            );
+            args
+        };
+
         let _ = channel
             .queue_declare(
                 queue_name.clone(),
                 QueueDeclareOptions::default(),
-                FieldTable::default(),
+                queue_args,
             )
             .await?;
 
