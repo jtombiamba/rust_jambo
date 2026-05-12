@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         std::env::var("TOKIO_WORKER_THREADS").unwrap_or_else(|_| "default (num_cpus)".to_string())
     );
 
-    let db_connection: DatabaseConnection = database::create_connection(&config.database_url)
+    let db_connection: DatabaseConnection = database::create_connection_with_pool_size(&config, 5)
         .await
         .context("Failed to create database connection")?;
     info!("Connected to database");
@@ -74,6 +74,17 @@ async fn main() -> Result<()> {
     .await
     .context("Failed to connect to RabbitMQ after retries")?;
     info!("Connected to RabbitMQ");
+
+    let db_for_pool_metrics = db_connection.clone();
+    let pool_metrics_interval =
+        std::time::Duration::from_secs(config.db_pool_metrics_interval_secs);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(pool_metrics_interval);
+        loop {
+            interval.tick().await;
+            metrics::update_db_pool_metrics(&db_for_pool_metrics);
+        }
+    });
 
     let mut consumer: Consumer = rabbitmq_client
         .consume_ai_tasks()

@@ -68,7 +68,7 @@ async fn main() -> std::io::Result<()> {
         config.host, config.port, cpu_count
     );
 
-    let db_connection = database::create_connection(&config.database_url)
+    let db_connection = database::create_connection(&config)
         .await
         .expect("Failed to create database connection");
 
@@ -200,6 +200,16 @@ async fn main() -> std::io::Result<()> {
                 staleness_threshold,
             )
             .await;
+        }
+    });
+
+    let db_for_pool_metrics = db_connection.clone();
+    let pool_metrics_interval = Duration::from_secs(config.db_pool_metrics_interval_secs);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(pool_metrics_interval);
+        loop {
+            interval.tick().await;
+            observability::metrics::update_db_pool_metrics(&db_for_pool_metrics);
         }
     });
 

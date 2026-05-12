@@ -1,23 +1,37 @@
+use crate::config::Config;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
 use std::time::Duration;
 
-pub async fn create_connection(database_url: &str) -> Result<DatabaseConnection, DbErr> {
-    let mut opt = ConnectOptions::new(database_url);
-    opt.max_connections(100) // to be defined in config
-        .min_connections(5) // to be defined in config
-        .connect_timeout(Duration::from_secs(8)) // to be defined in config
-        .acquire_timeout(Duration::from_secs(8)) // to be defined in config
-        .idle_timeout(Duration::from_secs(8)) // to be defined in config
-        .max_lifetime(Duration::from_secs(8)) // to be defined in config
-        .sqlx_logging(false); // disable SQLx logging
-                              // .sqlx_logging_level(log::LevelFilter::Info);
-                              //.set_schema_search_path("my_schema"); // set default Postgres schema
+pub async fn create_connection(config: &Config) -> Result<DatabaseConnection, DbErr> {
+    let mut opt = ConnectOptions::new(&config.database_url);
+    opt.max_connections(config.db_pool_max_connections)
+        .min_connections(config.db_pool_min_connections)
+        .connect_timeout(Duration::from_secs(config.db_pool_connect_timeout_secs))
+        .acquire_timeout(Duration::from_secs(config.db_pool_acquire_timeout_secs))
+        .idle_timeout(Duration::from_secs(config.db_pool_idle_timeout_secs))
+        .max_lifetime(Duration::from_secs(config.db_pool_max_lifetime_secs))
+        .sqlx_logging(false);
+    Database::connect(opt).await
+}
+
+#[allow(dead_code)]
+pub async fn create_connection_with_pool_size(
+    config: &Config,
+    max_connections: u32,
+) -> Result<DatabaseConnection, DbErr> {
+    let mut opt = ConnectOptions::new(&config.database_url);
+    opt.max_connections(max_connections)
+        .min_connections(config.db_pool_min_connections.min(max_connections))
+        .connect_timeout(Duration::from_secs(config.db_pool_connect_timeout_secs))
+        .acquire_timeout(Duration::from_secs(config.db_pool_acquire_timeout_secs))
+        .idle_timeout(Duration::from_secs(config.db_pool_idle_timeout_secs))
+        .max_lifetime(Duration::from_secs(config.db_pool_max_lifetime_secs))
+        .sqlx_logging(false);
     Database::connect(opt).await
 }
 
 pub async fn run_migrations(connection: &DatabaseConnection) -> Result<(), DbErr> {
-    // Ensure migrations table exists
     Migrator::up(connection, None).await?;
     Ok(())
 }
