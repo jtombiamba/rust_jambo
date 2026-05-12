@@ -51,6 +51,7 @@ function AppContent() {
   const [lobbyGameId, setLobbyGameId] = useState<string | null>(null)
   const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
   const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver } = useGameStore()
+  const isMultiplayer = players.length > 0 && players.every(p => p.type === 'human')
   const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite } = useAuthStore()
   const { isConnected } = useWebSocket({ gameId: gameId || '' })
   const { showToast } = useToast()
@@ -244,6 +245,7 @@ function AppContent() {
           roundWinner={roundWinner}
           gameOver={gameOver}
           onCardClick={handleCardClick}
+          showPlayAgain={!isMultiplayer}
           onPlayAgain={startGame}
           onReturnToLobby={resetGame}
           onCloseGameOver={clearGameOver}

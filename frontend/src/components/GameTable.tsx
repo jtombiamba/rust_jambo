@@ -25,6 +25,7 @@ export interface GameTableProps {
   onPlayAgain?: () => void;
   onReturnToLobby?: () => void;
   onCloseGameOver?: () => void;
+  showPlayAgain?: boolean;
 }
 
 function getPositionMap(numPlayers: number): Record<number, PlayerSlotProps['position']> {
@@ -48,6 +49,7 @@ const GameTable: React.FC<GameTableProps> = ({
   onPlayAgain,
   onReturnToLobby,
   onCloseGameOver,
+  showPlayAgain = true,
 }) => {
   const numPlayers = players.length;
   const positionMap = getPositionMap(numPlayers);
@@ -219,6 +221,7 @@ const GameTable: React.FC<GameTableProps> = ({
           gameResult={gameOver.result}
           onPlayAgain={onPlayAgain || (() => {})}
           onReturnToLobby={onReturnToLobby || (() => {})}
+          showPlayAgain={showPlayAgain}
         />
       )}
     </div>
