@@ -23,6 +23,13 @@ pub struct Config {
     pub circuit_breaker_failure_threshold: u32,
     pub circuit_breaker_cooldown_secs: u64,
     pub game_staleness_threshold_secs: u64,
+    pub db_pool_max_connections: u32,
+    pub db_pool_min_connections: u32,
+    pub db_pool_connect_timeout_secs: u64,
+    pub db_pool_acquire_timeout_secs: u64,
+    pub db_pool_idle_timeout_secs: u64,
+    pub db_pool_max_lifetime_secs: u64,
+    pub db_pool_metrics_interval_secs: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -65,6 +72,22 @@ impl std::fmt::Debug for Config {
             .field(
                 "game_staleness_threshold_secs",
                 &self.game_staleness_threshold_secs,
+            )
+            .field("db_pool_max_connections", &self.db_pool_max_connections)
+            .field("db_pool_min_connections", &self.db_pool_min_connections)
+            .field(
+                "db_pool_connect_timeout_secs",
+                &self.db_pool_connect_timeout_secs,
+            )
+            .field(
+                "db_pool_acquire_timeout_secs",
+                &self.db_pool_acquire_timeout_secs,
+            )
+            .field("db_pool_idle_timeout_secs", &self.db_pool_idle_timeout_secs)
+            .field("db_pool_max_lifetime_secs", &self.db_pool_max_lifetime_secs)
+            .field(
+                "db_pool_metrics_interval_secs",
+                &self.db_pool_metrics_interval_secs,
             )
             .finish()
     }
@@ -138,6 +161,34 @@ impl Config {
                 .unwrap_or_else(|_| "60".to_string())
                 .parse()
                 .unwrap_or(60),
+            db_pool_max_connections: env::var("DB_POOL_MAX_CONNECTIONS")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .unwrap_or(100),
+            db_pool_min_connections: env::var("DB_POOL_MIN_CONNECTIONS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .unwrap_or(5),
+            db_pool_connect_timeout_secs: env::var("DB_POOL_CONNECT_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "8".to_string())
+                .parse()
+                .unwrap_or(8),
+            db_pool_acquire_timeout_secs: env::var("DB_POOL_ACQUIRE_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "8".to_string())
+                .parse()
+                .unwrap_or(8),
+            db_pool_idle_timeout_secs: env::var("DB_POOL_IDLE_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "300".to_string())
+                .parse()
+                .unwrap_or(300),
+            db_pool_max_lifetime_secs: env::var("DB_POOL_MAX_LIFETIME_SECS")
+                .unwrap_or_else(|_| "1800".to_string())
+                .parse()
+                .unwrap_or(1800),
+            db_pool_metrics_interval_secs: env::var("DB_POOL_METRICS_INTERVAL_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()
+                .unwrap_or(30),
         }
     }
 }

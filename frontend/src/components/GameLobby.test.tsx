@@ -298,8 +298,9 @@ describe('GameLobby', () => {
   describe('game_started event', () => {
     it('calls onGameStart with converted game data', async () => {
       renderLobby();
+      // Wait for lobby data to fully load (including bet state update)
       await waitFor(() => {
-        expect(mockGet).toHaveBeenCalled();
+        expect(screen.getByText('Bet: 10 credits')).toBeInTheDocument();
       });
 
       act(() => {
@@ -359,7 +360,7 @@ describe('GameLobby', () => {
     it('maps current_turn UUID to display_position', async () => {
       renderLobby();
       await waitFor(() => {
-        expect(mockGet).toHaveBeenCalled();
+        expect(screen.getByText('Bet: 10 credits')).toBeInTheDocument();
       });
 
       act(() => {
@@ -385,7 +386,7 @@ describe('GameLobby', () => {
     it('defaults current_turn to 0 when turn player not found', async () => {
       renderLobby();
       await waitFor(() => {
-        expect(mockGet).toHaveBeenCalled();
+        expect(screen.getByText('Bet: 10 credits')).toBeInTheDocument();
       });
 
       act(() => {
@@ -413,7 +414,7 @@ describe('GameLobby', () => {
 
       renderLobby();
       await waitFor(() => {
-        expect(mockGet).toHaveBeenCalled();
+        expect(screen.getByText('Bet: 50 credits')).toBeInTheDocument();
       });
 
       act(() => {
