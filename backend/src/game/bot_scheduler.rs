@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::database::models::{GameStatus, PlayerType};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
-use crate::game::constants::BOT_THINKING_DELAY_SECS;
+use crate::game::constants::BOT_THINKING_DELAY_MS;
 use crate::game::service::GameService;
 use crate::game::strategy::compute_strategy;
 use crate::messaging::{AITask, RabbitMQClient, RedisClient};
@@ -129,7 +129,7 @@ impl BotScheduler {
         let mut current_player = player_id;
 
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(BOT_THINKING_DELAY_SECS)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(*BOT_THINKING_DELAY_MS)).await;
             info!(
                 "Executing synchronous bot move for player {} in game {}",
                 current_player, game_id
