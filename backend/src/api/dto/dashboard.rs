@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PlayerProfileResponse {
     pub credit: i32,
     pub game_played: i32,
@@ -8,7 +8,7 @@ pub struct PlayerProfileResponse {
     pub kora_wins: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GameHistoryItem {
     pub game_id: String,
     pub status: String,
@@ -19,7 +19,7 @@ pub struct GameHistoryItem {
     pub player_count: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct GameHistoryResponse {
     pub games: Vec<GameHistoryItem>,
     pub total: u64,

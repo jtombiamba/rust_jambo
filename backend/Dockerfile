@@ -17,7 +17,7 @@ WORKDIR /app
 COPY --from=builder /usr/src/app/target/release/jambo-backend /usr/local/bin/jambo-backend
 COPY --from=builder /usr/src/app/target/release/ai-worker /usr/local/bin/ai-worker
 COPY --from=builder /usr/src/app/migration ./migration
-ENV RUST_LOG=info
+ENV RUST_LOG=${RUST_LOG}
 EXPOSE 8080
 
 # Default command (can be overridden)

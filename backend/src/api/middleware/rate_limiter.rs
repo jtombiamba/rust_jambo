@@ -1,103 +1,66 @@
-use std::collections::HashMap;
 use std::future::{ready, Ready};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use actix_web::{
     body::{EitherBody, MessageBody},
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error,
 };
-use tokio::sync::Mutex;
 
+use crate::messaging::RedisClient;
 use crate::observability::metrics;
 
-#[allow(dead_code)]
 static HOURLY_LIMIT: u64 = 120;
-#[allow(dead_code)]
-static CLEANUP_INTERVAL_SECS: u64 = 3600;
 
-#[allow(dead_code)]
-struct RateLimitState {
-    count: u64,
-    reset_at: Instant,
-}
-
-#[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RateLimiter {
-    inner: Arc<Mutex<HashMap<String, RateLimitState>>>,
+    redis_client: Option<RedisClient>,
 }
 
-#[allow(dead_code)]
 impl RateLimiter {
-    pub fn new() -> Self {
-        let limiter = Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-        };
-        limiter.spawn_cleanup();
-        limiter
-    }
-
-    fn spawn_cleanup(&self) {
-        let inner = self.inner.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
-            loop {
-                interval.tick().await;
-                let mut map = inner.lock().await;
-                let now = Instant::now();
-                map.retain(|_, entry| entry.reset_at > now);
-                tracing::debug!("Rate limiter cleanup: {} entries remaining", map.len());
-            }
-        });
+    pub fn new(redis_client: Option<RedisClient>) -> Self {
+        Self { redis_client }
     }
 
     async fn check(&self, ip: &str) -> Result<(), ()> {
-        let mut map = self.inner.lock().await;
-        let now = Instant::now();
-        let entry = map.entry(ip.to_string()).or_insert(RateLimitState {
-            count: 0,
-            reset_at: now + Duration::from_secs(3600),
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+
+        let key = format!("ratelimit:hourly:{ip}");
+        let count: u64 = redis.incr(&key).await.unwrap_or_else(|e| {
+            tracing::error!("Rate limiter Redis error: {}", e);
+            0
         });
 
-        if entry.reset_at <= now {
-            entry.count = 0;
-            entry.reset_at = now + Duration::from_secs(3600);
+        if count == 1 {
+            let _ = redis.expire(&key, 3600).await;
         }
 
-        if entry.count >= HOURLY_LIMIT {
+        if count > HOURLY_LIMIT {
             return Err(());
         }
 
-        entry.count += 1;
         Ok(())
     }
 }
 
-impl Default for RateLimiter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[allow(dead_code)]
+#[derive(Clone)]
 pub struct RateLimiterMiddleware {
     limiter: RateLimiter,
 }
 
-#[allow(dead_code)]
 impl RateLimiterMiddleware {
-    pub fn new() -> Self {
+    pub fn new(redis_client: Option<RedisClient>) -> Self {
         Self {
-            limiter: RateLimiter::new(),
+            limiter: RateLimiter::new(redis_client),
         }
     }
 }
 
 impl Default for RateLimiterMiddleware {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -121,7 +84,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub struct RateLimiterService<S> {
     service: S,
     limiter: RateLimiter,
@@ -148,17 +110,12 @@ where
             .to_string();
 
         let limiter = self.limiter.clone();
-        // Create the inner service future before the async block to avoid lifetime issues
-        // with borrowing self.service inside the async block.
         let fut = self.service.call(req);
 
         Box::pin(async move {
             if limiter.check(&ip).await.is_err() {
                 metrics::RATE_LIMIT_HITS_TOTAL.inc();
                 tracing::warn!("Rate limit exceeded for IP: {}", ip);
-                // Return an error instead of constructing a ServiceResponse with a cloned request.
-                // Cloning HttpRequest (which uses Rc internally) would cause Rc::get_mut() to
-                // return None and panic when actix-web later calls match_info_mut() on the original.
                 return Err(actix_web::error::ErrorTooManyRequests(
                     "Rate limit exceeded. Please try again later.",
                 ));

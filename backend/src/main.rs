@@ -19,7 +19,6 @@ mod websocket;
 use api::anonymous::get_anonymous_stats;
 use api::game::play_card;
 use api::middleware::ip_forward::ForwardedIpMiddleware;
-#[allow(unused_imports)]
 use api::middleware::rate_limiter::RateLimiterMiddleware;
 use api::quickie::create_quick_game;
 use auth::config::AuthConfig;
@@ -133,10 +132,23 @@ async fn main() -> std::io::Result<()> {
         api::services::auth_service::AuthService::new(user_repo, auth_config, mailer),
     );
 
-    let user_cache = Arc::new(UserCache::new());
-    let dashboard_service: Arc<api::dashboard::DashboardServiceType> = Arc::new(
-        api::services::dashboard_service::DashboardService::new(dashboard_repo, user_cache.clone()),
-    );
+    let user_cache = match redis_client.clone() {
+        Some(rc) => Arc::new(UserCache::new_with_redis(rc)),
+        None => Arc::new(UserCache::new()),
+    };
+    let dashboard_service: Arc<api::dashboard::DashboardServiceType> = match redis_client.clone() {
+        Some(rc) => Arc::new(
+            api::services::dashboard_service::DashboardService::new_with_redis(
+                dashboard_repo,
+                user_cache.clone(),
+                rc,
+            ),
+        ),
+        None => Arc::new(api::services::dashboard_service::DashboardService::new(
+            dashboard_repo,
+            user_cache.clone(),
+        )),
+    };
 
     let auth_service_data = web::Data::new(auth_service);
     let dashboard_service_data = web::Data::new(dashboard_service);
@@ -203,6 +215,9 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
+    let auth_middleware = AuthMiddleware::new(redis_client.clone());
+    let _rate_limiter_middleware = RateLimiterMiddleware::new(redis_client.clone());
+
     let db_for_pool_metrics = db_connection.clone();
     let pool_metrics_interval = Duration::from_secs(config.db_pool_metrics_interval_secs);
     tokio::spawn(async move {
@@ -217,7 +232,7 @@ async fn main() -> std::io::Result<()> {
         info!("Registering routes");
         App::new()
             .wrap(CorrelationIdMiddleware)
-            //.wrap(RateLimiterMiddleware::new()) // TODO: uncomment for production
+            // .wrap(rate_limiter_middleware.clone()) // TODO: limit rate according to authenticated status
             .wrap(ForwardedIpMiddleware)
             .app_data(web::Data::new(db_connection.clone()))
             .app_data(redis_client_data.clone())
@@ -248,13 +263,13 @@ async fn main() -> std::io::Result<()> {
                             .route("/logout", web::post().to(api::auth::logout))
                             .service(
                                 web::resource("/me")
-                                    .wrap(AuthMiddleware)
+                                    .wrap(auth_middleware.clone())
                                     .route(web::get().to(api::auth::me)),
                             ),
                     )
                     .service(
                         web::scope("/me")
-                            .wrap(AuthMiddleware)
+                            .wrap(auth_middleware.clone())
                             .route("/profile", web::get().to(api::dashboard::get_profile))
                             .route("/games", web::get().to(api::dashboard::list_games))
                             .route("/games", web::post().to(api::dashboard::create_game))
@@ -270,7 +285,7 @@ async fn main() -> std::io::Result<()> {
                     )
                     .service(
                         web::scope("/games")
-                            .wrap(AuthMiddleware)
+                            .wrap(auth_middleware.clone())
                             .route(
                                 "/{game_id}/invites",
                                 web::post().to(api::dashboard::send_invites),
@@ -288,7 +303,7 @@ async fn main() -> std::io::Result<()> {
                     )
                     .service(
                         web::scope("/users")
-                            .wrap(AuthMiddleware)
+                            .wrap(auth_middleware.clone())
                             .route("/search", web::get().to(api::dashboard::search_users)),
                     ),
             )

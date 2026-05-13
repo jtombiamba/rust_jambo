@@ -3,8 +3,10 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, TransactionTrait,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::database::models::Player;
@@ -20,7 +22,41 @@ use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
 use crate::game::turn_order::next_player;
 use crate::messaging::ai_task::{AITask, PlayerInfo};
 use crate::messaging::{events::GameEvent, RedisClient};
-use tracing::{error, info};
+
+const GAME_STATE_CACHE_TTL_SECS: u64 = 5 * 60;
+
+/// Serializable snapshot of an active game for caching in Redis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedGameState {
+    status: String,
+    roll: i32,
+    rank: Option<i32>,
+    bet: i32,
+    current_winning_card: Option<i32>,
+    current_winning_player_position: Option<i32>,
+    players: Vec<CachedPlayer>,
+    cards: Vec<CachedCard>,
+    round_completed: bool,
+    next_player_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedPlayer {
+    id: Uuid,
+    name: String,
+    position: i32,
+    player_type: String,
+    credits: i32,
+    user_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedCard {
+    player_id: Option<Uuid>,
+    card_index: i32,
+    played: bool,
+    round: Option<i32>,
+}
 
 pub fn compute_display_position(actual_pos: usize, num_players: usize, my_pos: usize) -> usize {
     (num_players + actual_pos - my_pos) % num_players
@@ -122,6 +158,171 @@ impl GameService {
     #[allow(dead_code)]
     pub fn redis_client(&self) -> Option<RedisClient> {
         self.redis_client.clone()
+    }
+
+    pub async fn cache_game_state(&self, game_id: Uuid) {
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        if let Ok(state) = self.build_cached_game_state(game_id).await {
+            if let Ok(data) = serde_json::to_string(&state) {
+                let _ = redis
+                    .set_ex(
+                        &format!("game:state:{game_id}"),
+                        &data,
+                        GAME_STATE_CACHE_TTL_SECS,
+                    )
+                    .await;
+            }
+        }
+    }
+
+    pub async fn invalidate_game_state_cache(&self, game_id: Uuid) {
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        let _ = redis.del(&format!("game:state:{game_id}")).await;
+    }
+
+    pub(crate) async fn invalidate_dashboard_caches(&self, user_ids: &[Uuid]) {
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return,
+        };
+
+        for &user_id in user_ids {
+            let profile_key = format!("dashboard:profile:{user_id}");
+            if let Err(e) = redis.del(&profile_key).await {
+                error!("Failed to invalidate profile cache for {}: {}", user_id, e);
+            }
+
+            let games_pattern = format!("dashboard:games:{user_id}:*");
+            if let Err(e) = redis.del_pattern(&games_pattern).await {
+                error!("Failed to invalidate games cache for {}: {}", user_id, e);
+            }
+        }
+    }
+
+    async fn build_cached_game_state(
+        &self,
+        game_id: Uuid,
+    ) -> Result<CachedGameState, GameServiceError> {
+        use sea_orm::{ColumnTrait, QueryOrder};
+
+        let game = game::Entity::find_by_id(game_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::GameNotFound)?;
+
+        let players = player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .order_by_asc(player::Column::Position)
+            .all(&self.db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        let cards = game_card::Entity::find()
+            .filter(game_card::Column::GameId.eq(game_id))
+            .all(&self.db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        let cached_players: Vec<CachedPlayer> = players
+            .iter()
+            .map(|p| CachedPlayer {
+                id: p.id,
+                name: p.name.clone(),
+                position: p.position,
+                player_type: match p.player_type {
+                    PlayerType::Human => "human".to_string(),
+                    PlayerType::Bot => "bot".to_string(),
+                },
+                credits: p.credits,
+                user_id: p.user_id,
+            })
+            .collect();
+
+        let cached_cards: Vec<CachedCard> = cards
+            .iter()
+            .map(|c| CachedCard {
+                player_id: c.player_id,
+                card_index: c.card_index,
+                played: c.played,
+                round: c.round,
+            })
+            .collect();
+
+        let round_complete = self
+            .is_round_complete_txn_inner(&self.db, game_id, game.roll)
+            .await?;
+
+        let next_player_id = self.order_next_player(game_id, &game, &players).await?;
+
+        Ok(CachedGameState {
+            status: format!("{:?}", game.status),
+            roll: game.roll,
+            rank: game.rank,
+            bet: game.bet,
+            current_winning_card: game.current_winning_card,
+            current_winning_player_position: game.current_winning_player_position,
+            players: cached_players,
+            cards: cached_cards,
+            round_completed: round_complete,
+            next_player_id,
+        })
+    }
+
+    async fn is_round_complete_txn_inner(
+        &self,
+        db: &DatabaseConnection,
+        game_id: Uuid,
+        round: i32,
+    ) -> Result<bool, GameServiceError> {
+        let players = player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .all(db)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+        for player_model in players {
+            let cards = game_card::Entity::find()
+                .filter(game_card::Column::PlayerId.eq(player_model.id))
+                .all(db)
+                .await
+                .map_err(|e| {
+                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+                })?;
+            let played_in_round = cards.iter().any(|c| c.played && c.round == Some(round));
+            if !played_in_round {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    async fn order_next_player(
+        &self,
+        _game_id: Uuid,
+        game_model: &game::Model,
+        players: &[player::Model],
+    ) -> Result<Uuid, GameServiceError> {
+        let current_rank = game_model.rank.unwrap_or(0) as usize;
+        let next_rank = next_player(current_rank, players.len());
+        players
+            .get(next_rank)
+            .map(|p| p.id)
+            .ok_or_else(|| GameServiceError::Internal("No player at computed rank".to_string()))
     }
 
     pub async fn create_multiplayer_game(
@@ -608,6 +809,11 @@ impl GameService {
             }
         }
 
+        let user_ids: Vec<Uuid> = players.iter().filter_map(|p| p.user_id).collect();
+        if !user_ids.is_empty() {
+            self.invalidate_dashboard_caches(&user_ids).await;
+        }
+
         Ok(())
     }
 
@@ -771,6 +977,8 @@ impl GameService {
                 error!("Failed to publish GameStarted event: {}", e);
             }
         }
+
+        self.cache_game_state(game_id).await;
 
         Ok(())
     }
@@ -1029,7 +1237,18 @@ impl GameService {
                     .inc();
                 self.publish_game_finished(game_id, &result, correlation_id)
                     .await;
+                self.invalidate_game_state_cache(game_id).await;
+
+                let user_ids: Vec<Uuid> = result.players.iter().filter_map(|p| p.user_id).collect();
+                if !user_ids.is_empty() {
+                    self.invalidate_dashboard_caches(&user_ids).await;
+                }
             }
+        }
+
+        // 12b. Update game state cache if game is still active
+        if !game_ended {
+            self.cache_game_state(game_id).await;
         }
 
         // Return the updated card + full context (no extra DB queries needed by callers)
@@ -1709,5 +1928,48 @@ impl GameService {
             info!("Recovered {} stalled games", recovered);
         }
         recovered
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, MockDatabase};
+    use uuid::Uuid;
+
+    fn make_service_without_redis() -> GameService {
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+        GameService::new(db)
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_dashboard_caches_no_redis() {
+        let service = make_service_without_redis();
+        let user_ids = vec![Uuid::new_v4()];
+        // Should not panic when Redis is None
+        service.invalidate_dashboard_caches(&user_ids).await;
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_dashboard_caches_empty_user_ids() {
+        let service = make_service_without_redis();
+        let user_ids: Vec<Uuid> = vec![];
+        // Should not panic with empty user_ids
+        service.invalidate_dashboard_caches(&user_ids).await;
+    }
+
+    #[tokio::test]
+    async fn test_user_id_collection_filters_bots() {
+        // Simulate filtering behavior: bots have user_id=None
+        let user_ids: Vec<Uuid> = vec![
+            Some(Uuid::new_v4()),
+            None, // bot player
+            Some(Uuid::new_v4()),
+            None, // bot player
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        assert_eq!(user_ids.len(), 2);
     }
 }

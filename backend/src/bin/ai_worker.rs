@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
                 error!("Failed to acknowledge message: {}", e);
             }
         }
-
+        // TODO: should have a metric here for tasks completed
         let total_tasks = tasks_processed + tasks_failed + parse_errors;
         if total_tasks.is_multiple_of(10) && total_tasks > 0 {
             let uptime = start_time.elapsed();

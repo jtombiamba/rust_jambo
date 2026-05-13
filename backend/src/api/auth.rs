@@ -6,9 +6,12 @@ use crate::api::dto::auth::{
     ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest,
 };
 use crate::api::services::auth_service::AuthService;
+use crate::auth::config::AuthConfig;
 use crate::auth::cookie;
 use crate::auth::extractors::{AuthenticatedUser, ClientIp};
+use crate::auth::jwt;
 use crate::database::repositories::UserRepository;
+use crate::messaging::RedisClient;
 
 pub type AuthServiceType = AuthService<UserRepository>;
 
@@ -65,7 +68,28 @@ pub async fn reset_password(
     }
 }
 
-pub async fn logout() -> HttpResponse {
+pub async fn logout(
+    req: HttpRequest,
+    auth_config: web::Data<AuthConfig>,
+    redis_client: web::Data<Option<RedisClient>>,
+) -> HttpResponse {
+    if let Some(token) = req.cookie("Authorization").map(|c| c.value().to_string()) {
+        if let Ok(claims) = jwt::validate_token(&token, &auth_config) {
+            if let Some(mut redis) = redis_client.get_ref().clone() {
+                let remaining_ttl = claims.exp as i64 - chrono::Utc::now().timestamp();
+                if remaining_ttl > 0 {
+                    let _ = redis
+                        .set_ex(
+                            &format!("token:blacklist:{}", claims.jti),
+                            "1",
+                            remaining_ttl as u64,
+                        )
+                        .await;
+                }
+            }
+        }
+    }
+
     let mut resp = HttpResponse::Ok();
     cookie::clear_auth_cookie(&mut resp);
     resp.json(serde_json::json!({
