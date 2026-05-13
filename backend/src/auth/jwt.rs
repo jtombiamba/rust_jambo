@@ -10,6 +10,7 @@ pub struct Claims {
     pub pseudo: String,
     pub exp: usize,
     pub iat: usize,
+    pub jti: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -30,6 +31,7 @@ pub fn generate_token(
         pseudo: pseudo.to_string(),
         exp: (now + chrono::Duration::hours(config.jwt_expiry_hours)).timestamp() as usize,
         iat: now.timestamp() as usize,
+        jti: Uuid::new_v4().to_string(),
     };
     encode(
         &Header::default(),

@@ -1,80 +1,109 @@
-use std::collections::HashMap;
-use tokio::sync::RwLock;
+use serde::{Deserialize, Serialize};
+use tracing::error;
 use uuid::Uuid;
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
+use crate::messaging::RedisClient;
+
+const CACHE_TTL_SECS: u64 = 15 * 60;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CachedUser {
     pub pseudo: String,
     pub email: String,
 }
 
 pub struct UserCache {
-    uuid_to_user: RwLock<HashMap<Uuid, CachedUser>>,
-    pseudo_to_uuid: RwLock<HashMap<String, Uuid>>,
+    redis_client: Option<RedisClient>,
 }
 
 #[allow(dead_code)]
 impl UserCache {
     pub fn new() -> Self {
+        Self { redis_client: None }
+    }
+
+    pub fn new_with_redis(redis_client: RedisClient) -> Self {
         Self {
-            uuid_to_user: RwLock::new(HashMap::new()),
-            pseudo_to_uuid: RwLock::new(HashMap::new()),
+            redis_client: Some(redis_client),
         }
     }
 
     pub async fn get_by_pseudo(&self, pseudo: &str) -> Option<CachedUser> {
-        let reverse = self.pseudo_to_uuid.read().await;
-        let uuid = reverse.get(pseudo)?;
-        let forward = self.uuid_to_user.read().await;
-        forward.get(uuid).cloned()
+        let mut redis = self.redis_client.clone()?;
+        let uuid_str = redis
+            .get(&format!("user:pseudo:{pseudo}"))
+            .await
+            .unwrap_or_else(|e| {
+                error!("Redis get_by_pseudo error: {}", e);
+                None
+            })?;
+        let uuid = Uuid::parse_str(&uuid_str).ok()?;
+        self.get_by_uuid(&uuid).await
     }
 
     pub async fn get_uuid_by_pseudo(&self, pseudo: &str) -> Option<Uuid> {
-        let reverse = self.pseudo_to_uuid.read().await;
-        reverse.get(pseudo).copied()
+        let mut redis = self.redis_client.clone()?;
+        let uuid_str = redis
+            .get(&format!("user:pseudo:{pseudo}"))
+            .await
+            .unwrap_or_else(|e| {
+                error!("Redis get_uuid_by_pseudo error: {}", e);
+                None
+            })?;
+        Uuid::parse_str(&uuid_str).ok()
     }
 
     pub async fn get_by_uuid(&self, uuid: &Uuid) -> Option<CachedUser> {
-        let forward = self.uuid_to_user.read().await;
-        forward.get(uuid).cloned()
+        let mut redis = self.redis_client.clone()?;
+        let data = redis
+            .get(&format!("user:uuid:{uuid}"))
+            .await
+            .unwrap_or_else(|e| {
+                error!("Redis get_by_uuid error: {}", e);
+                None
+            })?;
+        serde_json::from_str(&data).ok()
     }
 
     pub async fn put(&self, uuid: Uuid, pseudo: String, email: String) {
-        let mut forward = self.uuid_to_user.write().await;
-        forward.insert(
-            uuid,
-            CachedUser {
-                pseudo: pseudo.clone(),
-                email,
-            },
-        );
-        drop(forward);
-        let mut reverse = self.pseudo_to_uuid.write().await;
-        reverse.insert(pseudo, uuid);
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        let user_data = match serde_json::to_string(&CachedUser {
+            pseudo: pseudo.clone(),
+            email,
+        }) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let _ = redis
+            .set_ex(&format!("user:uuid:{uuid}"), &user_data, CACHE_TTL_SECS)
+            .await;
+        let _ = redis
+            .set_ex(
+                &format!("user:pseudo:{pseudo}"),
+                &uuid.to_string(),
+                CACHE_TTL_SECS,
+            )
+            .await;
     }
 
     pub async fn populate_bulk(&self, users: &[(Uuid, String, String)]) {
-        let mut forward = self.uuid_to_user.write().await;
-        let mut reverse = self.pseudo_to_uuid.write().await;
         for (uuid, pseudo, email) in users {
-            forward.insert(
-                *uuid,
-                CachedUser {
-                    pseudo: pseudo.clone(),
-                    email: email.clone(),
-                },
-            );
-            reverse.insert(pseudo.clone(), *uuid);
+            self.put(*uuid, pseudo.clone(), email.clone()).await;
         }
     }
 
     pub async fn invalidate(&self, uuid: &Uuid) {
-        let mut forward = self.uuid_to_user.write().await;
-        if let Some(user) = forward.remove(uuid) {
-            drop(forward);
-            let mut reverse = self.pseudo_to_uuid.write().await;
-            reverse.remove(&user.pseudo);
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        let pseudo: Option<String> = self.get_by_uuid(uuid).await.map(|u| u.pseudo);
+        let _ = redis.del(&format!("user:uuid:{uuid}")).await;
+        if let Some(p) = pseudo {
+            let _ = redis.del(&format!("user:pseudo:{p}")).await;
         }
     }
 }

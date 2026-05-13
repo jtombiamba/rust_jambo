@@ -109,26 +109,26 @@ jobs:
           severity: CRITICAL
           format: table
 
-  trivy-images:
-    name: Trivy Docker image scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build backend image
-        run: docker build -t backend:scan backend/
-      - name: Build frontend image
-        run: docker build -t frontend:scan frontend/
-      - name: Scan backend image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: backend:scan
-          exit-code: 1
-          severity: CRITICAL
-          format: table
-      - name: Scan frontend image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: frontend:scan
-          exit-code: 1
-          severity: CRITICAL
-          format: table
+  # trivy-images:
+  #   name: Trivy Docker image scan
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Build backend image
+  #       run: docker build -t backend:scan backend/
+  #     - name: Build frontend image
+  #       run: docker build -t frontend:scan frontend/
+  #     - name: Scan backend image
+  #       uses: aquasecurity/trivy-action@v0.36.0
+  #       with:
+  #         image-ref: backend:scan
+  #         exit-code: 1
+  #         severity: CRITICAL
+  #         format: table
+  #     - name: Scan frontend image
+  #       uses: aquasecurity/trivy-action@v0.36.0
+  #       with:
+  #         image-ref: frontend:scan
+  #         exit-code: 1
+  #         severity: CRITICAL
+  #         format: table

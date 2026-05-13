@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use serde::de::DeserializeOwned;
+use tracing::error;
 use uuid::Uuid;
 
 use crate::api::dto::dashboard::{
@@ -16,10 +18,15 @@ use crate::database::models::{GameStatus, PlayerType, User};
 use crate::database::traits::DashboardRepoTrait;
 use crate::error::AppError;
 use crate::game::service::compute_display_position;
+use crate::messaging::RedisClient;
+
+const PROFILE_CACHE_TTL_SECS: u64 = 5 * 60;
+const GAMES_CACHE_TTL_SECS: u64 = 30;
 
 pub struct DashboardService<R: DashboardRepoTrait> {
     repo: Arc<R>,
     user_cache: Arc<UserCache>,
+    redis_client: Option<RedisClient>,
 }
 
 #[derive(Debug)]
@@ -30,30 +37,62 @@ pub struct SendInvitesParams {
 
 impl<R: DashboardRepoTrait> DashboardService<R> {
     pub fn new(repo: Arc<R>, user_cache: Arc<UserCache>) -> Self {
-        Self { repo, user_cache }
+        Self {
+            repo,
+            user_cache,
+            redis_client: None,
+        }
+    }
+
+    pub fn new_with_redis(
+        repo: Arc<R>,
+        user_cache: Arc<UserCache>,
+        redis_client: RedisClient,
+    ) -> Self {
+        Self {
+            repo,
+            user_cache,
+            redis_client: Some(redis_client),
+        }
     }
 
     pub async fn get_profile(&self, user_id: Uuid) -> Result<PlayerProfileResponse, AppError> {
+        if let Some(cached) = self
+            .get_cached::<PlayerProfileResponse>(&format!("dashboard:profile:{user_id}"))
+            .await
+        {
+            return Ok(cached);
+        }
+
         let profile = self
             .repo
             .find_profile_by_user_id(user_id)
             .await
             .map_err(AppError::Database)?;
 
-        match profile {
-            Some(p) => Ok(PlayerProfileResponse {
+        let response = match profile {
+            Some(p) => PlayerProfileResponse {
                 credit: p.credit,
                 game_played: p.game_played,
                 wins: p.wins,
                 kora_wins: p.kora_wins,
-            }),
-            None => Ok(PlayerProfileResponse {
+            },
+            None => PlayerProfileResponse {
                 credit: 500,
                 game_played: 0,
                 wins: 0,
                 kora_wins: 0,
-            }),
-        }
+            },
+        };
+
+        self.set_cached(
+            &format!("dashboard:profile:{user_id}"),
+            &response,
+            PROFILE_CACHE_TTL_SECS,
+        )
+        .await;
+
+        Ok(response)
     }
 
     pub async fn list_games(
@@ -64,6 +103,16 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
         let page = query.page.unwrap_or(1).max(1);
         let per_page = query.per_page.unwrap_or(10).clamp(1, 100);
         let filter = query.to_filter();
+
+        let filter_hash = format!(
+            "{:?}:{:?}:{:?}:{:?}:{:?}",
+            query.status, query.order_by, query.bet_min, query.bet_max, filter.order_by
+        );
+        let cache_key = format!("dashboard:games:{user_id}:{page}:{per_page}:{filter_hash}");
+
+        if let Some(cached) = self.get_cached::<GameHistoryResponse>(&cache_key).await {
+            return Ok(cached);
+        }
 
         let (pairs, total) = self
             .repo
@@ -104,12 +153,36 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             });
         }
 
-        Ok(GameHistoryResponse {
+        let response = GameHistoryResponse {
             games: game_items,
             total,
             page,
             per_page,
-        })
+        };
+
+        self.set_cached(&cache_key, &response, GAMES_CACHE_TTL_SECS)
+            .await;
+
+        Ok(response)
+    }
+
+    async fn get_cached<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        let mut redis = self.redis_client.clone()?;
+        let data = redis.get(key).await.unwrap_or_else(|e| {
+            error!("Dashboard cache get error: {}", e);
+            None
+        })?;
+        serde_json::from_str(&data).ok()
+    }
+
+    async fn set_cached<T: serde::Serialize>(&self, key: &str, value: &T, ttl: u64) {
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        if let Ok(data) = serde_json::to_string(value) {
+            let _ = redis.set_ex(key, &data, ttl).await;
+        }
     }
 
     pub async fn get_game(

@@ -50,6 +50,8 @@ path = "src/bin/ai_worker.rs"
 
 [dev-dependencies]
 actix-rt = "2.9"
+sea-orm = { version = "2.0.0-rc.38", features = ["mock"] }
+serial_test = "3"
 
 [profile.dev]
 opt-level = 0

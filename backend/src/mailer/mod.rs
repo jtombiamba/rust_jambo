@@ -349,6 +349,7 @@ pub fn create_mailer(config: MailerConfig) -> Result<Arc<dyn Mailer>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[tokio::test]
     async fn test_noop_mailer_password_reset() {
@@ -395,6 +396,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_mailer_config_from_env_defaults() {
         std::env::remove_var("MAILER_MODE");
         let config = MailerConfig::from_env();
@@ -404,6 +406,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_mailer_config_from_env_smtp() {
         std::env::set_var("MAILER_MODE", "smtp");
         std::env::set_var("SMTP_HOST", "smtp.example.com");

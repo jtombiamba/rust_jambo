@@ -10,8 +10,18 @@ use serde_json::json;
 use super::config::AuthConfig;
 use super::extractors::AuthenticatedUser;
 use super::jwt;
+use crate::messaging::RedisClient;
 
-pub struct AuthMiddleware;
+#[derive(Clone, Default)]
+pub struct AuthMiddleware {
+    redis_client: Option<RedisClient>,
+}
+
+impl AuthMiddleware {
+    pub fn new(redis_client: Option<RedisClient>) -> Self {
+        Self { redis_client }
+    }
+}
 
 impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
 where
@@ -26,12 +36,16 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(AuthMiddlewareService { service }))
+        ready(Ok(AuthMiddlewareService {
+            service,
+            redis_client: self.redis_client.clone(),
+        }))
     }
 }
 
 pub struct AuthMiddlewareService<S> {
     service: S,
+    redis_client: Option<RedisClient>,
 }
 
 impl<S, B> Service<ServiceRequest> for AuthMiddlewareService<S>
@@ -49,31 +63,51 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let auth_config = req.app_data::<actix_web::web::Data<AuthConfig>>().cloned();
-
         let token = req.cookie("Authorization").map(|c| c.value().to_string());
 
-        let is_authenticated = match (&auth_config, &token) {
-            (Some(config), Some(t)) => match jwt::validate_token(t, config) {
-                Ok(claims) => {
-                    req.extensions_mut().insert(AuthenticatedUser {
-                        user_id: claims.sub,
-                        pseudo: claims.pseudo,
-                    });
-                    true
-                }
-                Err(_) => false,
-            },
-            _ => false,
+        let claims = match (&auth_config, &token) {
+            (Some(config), Some(t)) => jwt::validate_token(t, config).ok(),
+            _ => None,
         };
 
-        if is_authenticated {
-            let fut = self.service.call(req);
-            Box::pin(fut)
-        } else {
-            let error = actix_web::error::ErrorUnauthorized(
-                json!({"success": false, "error": "Authentication required"}).to_string(),
-            );
-            Box::pin(async move { Err(error) })
-        }
+        let claims = match claims {
+            Some(c) => c,
+            None => {
+                let error = actix_web::error::ErrorUnauthorized(
+                    json!({"success": false, "error": "Authentication required"}).to_string(),
+                );
+                return Box::pin(async move { Err(error) });
+            }
+        };
+
+        let redis_client = self.redis_client.clone();
+        let jti = claims.jti.clone();
+        let user_id = claims.sub;
+        let pseudo = claims.pseudo;
+
+        // Insert AuthenticatedUser BEFORE calling the service so the handler
+        // can extract it via FromRequest
+        req.extensions_mut().insert(AuthenticatedUser {
+            user_id,
+            pseudo: pseudo.clone(),
+        });
+
+        let fut = self.service.call(req);
+
+        Box::pin(async move {
+            if let Some(mut r) = redis_client {
+                if r.exists(&format!("token:blacklist:{jti}"))
+                    .await
+                    .unwrap_or(false)
+                {
+                    return Err(actix_web::error::ErrorUnauthorized(
+                        json!({"success": false, "error": "Token has been revoked"}).to_string(),
+                    ));
+                }
+            }
+
+            let res = fut.await?;
+            Ok(res)
+        })
     }
 }
