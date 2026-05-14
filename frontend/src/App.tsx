@@ -319,12 +319,20 @@ function AppContent() {
     <div>
       <AuthModal />
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
-      <button
-        onClick={() => openAuthModal()}
-        className="fixed top-4 right-4 z-40 px-4 sm:px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 shadow-lg text-sm sm:text-base"
-      >
-        Create account / Connect
-      </button>
+      <div className="fixed top-4 right-4 z-40 flex gap-2 sm:gap-3">
+        <button
+          onClick={() => setRulesOpen(true)}
+          className="px-3 sm:px-5 py-2 border border-gray-400 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 shadow-lg text-sm sm:text-base"
+        >
+          Rules
+        </button>
+        <button
+          onClick={() => openAuthModal()}
+          className="px-4 sm:px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 shadow-lg text-sm sm:text-base"
+        >
+          Create account / Connect
+        </button>
+      </div>
       <div className="container mx-auto p-4 sm:p-8">
         <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">FapFap Card Game</h1>
         <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
@@ -361,12 +369,6 @@ function AppContent() {
                 {startingGame ? 'Starting...' : 'Start a quick game'}
               </button>
             )}
-            <button
-              className="px-4 sm:px-6 py-2 sm:py-3 border border-gray-400 text-gray-700 text-sm sm:text-base font-semibold rounded-lg hover:bg-gray-100"
-              onClick={() => setRulesOpen(true)}
-            >
-              Rules
-            </button>
           </div>
           {error && (
             <div className="mt-4 p-3 bg-red-100 text-red-700 rounded text-sm">

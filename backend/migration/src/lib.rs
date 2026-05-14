@@ -4,6 +4,8 @@ mod m20220101_000001_create_table;
 mod m20260506_000001_create_users;
 mod m20260509_000001_multiplayer_game;
 mod m20260509_000002_game_invites;
+mod m20260514_000001_winning_streak;
+mod m20260514_000002_unique_player_game_user;
 
 pub struct Migrator;
 
@@ -15,6 +17,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260506_000001_create_users::Migration),
             Box::new(m20260509_000001_multiplayer_game::Migration),
             Box::new(m20260509_000002_game_invites::Migration),
+            Box::new(m20260514_000001_winning_streak::Migration),
+            Box::new(m20260514_000002_unique_player_game_user::Migration),
         ]
     }
 }

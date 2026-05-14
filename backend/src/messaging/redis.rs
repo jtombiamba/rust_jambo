@@ -120,4 +120,30 @@ impl RedisClient {
         }
         Ok(pubsub)
     }
+
+    pub async fn zadd(&mut self, key: &str, member: String, score: f64) -> RedisResult<()> {
+        self.connection_manager.zadd(key, member, score).await
+    }
+
+    pub async fn zrevrange_withscores(
+        &mut self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> RedisResult<Vec<(String, f64)>> {
+        self.connection_manager
+            .zrevrange_withscores(key, start, stop)
+            .await
+    }
+
+    pub async fn zrevrank(&mut self, key: &str, member: String) -> RedisResult<Option<u64>> {
+        self.connection_manager.zrevrank(key, member).await
+    }
+
+    pub async fn mget(&mut self, keys: &[String]) -> RedisResult<Vec<Option<String>>> {
+        redis::cmd("MGET")
+            .arg(keys)
+            .query_async(&mut self.connection_manager)
+            .await
+    }
 }

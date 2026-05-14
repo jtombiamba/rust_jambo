@@ -5,6 +5,8 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -99,6 +101,8 @@ pub enum GameServiceError {
     CreatorCannotJoin,
     #[error("Game is not in ready state")]
     GameNotReady,
+    #[error("Duplicate player: user is already a player in this game")]
+    DuplicatePlayer,
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -140,6 +144,10 @@ struct RoundEvaluationResult {
 pub struct GameService {
     db: DatabaseConnection,
     redis_client: Option<RedisClient>,
+    /// Per-game mutexes to serialize concurrent accept_invite calls for the same game.
+    /// This prevents race conditions where two concurrent requests both pass the
+    /// "already joined" check before either inserts a player record.
+    accept_invite_locks: tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl GameService {
@@ -148,16 +156,37 @@ impl GameService {
         Self {
             db,
             redis_client: None,
+            accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
     pub fn new_with_redis(db: DatabaseConnection, redis_client: Option<RedisClient>) -> Self {
-        Self { db, redis_client }
+        Self {
+            db,
+            redis_client,
+            accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
+        }
     }
 
     #[allow(dead_code)]
     pub fn redis_client(&self) -> Option<RedisClient> {
         self.redis_client.clone()
+    }
+
+    /// Acquire a per-game mutex to serialize concurrent accept_invite calls.
+    /// This prevents race conditions where two concurrent requests both pass the
+    /// "already joined" check before either inserts a player record.
+    /// Acquire a per-game mutex to serialize concurrent accept_invite calls.
+    /// Returns a guard that releases the lock when dropped.
+    async fn accept_invite_lock(&self, game_id: Uuid) -> tokio::sync::OwnedMutexGuard<()> {
+        let arc_lock: Arc<tokio::sync::Mutex<()>> = {
+            let mut locks = self.accept_invite_locks.lock().await;
+            locks
+                .entry(game_id)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        arc_lock.lock_owned().await
     }
 
     pub async fn cache_game_state(&self, game_id: Uuid) {
@@ -432,11 +461,6 @@ impl GameService {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
 
-        info!(
-            "Multiplayer game created: game_id={}, creator_id={}, bet={}, expires_at={}",
-            inserted_game_id, creator_user_id, bet, expires_at
-        );
-
         Ok(MultiplayerGameOutcome {
             game_id: inserted_game_id,
             player_id,
@@ -496,10 +520,6 @@ impl GameService {
                     .map_err(|e| {
                         GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
                     })?;
-                info!(
-                    "Invite sent: game_id={}, invited_user_id={}",
-                    game_id, user_id
-                );
             }
         }
         Ok(())
@@ -511,6 +531,11 @@ impl GameService {
         user_id: Uuid,
         user_pseudo: &str,
     ) -> Result<crate::database::models::player::Model, GameServiceError> {
+        // Acquire a per-game mutex to serialize concurrent accept_invite calls.
+        // This prevents the race condition where two requests both pass the
+        // "already joined" check before either inserts a player record.
+        let _guard = self.accept_invite_lock(game_id).await;
+
         let txn = self.db.begin().await.map_err(|e| {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
@@ -607,12 +632,17 @@ impl GameService {
             created_at: sea_orm::ActiveValue::Set(now),
             user_id: sea_orm::ActiveValue::Set(Some(user_id)),
         };
-        player::Entity::insert(player_active)
-            .exec(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        // Attempt to insert the player. If the unique constraint on (game_id, user_id)
+        // is violated (e.g. due to a race condition), return AlreadyJoined.
+        if let Err(e) = player::Entity::insert(player_active).exec(&txn).await {
+            txn.rollback().await.ok();
+            if is_unique_violation(&e) {
+                return Err(GameServiceError::AlreadyJoined);
+            }
+            return Err(GameServiceError::Database(
+                Box::new(e) as Box<dyn std::error::Error + Send>
+            ));
+        }
 
         let mut invite_active: game_invite::ActiveModel = invite.into();
         invite_active.status = sea_orm::ActiveValue::Set(InviteStatus::Accepted);
@@ -620,14 +650,13 @@ impl GameService {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
 
-        let current_positions: std::collections::HashMap<i32, Uuid> =
-            if game_model.player_positions.is_null() {
-                std::collections::HashMap::new()
-            } else {
-                serde_json::from_value(game_model.player_positions.clone()).map_err(|e| {
-                    GameServiceError::Internal(format!("Failed to parse player_positions: {}", e))
-                })?
-            };
+        let current_positions: HashMap<i32, Uuid> = if game_model.player_positions.is_null() {
+            HashMap::new()
+        } else {
+            serde_json::from_value(game_model.player_positions.clone()).map_err(|e| {
+                GameServiceError::Internal(format!("Failed to parse player_positions: {}", e))
+            })?
+        };
         let mut updated_positions = current_positions;
         updated_positions.insert(next_position, user_id);
 
@@ -652,17 +681,6 @@ impl GameService {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
 
-        info!(
-            "Player joined game: game_id={}, user_id={}, position={}, status={}",
-            game_id,
-            user_id,
-            next_position,
-            match new_status {
-                GameStatus::Ready => "ready",
-                _ => "pending",
-            }
-        );
-
         if let Some(ref redis) = self.redis_client {
             let event = GameEvent::PlayerJoined {
                 game_id,
@@ -686,6 +704,9 @@ impl GameService {
                 }
             }
         }
+
+        // Invalidate dashboard caches for the accepting user
+        self.invalidate_dashboard_caches(&[user_id]).await;
 
         player::Entity::find_by_id(new_player_id)
             .one(&self.db)
@@ -891,6 +912,13 @@ impl GameService {
             return Err(GameServiceError::Internal(
                 "Not enough players to start".to_string(),
             ));
+        }
+        if num_players > game_model.max_players as usize {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::Internal(format!(
+                "Player count {} exceeds max_players {} for game {}",
+                num_players, game_model.max_players, game_id
+            )));
         }
 
         let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
@@ -1690,6 +1718,10 @@ impl GameService {
                         ActiveValue::Set(profile_active.game_played.unwrap() + 1);
                     if won {
                         profile_active.wins = ActiveValue::Set(profile_active.wins.unwrap() + 1);
+                        profile_active.winning_streak =
+                            ActiveValue::Set(profile_active.winning_streak.unwrap() + 1);
+                    } else {
+                        profile_active.winning_streak = ActiveValue::Set(0);
                     }
                     if won && is_kora {
                         profile_active.kora_wins =
@@ -1928,6 +1960,16 @@ impl GameService {
             info!("Recovered {} stalled games", recovered);
         }
         recovered
+    }
+}
+
+/// Check if a database error is a PostgreSQL unique constraint violation (code 23505).
+fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
+    if let sea_orm::DbErr::Exec(exec_err) = e {
+        // The error message from sqlx for unique violations contains "23505"
+        exec_err.to_string().contains("23505")
+    } else {
+        false
     }
 }
 

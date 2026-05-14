@@ -181,6 +181,7 @@ fn map_service_error(e: crate::game::service::GameServiceError) -> GameError {
         GameServiceError::NotCreator => GameError::NotCreator,
         GameServiceError::NotInvited => GameError::NotInvited,
         GameServiceError::AlreadyJoined => GameError::AlreadyJoined,
+        GameServiceError::DuplicatePlayer => GameError::AlreadyJoined,
         GameServiceError::GameFull => GameError::GameFull,
         GameServiceError::InviteExpired => GameError::InviteExpired,
         GameServiceError::CreatorCannotJoin => GameError::CreatorCannotJoin,

@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import axios from 'axios'
 import { useAuthStore } from '../stores/useAuthStore'
 import GameRules from './GameRules'
+import LeaderboardPanel from './LeaderboardPanel'
 
 interface ProfileData {
   credit: number
@@ -95,6 +96,8 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [multiplayerPseudos, setMultiplayerPseudos] = useState<Record<number, string>>({})
   const [invitations, setInvitations] = useState<InvitationItem[]>([])
   const [joiningGameId, setJoiningGameId] = useState<string | null>(null)
+  const [showGames, setShowGames] = useState(false)
+  const [showLeaderboard, setShowLeaderboard] = useState(false)
 
   const [statusFilter, setStatusFilter] = useState('')
   const [sortField, setSortField] = useState<SortField>(null)
@@ -275,12 +278,20 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   return (
     <div>
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
-      <button
-        onClick={logout}
-        className="fixed top-4 right-4 z-40 px-5 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 shadow-lg"
-      >
-        Logout
-      </button>
+      <div className="fixed top-4 right-4 z-40 flex gap-2 sm:gap-3">
+        <button
+          onClick={() => setRulesOpen(true)}
+          className="px-3 sm:px-5 py-2 border border-gray-400 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 shadow-lg text-sm sm:text-base"
+        >
+          Rules
+        </button>
+        <button
+          onClick={logout}
+          className="px-5 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 shadow-lg"
+        >
+          Logout
+        </button>
+      </div>
 
       {toast && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-6 py-3 bg-gray-800 text-white text-sm rounded-lg shadow-lg animate-fade-in-out">
@@ -328,10 +339,16 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
               Multiplayer Game
             </button>
             <button
-              className="px-4 sm:px-6 py-2 sm:py-3 border border-gray-400 text-gray-700 text-sm sm:text-base font-semibold rounded-lg hover:bg-gray-100"
-              onClick={() => setRulesOpen(true)}
+              className="px-4 sm:px-6 py-2 sm:py-3 bg-teal-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-teal-700"
+              onClick={() => setShowGames(!showGames)}
             >
-              Rules
+              {showGames ? 'Hide Games' : 'Games'}
+            </button>
+            <button
+              className="px-4 sm:px-6 py-2 sm:py-3 bg-orange-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-orange-700"
+              onClick={() => setShowLeaderboard(!showLeaderboard)}
+            >
+              {showLeaderboard ? 'Hide Leaderboard' : 'Leaderboard'}
             </button>
           </div>
           {error && (
@@ -388,6 +405,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
           </div>
         )}
 
+        {showGames && (
         <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
           <div className="flex flex-wrap items-center justify-between mb-4">
             <h2 className="text-lg sm:text-xl font-semibold">
@@ -431,7 +449,6 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="py-2 pr-4">Game</th>
                     <th className="py-2 pr-4">Status</th>
                     <th className="py-2 pr-4">Result</th>
                     <th
@@ -457,9 +474,6 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                       className="border-b cursor-pointer hover:bg-gray-200 transition-colors"
                       onClick={() => handleGameClick(game.game_id)}
                     >
-                      <td className="py-2 pr-4 font-mono text-xs">
-                        {game.game_id.slice(0, 8)}...
-                      </td>
                       <td className="py-2 pr-4">
                         <span
                           className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
@@ -549,6 +563,9 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
             </div>
           )}
         </div>
+        )}
+
+        {showLeaderboard && <LeaderboardPanel />}
       </div>
 
       {multiplayerOpen && (
