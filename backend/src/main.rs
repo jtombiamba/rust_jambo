@@ -350,7 +350,7 @@ async fn main() -> std::io::Result<()> {
             .service(websocket::scope())
     })
     .bind((config.host.as_str(), config.port))?
-    .workers(2)
+    .workers(num_cpus::get())
     .run()
     .await
 }

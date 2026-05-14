@@ -10,12 +10,17 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - benchmark_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -30,6 +35,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
   redis:
     image: redis:7-alpine
@@ -40,12 +50,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
   mailhog:
     image: mailhog/mailhog:latest
     ports:
       - "1025:1025"
       - "8025:8025"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
 
   backend:
     build:
@@ -75,13 +95,16 @@ services:
       CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
       CIRCUIT_BREAKER_COOLDOWN_SECS: 30
       GAME_STALENESS_THRESHOLD_SECS: 60
-      DB_POOL_MAX_CONNECTIONS: 200
-      DB_POOL_MIN_CONNECTIONS: 10
+      DB_POOL_MAX_CONNECTIONS: 100
+      DB_POOL_MIN_CONNECTIONS: 5
       DB_POOL_CONNECT_TIMEOUT_SECS: 8
       DB_POOL_ACQUIRE_TIMEOUT_SECS: 8
       DB_POOL_IDLE_TIMEOUT_SECS: 300
       DB_POOL_MAX_LIFETIME_SECS: 1800
-      DB_POOL_METRICS_INTERVAL_SECS: 30
+      DB_POOL_METRICS_INTERVAL_SECS: 5
+      BENCHMARK_MODE: "true"
+      BENCHMARK_BOT_DELAY_MS: "100"
+      BENCHMARK_SKIP_CREDIT_CHECK: "true"
       JWT_SECRET: super-secret-key-change-me-in-production-please-do-it-now
       JWT_EXPIRY_HOURS: 24
       IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
@@ -101,20 +124,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
 
-  frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-    depends_on:
-      backend:
-        condition: service_healthy
-    ports:
-      - "3000:80"
-    environment:
-      - VITE_API_BASE_URL=http://localhost:8080
-
-  ai-worker:
+  ai-worker-1:
     build:
       context: ../backend
       dockerfile: Dockerfile
@@ -126,16 +142,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      mailhog:
-        condition: service_started
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
-      HOST: 0.0.0.0
-      PORT: 8080
       LOG_LEVEL: info
-      RUST_LOG: info
+      RUST_LOG: ai_worker=info
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
       RABBITMQ_PUBLISH_MAX_RETRIES: 3
       RABBITMQ_PUBLISH_INITIAL_RETRY_DELAY_MS: 100
@@ -143,16 +155,16 @@ services:
       CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
       CIRCUIT_BREAKER_COOLDOWN_SECS: 30
       GAME_STALENESS_THRESHOLD_SECS: 60
-      DB_POOL_MAX_CONNECTIONS: 5
-      DB_POOL_MIN_CONNECTIONS: 1
+      DB_POOL_MAX_CONNECTIONS: 10
+      DB_POOL_MIN_CONNECTIONS: 2
       DB_POOL_CONNECT_TIMEOUT_SECS: 8
       DB_POOL_ACQUIRE_TIMEOUT_SECS: 8
       DB_POOL_IDLE_TIMEOUT_SECS: 300
       DB_POOL_MAX_LIFETIME_SECS: 1800
       DB_POOL_METRICS_INTERVAL_SECS: 30
-      BOT_THINKING_DELAY_MS: 800
-      AI_WORKER_MAX_CONCURRENT: 50
-      AI_WORKER_DB_POOL_SIZE: 50
+      BOT_THINKING_DELAY_MS: 100
+      AI_WORKER_MAX_CONCURRENT: 25
+      AI_WORKER_DB_POOL_SIZE: 25
       JWT_SECRET: super-secret-key-change-me-in-production-please-do-it-now
       JWT_EXPIRY_HOURS: 24
       IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
@@ -165,30 +177,101 @@ services:
       SMTP_FROM_NAME: "FapFap Game"
     volumes:
       - ../backend/migrations:/app/migrations:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
-  dozzle:
-    image: amir20/dozzle:latest
+  ai-worker-2:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: ["ai-worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: info
+      RUST_LOG: ai_worker=info
+      MAX_RABBITMQ_CONNECTION_RETRIES: 10
+      RABBITMQ_PUBLISH_MAX_RETRIES: 3
+      RABBITMQ_PUBLISH_INITIAL_RETRY_DELAY_MS: 100
+      RABBITMQ_PUBLISH_MAX_RETRY_DELAY_MS: 5000
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
+      CIRCUIT_BREAKER_COOLDOWN_SECS: 30
+      GAME_STALENESS_THRESHOLD_SECS: 60
+      DB_POOL_MAX_CONNECTIONS: 10
+      DB_POOL_MIN_CONNECTIONS: 2
+      DB_POOL_CONNECT_TIMEOUT_SECS: 8
+      DB_POOL_ACQUIRE_TIMEOUT_SECS: 8
+      DB_POOL_IDLE_TIMEOUT_SECS: 300
+      DB_POOL_MAX_LIFETIME_SECS: 1800
+      DB_POOL_METRICS_INTERVAL_SECS: 30
+      BOT_THINKING_DELAY_MS: 100
+      AI_WORKER_MAX_CONCURRENT: 25
+      AI_WORKER_DB_POOL_SIZE: 25
+      JWT_SECRET: super-secret-key-change-me-in-production-please-do-it-now
+      JWT_EXPIRY_HOURS: 24
+      IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
+      FRONTEND_URL: http://localhost:3000
+      MAILER_MODE: smtp
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_TLS: "false"
+      SMTP_FROM_EMAIL: noreply@fapfap.local
+      SMTP_FROM_NAME: "FapFap Game"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../backend/migrations:/app/migrations:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  node_exporter:
+    image: prom/node-exporter:latest
     ports:
-      - "8081:8080"
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
 
   prometheus:
     image: prom/prometheus:latest
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
+      - ./prometheus-benchmark.yml:/etc/prometheus/prometheus.yml:ro
+      - benchmark_prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=1d"
+      - "--web.enable-admin-api"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
 volumes:
-  postgres_data:
-  prometheus_data:
+  benchmark_postgres_data:
+  benchmark_prometheus_data:

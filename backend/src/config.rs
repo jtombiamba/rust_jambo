@@ -30,6 +30,9 @@ pub struct Config {
     pub db_pool_idle_timeout_secs: u64,
     pub db_pool_max_lifetime_secs: u64,
     pub db_pool_metrics_interval_secs: u64,
+    pub benchmark_mode: bool,
+    pub benchmark_bot_delay_ms: u64,
+    pub benchmark_skip_credit_check: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -89,6 +92,12 @@ impl std::fmt::Debug for Config {
                 "db_pool_metrics_interval_secs",
                 &self.db_pool_metrics_interval_secs,
             )
+            .field("benchmark_mode", &self.benchmark_mode)
+            .field("benchmark_bot_delay_ms", &self.benchmark_bot_delay_ms)
+            .field(
+                "benchmark_skip_credit_check",
+                &self.benchmark_skip_credit_check,
+            )
             .finish()
     }
 }
@@ -98,6 +107,9 @@ impl Config {
         dotenv::dotenv().ok();
 
         let cfg = ConfigBuilder::builder()
+            .set_default("benchmark_mode", "false")?
+            .set_default("benchmark_bot_delay_ms", "100")?
+            .set_default("benchmark_skip_credit_check", "true")?
             .add_source(Environment::default())
             .build()?;
 
@@ -189,6 +201,18 @@ impl Config {
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()
                 .unwrap_or(30),
+            benchmark_mode: env::var("BENCHMARK_MODE")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            benchmark_bot_delay_ms: env::var("BENCHMARK_BOT_DELAY_MS")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .unwrap_or(100),
+            benchmark_skip_credit_check: env::var("BENCHMARK_SKIP_CREDIT_CHECK")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
         }
     }
 }

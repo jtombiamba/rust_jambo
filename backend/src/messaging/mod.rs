@@ -216,6 +216,9 @@ pub struct RabbitMQClient {
     metrics: std::sync::Arc<std::sync::Mutex<RabbitMQMetrics>>,
     circuit_breaker: std::sync::Arc<CircuitBreaker>,
     publish_config: RabbitMQPublishConfig,
+    /// Cached channel reused across publishes to avoid create_channel() per call.
+    /// Uses tokio::sync::Mutex since channel operations are async.
+    cached_channel: std::sync::Arc<tokio::sync::Mutex<Option<lapin::Channel>>>,
 }
 
 impl RabbitMQClient {
@@ -234,6 +237,7 @@ impl RabbitMQClient {
             metrics: std::sync::Arc::new(std::sync::Mutex::new(RabbitMQMetrics::default())),
             circuit_breaker: std::sync::Arc::new(cb),
             publish_config,
+            cached_channel: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
@@ -318,34 +322,47 @@ impl RabbitMQClient {
         Err(last_error.unwrap())
     }
 
-    /// Internal publish without retry
+    /// Internal publish without retry.
+    /// Uses a cached channel to avoid creating a new channel per publish,
+    /// which reduces network round-trips and worker blocking.
     async fn publish_internal(&self, queue: &str, message: &[u8]) -> Result<(), lapin::Error> {
-        let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = queue.into();
         let exchange: lapin::types::ShortString = "".into();
 
-        let queue_args = if queue == AI_TASKS_QUEUE {
-            let mut args = FieldTable::default();
-            args.insert(
-                "x-dead-letter-exchange".into(),
-                lapin::types::AMQPValue::LongString(AI_TASKS_DLX.into()),
-            );
-            args.insert(
-                "x-dead-letter-routing-key".into(),
-                lapin::types::AMQPValue::LongString(AI_TASKS_DLQ.into()),
-            );
-            args
-        } else {
-            FieldTable::default()
+        // Get or create the cached channel
+        let channel = {
+            let mut guard = self.cached_channel.lock().await;
+            match guard.as_ref() {
+                Some(ch) if ch.status().connected() => ch.clone(),
+                _ => {
+                    let ch = self.connection.create_channel().await?;
+                    // Declare the queue once on channel creation so it exists
+                    let queue_args = if queue == AI_TASKS_QUEUE {
+                        let mut args = FieldTable::default();
+                        args.insert(
+                            "x-dead-letter-exchange".into(),
+                            lapin::types::AMQPValue::LongString(AI_TASKS_DLX.into()),
+                        );
+                        args.insert(
+                            "x-dead-letter-routing-key".into(),
+                            lapin::types::AMQPValue::LongString(AI_TASKS_DLQ.into()),
+                        );
+                        args
+                    } else {
+                        FieldTable::default()
+                    };
+                    let _ = ch
+                        .queue_declare(
+                            queue_name.clone(),
+                            QueueDeclareOptions::default(),
+                            queue_args,
+                        )
+                        .await?;
+                    *guard = Some(ch.clone());
+                    ch
+                }
+            }
         };
-
-        let _ = channel
-            .queue_declare(
-                queue_name.clone(),
-                QueueDeclareOptions::default(),
-                queue_args,
-            )
-            .await?;
 
         // Publish message
         let start_time = std::time::Instant::now();

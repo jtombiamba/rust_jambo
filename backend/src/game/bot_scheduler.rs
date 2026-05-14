@@ -1,4 +1,5 @@
 use sea_orm::DatabaseConnection;
+use std::time::Instant;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -8,6 +9,7 @@ use crate::game::constants::BOT_THINKING_DELAY_MS;
 use crate::game::service::GameService;
 use crate::game::strategy::compute_strategy;
 use crate::messaging::{AITask, RabbitMQClient, RedisClient};
+use crate::observability::metrics::{BOT_ERRORS_TOTAL, BOT_MOVE_DURATION_SECONDS};
 use crate::observability::CorrelationId;
 
 /// Handles scheduling and execution of bot moves, either via RabbitMQ (async)
@@ -196,15 +198,26 @@ impl BotScheduler {
             let chosen = compute_strategy(&bot_cards, &round_cards, game.current_winning_card);
             info!("Bot {} selected card index {}", current_player, chosen);
 
-            // Play the card
-            if let Err(e) = service
+            let move_start = Instant::now();
+            match service
                 .update_card_play(game_id, current_player, chosen, None)
                 .await
             {
-                error!("Bot {} failed to play card: {}", current_player, e);
-                break;
+                Ok(_) => {
+                    info!("Bot {} played card {}", current_player, chosen);
+                    BOT_MOVE_DURATION_SECONDS
+                        .with_label_values(&["sync_chain"])
+                        .observe(move_start.elapsed().as_secs_f64());
+                }
+                Err(e) => {
+                    error!("Bot {} failed to play card: {}", current_player, e);
+                    BOT_ERRORS_TOTAL.with_label_values(&["execution"]).inc();
+                    BOT_MOVE_DURATION_SECONDS
+                        .with_label_values(&["sync_chain"])
+                        .observe(move_start.elapsed().as_secs_f64());
+                    break;
+                }
             }
-            info!("Bot {} played card {}", current_player, chosen);
 
             // Determine next player after this bot's move
             let players = match player_repo.list_by_game(game_id).await {

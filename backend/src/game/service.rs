@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use thiserror::Error;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -24,8 +25,50 @@ use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
 use crate::game::turn_order::next_player;
 use crate::messaging::ai_task::{AITask, PlayerInfo};
 use crate::messaging::{events::GameEvent, RedisClient};
+use crate::observability::metrics::{
+    CARD_PLAY_DURATION_SECONDS, GAME_CREATION_DURATION_SECONDS, ROUND_EVAL_DURATION_SECONDS,
+};
 
 const GAME_STATE_CACHE_TTL_SECS: u64 = 5 * 60;
+
+struct CardPlayTimer(Instant);
+impl Drop for CardPlayTimer {
+    fn drop(&mut self) {
+        CARD_PLAY_DURATION_SECONDS
+            .with_label_values(&["update_card_play"])
+            .observe(self.0.elapsed().as_secs_f64());
+    }
+}
+
+struct RoundEvalTimer(Instant);
+impl Drop for RoundEvalTimer {
+    fn drop(&mut self) {
+        ROUND_EVAL_DURATION_SECONDS
+            .with_label_values(&[])
+            .observe(self.0.elapsed().as_secs_f64());
+    }
+}
+
+struct GameCreationTimer {
+    start: Instant,
+    label: &'static str,
+}
+impl GameCreationTimer {
+    fn new(label: &'static str) -> Self {
+        Self {
+            start: Instant::now(),
+            label,
+        }
+    }
+}
+impl Drop for GameCreationTimer {
+    fn drop(&mut self) {
+        let duration = self.start.elapsed().as_secs_f64();
+        GAME_CREATION_DURATION_SECONDS
+            .with_label_values(&[self.label])
+            .observe(duration);
+    }
+}
 
 /// Serializable snapshot of an active game for caching in Redis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -867,6 +910,7 @@ impl GameService {
     }
 
     pub async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameServiceError> {
+        let _timer = GameCreationTimer::new("quick");
         use rand::{seq::SliceRandom, thread_rng};
 
         let cards: Vec<i32> = {
@@ -1065,6 +1109,7 @@ impl GameService {
         card_index: i32,
         correlation_id: Option<Uuid>,
     ) -> Result<CardPlayResult, GameServiceError> {
+        let _timer = CardPlayTimer(Instant::now());
         let span = tracing::info_span!(
             "card_play",
             correlation_id = %correlation_id.map(|id| id.to_string()).unwrap_or_default(),
@@ -1347,6 +1392,7 @@ impl GameService {
         game_id: Uuid,
         round: i32,
     ) -> Result<RoundEvaluationResult, GameServiceError> {
+        let _timer = RoundEvalTimer(Instant::now());
         let span = tracing::info_span!(
             "round_eval",
             game_id = %game_id,

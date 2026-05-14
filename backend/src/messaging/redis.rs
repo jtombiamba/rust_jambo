@@ -1,5 +1,7 @@
 use crate::messaging::events::GameEvent;
+use crate::observability::metrics::REDIS_PUBLISH_DURATION_SECONDS;
 use redis::{aio::ConnectionManager, AsyncCommands, Client, RedisResult};
+use std::time::Instant;
 use tracing::info;
 
 /// Redis client wrapper that manages a connection pool.
@@ -60,7 +62,13 @@ impl RedisClient {
 
     /// Publish a message to a Redis channel.
     pub async fn publish(&mut self, channel: &str, message: &str) -> RedisResult<()> {
-        self.connection_manager.publish(channel, message).await
+        let start = Instant::now();
+        let result = self.connection_manager.publish(channel, message).await;
+        let duration = start.elapsed().as_secs_f64();
+        REDIS_PUBLISH_DURATION_SECONDS
+            .with_label_values(&[])
+            .observe(duration);
+        result
     }
 
     /// Publish a game event to its appropriate Redis channel.

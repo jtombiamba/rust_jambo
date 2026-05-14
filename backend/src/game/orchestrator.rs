@@ -121,6 +121,8 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
         correlation_id: Option<CorrelationId>,
     ) -> Result<QuickGameOutcome, GameError>;
 
+    async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError>;
+
     async fn create_quick_game_for_user(
         &self,
         user_id: Uuid,
@@ -673,6 +675,116 @@ impl GameOrchestrator {
             deck_slots: None,
         })
     }
+
+    pub async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
+        let span = tracing::info_span!("create_bot_only_game");
+        let _guard = span.enter();
+
+        let game_repo = GameRepository::new(self.db.clone());
+        let player_repo = PlayerRepository::new(self.db.clone());
+        let card_repo = GameCardRepository::new(self.db.clone());
+
+        let game = game_repo.create(10, false).await.map_err(|e| {
+            tracing::error!("Failed to create game: {}", e);
+            GameError::Database(e)
+        })?;
+
+        let bot_names = ["Bot South", "Bot East", "Bot North", "Bot West"];
+        let mut bot_players = Vec::new();
+        for (i, name) in bot_names.iter().enumerate() {
+            let position = i as i32;
+            match player_repo
+                .create(game.id, PlayerType::Bot, name, position)
+                .await
+            {
+                Ok(player) => bot_players.push(player),
+                Err(e) => {
+                    tracing::error!("Failed to create bot player {}: {}", name, e);
+                    return Err(GameError::Database(e));
+                }
+            }
+        }
+
+        let all_players: Vec<&Player> = bot_players.iter().collect();
+        let player_ids: Vec<Uuid> = all_players.iter().map(|p| p.id).collect();
+
+        let initial_rank = rand::thread_rng().gen_range(0..4) as i32;
+        game_repo
+            .update_rank(game.id, Some(initial_rank))
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to set initial rank: {}", e);
+                GameError::Database(e)
+            })?;
+
+        game_repo
+            .update_status(game.id, GameStatus::Active)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to activate game: {}", e);
+                GameError::Database(e)
+            })?;
+
+        let card_assignments = distribute_cards(&player_ids);
+        for &(player_id, card_index) in &card_assignments {
+            card_repo
+                .create(game.id, Some(player_id), card_index, None)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to create game card: {}", e);
+                    GameError::Database(e)
+                })?;
+        }
+
+        for bot in &bot_players {
+            let bot_cards: Vec<i32> = card_assignments
+                .iter()
+                .filter(|(pid, _)| *pid == bot.id)
+                .map(|(_, card)| *card)
+                .collect();
+            tracing::info!(
+                "Bot '{}' (player_id: {}) received cards: {:?}",
+                bot.name,
+                bot.id,
+                bot_cards
+            );
+        }
+
+        let players_json: Vec<PlayerInfoDto> = all_players
+            .iter()
+            .map(|player| {
+                let player_type = match player.player_type {
+                    PlayerType::Human => "human",
+                    PlayerType::Bot => "bot",
+                };
+                PlayerInfoDto {
+                    id: player.id,
+                    player_type: player_type.to_string(),
+                    name: player.name.clone(),
+                    position: player.position,
+                    display_position: player.position,
+                    cards: Vec::new(),
+                    cards_count: 5,
+                    is_current_user: false,
+                }
+            })
+            .collect();
+
+        self.bot_scheduler
+            .schedule_if_next_bot(game.id, player_ids[initial_rank as usize], None)
+            .await;
+
+        Ok(QuickGameOutcome {
+            game_id: game.id,
+            players: players_json,
+            status: "active".to_string(),
+            current_turn: initial_rank,
+            bet: 10,
+            max_players: 4,
+            invite_expires_at: None,
+            deck_slots: None,
+        })
+    }
 }
 
 #[async_trait]
@@ -693,6 +805,10 @@ impl GameOrchestratorTrait for GameOrchestrator {
         correlation_id: Option<CorrelationId>,
     ) -> Result<QuickGameOutcome, GameError> {
         self.create_quick_game(correlation_id).await
+    }
+
+    async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
+        self.create_bot_only_game().await
     }
 
     async fn create_quick_game_for_user(
@@ -830,6 +946,14 @@ pub mod mock {
                 .unwrap()
                 .take()
                 .expect("mock orchestrator create_quick_game called more than once")
+        }
+
+        async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
+            self.create_quick_game_result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("mock orchestrator create_bot_only_game called more than once")
         }
 
         async fn create_quick_game_for_user(

@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use prometheus::{
-    register_counter, register_counter_vec, register_gauge, register_histogram_vec, Counter,
-    CounterVec, Gauge, HistogramVec,
+    register_counter, register_counter_vec, register_gauge, register_gauge_vec,
+    register_histogram_vec, Counter, CounterVec, Gauge, GaugeVec, HistogramVec,
 };
 
 pub static RABBITMQ_PUBLISH_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
@@ -194,6 +194,111 @@ pub static AI_TASKS_IN_FLIGHT: Lazy<Gauge> = Lazy::new(|| {
     .unwrap()
 });
 
+pub static GAME_CREATION_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "game_creation_duration_seconds",
+        "Duration of game creation in seconds",
+        &["game_mode"],
+        vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+    )
+    .unwrap()
+});
+
+pub static GAME_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "game_duration_seconds",
+        "Total game duration in seconds",
+        &["game_mode"],
+        vec![1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0]
+    )
+    .unwrap()
+});
+
+pub static CARD_PLAY_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "card_play_duration_seconds",
+        "Duration of card play operations in seconds",
+        &["operation"],
+        vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+    )
+    .unwrap()
+});
+
+pub static ROUND_EVAL_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "round_eval_duration_seconds",
+        "Duration of round evaluation in seconds",
+        &[],
+        vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+    )
+    .unwrap()
+});
+
+pub static DB_QUERY_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "db_query_duration_seconds",
+        "Duration of database queries in seconds",
+        &["query_type"],
+        vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+    )
+    .unwrap()
+});
+
+pub static DB_TRANSACTION_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "db_transaction_duration_seconds",
+        "Duration of database transactions in seconds",
+        &["operation"],
+        vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+    )
+    .unwrap()
+});
+
+pub static REDIS_PUBLISH_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "redis_publish_duration_seconds",
+        "Duration of Redis publish operations in seconds",
+        &[],
+        vec![0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1]
+    )
+    .unwrap()
+});
+
+pub static REDIS_CACHE_HIT_RATIO: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "redis_cache_hit_ratio",
+        "Ratio of Redis cache hits to total lookups"
+    )
+    .unwrap()
+});
+
+pub static BOT_MOVE_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "bot_move_duration_seconds",
+        "Duration of bot move execution in seconds",
+        &["execution_method"],
+        vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5]
+    )
+    .unwrap()
+});
+
+pub static BOT_ERRORS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "bot_errors_total",
+        "Total number of bot execution errors",
+        &["error_type"]
+    )
+    .unwrap()
+});
+
+pub static MEMORY_USAGE_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!("memory_usage_bytes", "Memory usage in bytes", &["process"]).unwrap()
+});
+
+pub static CPU_USAGE_PERCENT: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!("cpu_usage_percent", "CPU usage percentage", &["process"]).unwrap()
+});
+
 pub fn init_all() {
     RABBITMQ_PUBLISH_TOTAL.with_label_values(&["ai_tasks"]);
     RABBITMQ_PUBLISH_ERRORS_TOTAL.with_label_values(&["ai_tasks"]);
@@ -220,4 +325,22 @@ pub fn init_all() {
     AI_TASK_DURATION_SECONDS.with_label_values(&["ai_task"]);
     AI_TASK_DURATION_SECONDS.with_label_values(&["fallback_db"]);
     AI_TASKS_IN_FLIGHT.set(0.0);
+    GAME_CREATION_DURATION_SECONDS.with_label_values(&["quick"]);
+    GAME_CREATION_DURATION_SECONDS.with_label_values(&["bot_only"]);
+    GAME_DURATION_SECONDS.with_label_values(&["quick"]);
+    GAME_DURATION_SECONDS.with_label_values(&["bot_only"]);
+    CARD_PLAY_DURATION_SECONDS.with_label_values(&["update_card_play"]);
+    ROUND_EVAL_DURATION_SECONDS.with_label_values(&[]);
+    DB_QUERY_DURATION_SECONDS.with_label_values(&["generic"]);
+    DB_TRANSACTION_DURATION_SECONDS.with_label_values(&["generic"]);
+    REDIS_PUBLISH_DURATION_SECONDS.with_label_values(&[]);
+    REDIS_CACHE_HIT_RATIO.set(0.0);
+    BOT_MOVE_DURATION_SECONDS.with_label_values(&["sync_chain"]);
+    BOT_MOVE_DURATION_SECONDS.with_label_values(&["ai_task"]);
+    BOT_ERRORS_TOTAL.with_label_values(&["strategy"]);
+    BOT_ERRORS_TOTAL.with_label_values(&["execution"]);
+    MEMORY_USAGE_BYTES.with_label_values(&["backend"]);
+    MEMORY_USAGE_BYTES.with_label_values(&["ai_worker"]);
+    CPU_USAGE_PERCENT.with_label_values(&["backend"]);
+    CPU_USAGE_PERCENT.with_label_values(&["ai_worker"]);
 }
