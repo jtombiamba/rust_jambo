@@ -1227,15 +1227,15 @@ impl GameService {
         }
 
         // 12. If round was evaluated, publish events
-        if let Some(result) = round_result {
-            self.publish_round_completed(game_id, &result, &players, correlation_id)
+        if let Some(ref result) = round_result {
+            self.publish_round_completed(game_id, result, &players, correlation_id)
                 .await;
 
             if result.game_ended {
                 crate::observability::metrics::GAMES_FINISHED_TOTAL
                     .with_label_values(&[&result.final_status.to_string()])
                     .inc();
-                self.publish_game_finished(game_id, &result, correlation_id)
+                self.publish_game_finished(game_id, result, correlation_id)
                     .await;
                 self.invalidate_game_state_cache(game_id).await;
 

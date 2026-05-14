@@ -26,17 +26,18 @@ export function useGameWebSocket(gameId: string | null) {
     gameId: gameId || '',
     onMessage: (event: GameEvent) => {
       switch (event.type) {
-        case 'card_played':
+        case 'card_played': {
           applyCardPlayed(event.player_id, event.card_index, event.next_turn);
           clearRoundWinner();
           break;
+        }
         case 'round_completed': {
           if (deckClearTimerRef.current) {
             clearTimeout(deckClearTimerRef.current);
           }
           deckClearTimerRef.current = setTimeout(() => {
-            clearDeckSlots();
-          }, 1000);
+          clearDeckSlots();
+          }, 800);
 
           const winType = (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal';
           const winnerPlayer = players.find((p) => p.id === event.winner_id);

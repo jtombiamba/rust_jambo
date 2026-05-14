@@ -176,6 +176,24 @@ pub fn update_db_pool_metrics(db: &sea_orm::DatabaseConnection) {
     DB_POOL_ACTIVE.set(total.saturating_sub(idle as u32) as f64);
 }
 
+pub static AI_TASK_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "ai_task_duration_seconds",
+        "AI task processing duration in seconds",
+        &["execution_method"],
+        vec![0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+    )
+    .unwrap()
+});
+
+pub static AI_TASKS_IN_FLIGHT: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "ai_tasks_in_flight",
+        "Current number of AI tasks being processed concurrently"
+    )
+    .unwrap()
+});
+
 pub fn init_all() {
     RABBITMQ_PUBLISH_TOTAL.with_label_values(&["ai_tasks"]);
     RABBITMQ_PUBLISH_ERRORS_TOTAL.with_label_values(&["ai_tasks"]);
@@ -199,4 +217,7 @@ pub fn init_all() {
     DB_POOL_SIZE.set(0.0);
     DB_POOL_IDLE.set(0.0);
     DB_POOL_ACTIVE.set(0.0);
+    AI_TASK_DURATION_SECONDS.with_label_values(&["ai_task"]);
+    AI_TASK_DURATION_SECONDS.with_label_values(&["fallback_db"]);
+    AI_TASKS_IN_FLIGHT.set(0.0);
 }

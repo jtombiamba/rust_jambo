@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use lapin::{
@@ -5,6 +10,7 @@ use lapin::{
     Consumer,
 };
 use sea_orm::DatabaseConnection;
+use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -13,7 +19,7 @@ use jambo_backend::database;
 use jambo_backend::database::models::PlayerType;
 use jambo_backend::game::bot::execute_bot_move_from_task;
 use jambo_backend::game::bot_scheduler::BotScheduler;
-use jambo_backend::game::constants::BOT_THINKING_DELAY_SECS;
+use jambo_backend::game::constants::BOT_THINKING_DELAY_MS;
 use jambo_backend::game::service::GameService;
 use jambo_backend::messaging::{self, AITask, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
 use jambo_backend::observability::metrics;
@@ -36,10 +42,15 @@ async fn main() -> Result<()> {
         std::env::var("TOKIO_WORKER_THREADS").unwrap_or_else(|_| "default (num_cpus)".to_string())
     );
 
-    let db_connection: DatabaseConnection = database::create_connection_with_pool_size(&config, 5)
-        .await
-        .context("Failed to create database connection")?;
-    info!("Connected to database");
+    let pool_size = std::env::var("AI_WORKER_DB_POOL_SIZE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    let db_connection: DatabaseConnection =
+        database::create_connection_with_pool_size(&config, pool_size)
+            .await
+            .context("Failed to create database connection")?;
+    info!("Connected to database (pool size: {})", pool_size);
 
     let redis_client = match config.redis_url {
         Some(url) => match RedisClient::new(&url).await {
@@ -76,8 +87,7 @@ async fn main() -> Result<()> {
     info!("Connected to RabbitMQ");
 
     let db_for_pool_metrics = db_connection.clone();
-    let pool_metrics_interval =
-        std::time::Duration::from_secs(config.db_pool_metrics_interval_secs);
+    let pool_metrics_interval = Duration::from_secs(config.db_pool_metrics_interval_secs);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(pool_metrics_interval);
         loop {
@@ -86,105 +96,207 @@ async fn main() -> Result<()> {
         }
     });
 
+    let max_concurrent = std::env::var("AI_WORKER_MAX_CONCURRENT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
+
+    // Per-game mutex to ensure only one bot move per game is processed at a time.
+    // This prevents race conditions when multiple bots in the same game have their
+    // AI tasks processed concurrently.
+    let game_locks: Arc<Mutex<HashMap<Uuid, Arc<Semaphore>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     let mut consumer: Consumer = rabbitmq_client
         .consume_ai_tasks()
         .await
         .context("Failed to start consuming AI tasks")?;
-    info!("Waiting for AI tasks...");
+    info!(
+        "Waiting for AI tasks (concurrent: {}, delay: {}ms)...",
+        max_concurrent, *BOT_THINKING_DELAY_MS
+    );
 
-    let mut tasks_processed = 0u64;
-    let mut tasks_failed = 0u64;
-    let mut parse_errors = 0u64;
-    let mut delivery_errors = 0u64;
+    let tasks_processed = Arc::new(AtomicU64::new(0));
+    let tasks_failed = Arc::new(AtomicU64::new(0));
+    let parse_errors = Arc::new(AtomicU64::new(0));
+    let delivery_errors = Arc::new(AtomicU64::new(0));
     let start_time = std::time::Instant::now();
 
-    while let Some(delivery_result) = consumer.next().await {
-        let delivery = match delivery_result {
-            Ok(d) => d,
-            Err(e) => {
-                error!("Error receiving delivery: {}", e);
-                delivery_errors += 1;
-                continue;
-            }
-        };
-        let task = match AITask::from_json_bytes(&delivery.data) {
-            Ok(task) => task,
-            Err(e) => {
-                error!("Failed to parse AI task: {}", e);
-                parse_errors += 1;
-                let _ = delivery
-                    .nack(BasicNackOptions {
-                        multiple: false,
-                        requeue: false,
-                    })
-                    .await;
-                continue;
-            }
-        };
-        let game_id = task.game_id;
-        let player_id = task.player_id;
-        info!("Processing AI task: game={}, player={}", game_id, player_id);
+    // Graceful shutdown
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        info!("Received shutdown signal, draining...");
+        let _ = shutdown_tx.send(()).await;
+    });
 
-        let task_start_time = std::time::Instant::now();
-        let process_result = process_bot_move(
-            task,
-            db_connection.clone(),
-            redis_client.clone(),
-            Some(rabbitmq_client.clone()),
-        )
-        .await;
+    // Periodic metrics reporter
+    {
+        let tp = tasks_processed.clone();
+        let tf = tasks_failed.clone();
+        let pe = parse_errors.clone();
+        let de = delivery_errors.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let proc = tp.load(Ordering::Relaxed);
+                let fail = tf.load(Ordering::Relaxed);
+                let p_err = pe.load(Ordering::Relaxed);
+                let d_err = de.load(Ordering::Relaxed);
+                let total = proc + fail + p_err;
+                info!(
+                    tasks_processed = proc,
+                    tasks_failed = fail,
+                    parse_errors = p_err,
+                    delivery_errors = d_err,
+                    total_tasks = total,
+                    success_rate = if total > 0 {
+                        proc as f64 / total as f64
+                    } else {
+                        0.0
+                    },
+                    uptime_seconds = start_time.elapsed().as_secs(),
+                    "Periodic metrics"
+                );
+            }
+        });
+    }
 
-        if let Err(e) = process_result {
-            error!("Failed to process bot move: {}", e);
-            tasks_failed += 1;
-            let _ = delivery
-                .nack(BasicNackOptions {
-                    multiple: false,
-                    requeue: false,
-                })
-                .await;
-        } else {
-            tasks_processed += 1;
-            let task_duration = task_start_time.elapsed();
-            info!(
-                "Successfully processed bot move for game {}, player {} in {:?}",
-                game_id, player_id, task_duration
-            );
-            if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
-                error!("Failed to acknowledge message: {}", e);
+    // Queue depth monitoring
+    let rmq_for_depth = rabbitmq_client.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            match rmq_for_depth.get_queue_length("ai_tasks").await {
+                Ok(depth) => {
+                    metrics::RABBITMQ_QUEUE_LENGTH.set(depth as f64);
+                    if depth > 1000 {
+                        warn!("AI tasks queue depth critical: {}", depth);
+                    } else if depth > 500 {
+                        warn!("AI tasks queue depth high: {}", depth);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to get queue depth: {}", e);
+                }
             }
         }
-        // TODO: should have a metric here for tasks completed
-        let total_tasks = tasks_processed + tasks_failed + parse_errors;
-        if total_tasks.is_multiple_of(10) && total_tasks > 0 {
-            let uptime = start_time.elapsed();
-            info!(
-                tasks_processed = tasks_processed,
-                tasks_failed = tasks_failed,
-                parse_errors = parse_errors,
-                delivery_errors = delivery_errors,
-                total_tasks = total_tasks,
-                success_rate = if total_tasks > 0 {
-                    tasks_processed as f64 / total_tasks as f64
-                } else {
-                    0.0
-                },
-                uptime_seconds = uptime.as_secs(),
-                "Periodic metrics"
-            );
+    });
+
+    // Main processing loop with semaphore-based concurrency
+    loop {
+        tokio::select! {
+            delivery_result = consumer.next() => {
+                let delivery = match delivery_result {
+                    Some(Ok(d)) => d,
+                    Some(Err(e)) => {
+                        error!("Error receiving delivery: {}", e);
+                        delivery_errors.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    None => break,
+                };
+                let task = match AITask::from_json_bytes(&delivery.data) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("Failed to parse AI task: {}", e);
+                        parse_errors.fetch_add(1, Ordering::Relaxed);
+                        let _ = delivery
+                            .nack(BasicNackOptions {
+                                multiple: false,
+                                requeue: false,
+                            })
+                            .await;
+                        continue;
+                    }
+                };
+                let game_id = task.game_id;
+                let player_id = task.player_id;
+                info!("Processing AI task: game={}, player={}", game_id, player_id);
+
+                let permit = semaphore.clone().acquire_owned().await;
+                let db = db_connection.clone();
+                let redis = redis_client.clone();
+                let rmq = rabbitmq_client.clone();
+                let tp = tasks_processed.clone();
+                let tf = tasks_failed.clone();
+                let gl = game_locks.clone();
+
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let task_start_time = std::time::Instant::now();
+                    metrics::AI_TASKS_IN_FLIGHT.inc();
+
+                    // Acquire per-game lock to serialize bot moves within the same game
+                    let game_permit = {
+                        let mut locks = gl.lock().await;
+                        let game_sem = locks
+                            .entry(game_id)
+                            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+                            .clone();
+                        game_sem.acquire_owned().await
+                    };
+                    let _game_permit = game_permit;
+
+                    let result = process_bot_move(task, db, redis, Some(rmq)).await;
+
+                    metrics::AI_TASKS_IN_FLIGHT.dec();
+                    let duration = task_start_time.elapsed();
+                    metrics::AI_TASK_DURATION_SECONDS
+                        .with_label_values(&["ai_task"])
+                        .observe(duration.as_secs_f64());
+
+                    match result {
+                        Ok(()) => {
+                            tp.fetch_add(1, Ordering::Relaxed);
+                            info!(
+                                "Successfully processed bot move for game {}, player {} in {:?}",
+                                game_id, player_id, duration
+                            );
+                            let _ = delivery.ack(BasicAckOptions::default()).await;
+                        }
+                        Err(e) => {
+                            tf.fetch_add(1, Ordering::Relaxed);
+                            error!("Failed to process bot move: {}", e);
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: false,
+                                })
+                                .await;
+                        }
+                    }
+                    // game_permit is dropped here, releasing the per-game lock
+                });
+            }
+            _ = shutdown_rx.recv() => {
+                info!("Shutdown signal received, stopping message consumption...");
+                break;
+            }
         }
     }
 
+    // Drain in-flight tasks by acquiring all semaphore permits
+    info!("Draining in-flight tasks...");
+    let _drain_permits = semaphore.acquire_many(max_concurrent as u32).await;
+
     let uptime = start_time.elapsed();
-    let total_tasks = tasks_processed + tasks_failed + parse_errors;
+    let proc = tasks_processed.load(Ordering::Relaxed);
+    let fail = tasks_failed.load(Ordering::Relaxed);
+    let p_err = parse_errors.load(Ordering::Relaxed);
+    let d_err = delivery_errors.load(Ordering::Relaxed);
+    let total = proc + fail + p_err;
     info!(
-        tasks_processed = tasks_processed,
-        tasks_failed = tasks_failed,
-        parse_errors = parse_errors,
-        delivery_errors = delivery_errors,
-        total_tasks = total_tasks,
-        success_rate = if total_tasks > 0 {
-            tasks_processed as f64 / total_tasks as f64
+        tasks_processed = proc,
+        tasks_failed = fail,
+        parse_errors = p_err,
+        delivery_errors = d_err,
+        total_tasks = total,
+        success_rate = if total > 0 {
+            proc as f64 / total as f64
         } else {
             0.0
         },
@@ -228,10 +340,10 @@ async fn process_bot_move(
     );
 
     info!(
-        "Bot {} thinking for {} second(s) before playing in game {}",
-        player_id, BOT_THINKING_DELAY_SECS, game_id
+        "Bot {} thinking for {} ms before playing in game {}",
+        player_id, *BOT_THINKING_DELAY_MS, game_id
     );
-    tokio::time::sleep(std::time::Duration::from_secs(BOT_THINKING_DELAY_SECS)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(*BOT_THINKING_DELAY_MS)).await;
 
     let start_time = std::time::Instant::now();
 
@@ -300,8 +412,8 @@ async fn process_bot_move(
 
                 if next_is_bot {
                     info!(
-                        "Next player {} is also a bot, scheduling next AI task",
-                        result.next_player_id
+                        "Next player {} is also a bot, scheduling next AI task for game {}",
+                        result.next_player_id, game_id
                     );
                     if let Some(ref client) = rabbitmq_client {
                         let next_task = match service
@@ -443,5 +555,64 @@ async fn process_bot_move_with_db(
             error!("Database-based bot execution failed: {}", e);
             Err(anyhow::anyhow!("Bot execution failed: {}", e))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jambo_backend::game::constants::BOT_THINKING_DELAY_MS;
+
+    #[test]
+    fn test_bot_thinking_delay_default() {
+        assert_eq!(*BOT_THINKING_DELAY_MS, 800);
+    }
+
+    #[test]
+    fn test_default_db_pool_size() {
+        let pool_size: u64 = std::env::var("AI_WORKER_DB_POOL_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50);
+        assert_eq!(pool_size, 50);
+    }
+
+    #[test]
+    fn test_default_max_concurrent() {
+        let max_concurrent: usize = std::env::var("AI_WORKER_MAX_CONCURRENT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50);
+        assert_eq!(max_concurrent, 50);
+    }
+
+    #[test]
+    fn test_semaphore_creation() {
+        let max_concurrent = 10;
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        assert_eq!(semaphore.available_permits(), max_concurrent);
+    }
+
+    #[tokio::test]
+    async fn test_semaphore_acquire_release() {
+        let semaphore = Arc::new(Semaphore::new(2));
+        let permit1 = semaphore.clone().acquire_owned().await;
+        let permit2 = semaphore.clone().acquire_owned().await;
+        assert_eq!(semaphore.available_permits(), 0);
+        drop(permit1);
+        assert_eq!(semaphore.available_permits(), 1);
+        drop(permit2);
+        assert_eq!(semaphore.available_permits(), 2);
+    }
+
+    #[test]
+    fn test_atomic_counter_operations() {
+        let counter = Arc::new(AtomicU64::new(0));
+        counter.fetch_add(5, Ordering::Relaxed);
+        assert_eq!(counter.load(Ordering::Relaxed), 5);
+        counter.fetch_add(3, Ordering::Relaxed);
+        assert_eq!(counter.load(Ordering::Relaxed), 8);
+        counter.store(0, Ordering::Relaxed);
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }

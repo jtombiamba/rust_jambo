@@ -1,4 +1,5 @@
 use crate::observability::metrics;
+use lapin::options::BasicQosOptions;
 use lapin::{
     options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties, Consumer,
 };
@@ -412,6 +413,8 @@ impl RabbitMQClient {
             )
             .await?;
 
+        channel.basic_qos(50, BasicQosOptions::default()).await?;
+
         // Create consumer
         let consumer = channel
             .basic_consume(
@@ -458,12 +461,25 @@ impl RabbitMQClient {
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = queue.into();
 
+        // Must pass matching arguments for queues that have special configuration
+        // (e.g., x-dead-letter-exchange for ai_tasks) to avoid precondition_failed errors
+        let queue_args = if queue == AI_TASKS_QUEUE {
+            let mut args = FieldTable::default();
+            args.insert(
+                "x-dead-letter-exchange".into(),
+                lapin::types::AMQPValue::LongString(AI_TASKS_DLX.into()),
+            );
+            args.insert(
+                "x-dead-letter-routing-key".into(),
+                lapin::types::AMQPValue::LongString(AI_TASKS_DLQ.into()),
+            );
+            args
+        } else {
+            FieldTable::default()
+        };
+
         let queue_info = channel
-            .queue_declare(
-                queue_name,
-                QueueDeclareOptions::default(),
-                FieldTable::default(),
-            )
+            .queue_declare(queue_name, QueueDeclareOptions::default(), queue_args)
             .await?;
 
         let count = queue_info.message_count();
