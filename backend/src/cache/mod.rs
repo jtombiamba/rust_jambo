@@ -4,6 +4,8 @@ use uuid::Uuid;
 
 use crate::messaging::RedisClient;
 
+pub mod leaderboard;
+
 const CACHE_TTL_SECS: u64 = 15 * 60;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -63,6 +65,25 @@ impl UserCache {
                 None
             })?;
         serde_json::from_str(&data).ok()
+    }
+
+    pub async fn get_by_uuids(&self, uuids: &[Uuid]) -> Vec<Option<CachedUser>> {
+        let mut redis = match self.redis_client.clone() {
+            Some(r) => r,
+            None => return vec![None; uuids.len()],
+        };
+        let keys: Vec<String> = uuids.iter().map(|id| format!("user:uuid:{id}")).collect();
+        let values = match redis.mget(&keys).await {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Redis mget error: {}", e);
+                return vec![None; uuids.len()];
+            }
+        };
+        values
+            .into_iter()
+            .map(|opt| opt.and_then(|data| serde_json::from_str(&data).ok()))
+            .collect()
     }
 
     pub async fn put(&self, uuid: Uuid, pseudo: String, email: String) {

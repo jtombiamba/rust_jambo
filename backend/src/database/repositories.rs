@@ -92,6 +92,7 @@ impl UserRepository {
                         game_played: Set(0),
                         wins: Set(0),
                         kora_wins: Set(0),
+                        winning_streak: Set(0),
                         latitude: ActiveValue::NotSet,
                         longitude: ActiveValue::NotSet,
                         country_code: ActiveValue::NotSet,
@@ -180,6 +181,10 @@ impl PlayerProfileRepository {
     #[allow(dead_code)]
     pub fn new(connection: DatabaseConnection) -> Self {
         Self { connection }
+    }
+
+    pub async fn list_all(&self) -> Result<Vec<PlayerProfile>, DbErr> {
+        player_profile::Entity::find().all(&self.connection).await
     }
 
     pub async fn find_by_user_id(&self, user_id: Uuid) -> Result<Option<PlayerProfile>, DbErr> {

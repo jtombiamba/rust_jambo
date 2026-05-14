@@ -3,6 +3,7 @@ pub mod auth;
 pub mod dashboard;
 pub mod dto;
 pub mod game;
+pub mod leaderboard;
 pub mod middleware;
 pub mod quickie;
 pub mod services;

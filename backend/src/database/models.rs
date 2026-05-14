@@ -241,6 +241,7 @@ pub mod player_profile {
         pub game_played: i32,
         pub wins: i32,
         pub kora_wins: i32,
+        pub winning_streak: i32,
         pub latitude: Option<f64>,
         pub longitude: Option<f64>,
         pub country_code: Option<String>,

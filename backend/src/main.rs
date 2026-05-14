@@ -215,6 +215,42 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
+    let db_for_leaderboard = db_connection.clone();
+    let redis_for_leaderboard = redis_client.clone();
+    let user_cache_for_leaderboard = user_cache.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
+        loop {
+            interval.tick().await;
+            if let Some(redis) = redis_for_leaderboard.clone() {
+                let profile_repo = database::repositories::PlayerProfileRepository::new(
+                    db_for_leaderboard.clone(),
+                );
+                match profile_repo.list_all().await {
+                    Ok(profiles) => {
+                        // Refresh the Redis sorted sets with current scores
+                        cache::leaderboard::refresh_leaderboard(redis, &profiles).await;
+
+                        // Populate UserCache with pseudos for all leaderboard users
+                        // so the leaderboard endpoint doesn't show "Unknown"
+                        let user_repo =
+                            database::repositories::UserRepository::new(db_for_leaderboard.clone());
+                        for profile in &profiles {
+                            if let Ok(Some(user)) = user_repo.find_by_id(profile.user_id).await {
+                                user_cache_for_leaderboard
+                                    .put(user.id, user.pseudo, user.email)
+                                    .await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to refresh leaderboard: {}", e);
+                    }
+                }
+            }
+        }
+    });
+
     let auth_middleware = AuthMiddleware::new(redis_client.clone());
     let _rate_limiter_middleware = RateLimiterMiddleware::new(redis_client.clone());
 
@@ -281,6 +317,10 @@ async fn main() -> std::io::Result<()> {
                             .route(
                                 "/invitations",
                                 web::get().to(api::dashboard::get_invitations),
+                            )
+                            .route(
+                                "/leaderboard",
+                                web::get().to(api::leaderboard::get_leaderboard),
                             ),
                     )
                     .service(
