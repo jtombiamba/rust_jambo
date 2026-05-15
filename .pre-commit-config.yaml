@@ -66,3 +66,20 @@ repos:
           - --fix
           - --max-warnings
           - "0"
+      - id: max-file-lines
+        name: Max 600 lines per .rs file
+        entry: bash
+        language: system
+        files: ^backend/src/.*\.rs$
+        args:
+          - -c
+          - |
+            max=600
+            for f in "$@"; do
+              lines=$(wc -l < "$f")
+              if [ "$lines" -gt "$max" ]; then
+                echo "ERROR: $f has $lines lines (max $max allowed)"
+                exit 1
+              fi
+            done
+        pass_filenames: true
