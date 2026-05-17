@@ -69,6 +69,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
         _player_id: Uuid,
         _card_index: i32,
         _correlation_id: Option<CorrelationId>,
+        _idempotency_key: Option<String>,
     ) -> Result<PlayCardOutcome, GameError> {
         self.play_card_result
             .lock()

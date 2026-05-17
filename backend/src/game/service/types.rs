@@ -122,6 +122,8 @@ pub enum GameServiceError {
     GameNotReady,
     #[error("Duplicate player: user is already a player in this game")]
     DuplicatePlayer,
+    #[error("Optimistic lock conflict: game state was modified concurrently")]
+    VersionConflict,
     #[error("Internal error: {0}")]
     Internal(String),
 }

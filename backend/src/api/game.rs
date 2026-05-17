@@ -23,12 +23,19 @@ pub async fn play_card(
         return AppError::from(e).error_response();
     }
 
+    let idempotency_key = req
+        .headers()
+        .get("X-Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     match orchestrator
         .play_card(
             game_id,
             payload.player_id,
             payload.card_index,
             correlation_id,
+            idempotency_key,
         )
         .await
     {

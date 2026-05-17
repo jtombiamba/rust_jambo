@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api::dto::responses::{
@@ -10,7 +11,7 @@ use crate::observability::CorrelationId;
 
 /// Outcome of a play_card operation — contains everything the API handler
 /// needs to build the HTTP response without accessing repositories.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayCardOutcome {
     pub card_id: Uuid,
     pub next_turn: Option<Uuid>,
@@ -104,6 +105,7 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
         player_id: Uuid,
         card_index: i32,
         correlation_id: Option<CorrelationId>,
+        idempotency_key: Option<String>,
     ) -> Result<PlayCardOutcome, GameError>;
 
     async fn create_quick_game(

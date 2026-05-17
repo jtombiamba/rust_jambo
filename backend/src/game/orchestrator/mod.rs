@@ -44,6 +44,9 @@ fn map_service_error(e: crate::game::service::GameServiceError) -> GameError {
         GameServiceError::Internal(msg) => {
             GameError::Internal(Box::new(std::io::Error::other(msg)))
         }
+        GameServiceError::VersionConflict => GameError::Internal(Box::new(std::io::Error::other(
+            "Game state was modified concurrently, please retry",
+        ))),
         GameServiceError::Database(e) => GameError::Internal(e),
     }
 }
@@ -81,6 +84,7 @@ impl GameOrchestrator {
         player_id: Uuid,
         card_index: i32,
         correlation_id: Option<CorrelationId>,
+        idempotency_key: Option<String>,
     ) -> Result<PlayCardOutcome, GameError> {
         let cid_str = correlation_id.map(|c| c.to_string()).unwrap_or_default();
         let span = tracing::info_span!(
@@ -91,6 +95,37 @@ impl GameOrchestrator {
             card_index = card_index,
         );
         let _guard = span.enter();
+
+        let idem_redis_key = idempotency_key
+            .as_ref()
+            .map(|k| format!("idem:{}:{}", player_id, k));
+
+        if let Some(ref idem_key) = idem_redis_key {
+            if let Some(mut redis) = self.game_service.redis_client() {
+                match redis.set_nx_ex(idem_key, "pending", 300).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        match redis.get(idem_key).await {
+                            Ok(Some(val)) if val != "pending" => {
+                                if let Ok(cached) = serde_json::from_str::<PlayCardOutcome>(&val) {
+                                    return Ok(cached);
+                                }
+                            }
+                            _ => {}
+                        }
+                        return Err(GameError::Internal(Box::new(std::io::Error::other(
+                            "A request with this idempotency key is already in progress",
+                        ))));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Redis error on idempotency check: {}, proceeding without",
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
         let result: CardPlayResult = self
             .game_service
@@ -117,13 +152,23 @@ impl GameOrchestrator {
             Some(result.next_player_id)
         };
 
-        Ok(PlayCardOutcome {
+        let outcome = PlayCardOutcome {
             card_id: result.card.id,
             next_turn,
             game_ended: result.game_ended,
             round_completed: result.round_completed,
             current_round: result.current_round,
-        })
+        };
+
+        if let Some(ref idem_key) = idem_redis_key {
+            if let Some(mut redis) = self.game_service.redis_client() {
+                if let Ok(outcome_json) = serde_json::to_string(&outcome) {
+                    let _ = redis.set_ex(idem_key, &outcome_json, 300).await;
+                }
+            }
+        }
+
+        Ok(outcome)
     }
 
     pub async fn create_multiplayer_game(
@@ -227,9 +272,16 @@ impl GameOrchestratorTrait for GameOrchestrator {
         player_id: Uuid,
         card_index: i32,
         correlation_id: Option<CorrelationId>,
+        idempotency_key: Option<String>,
     ) -> Result<PlayCardOutcome, GameError> {
-        self.play_card(game_id, player_id, card_index, correlation_id)
-            .await
+        self.play_card(
+            game_id,
+            player_id,
+            card_index,
+            correlation_id,
+            idempotency_key,
+        )
+        .await
     }
 
     async fn create_quick_game(
