@@ -1,4 +1,5 @@
 use chrono::Utc;
+use sea_orm::sea_query;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
     QueryOrder,
@@ -166,6 +167,8 @@ impl GameService {
             })?
             .ok_or(GameServiceError::GameNotFound)?;
 
+        let read_version = game_model.updated_at;
+
         let game_ends = new_roll > CARDS_PER_PLAYER as i32;
         let mut final_status = game_model.status;
 
@@ -177,19 +180,72 @@ impl GameService {
             }
         }
 
-        let mut game_active: game::ActiveModel = game_model.into();
-        game_active.winner_id = ActiveValue::Set(Some(winner_id));
-        game_active.rank = ActiveValue::Set(Some(winner_pos as i32));
-        game_active.roll = ActiveValue::Set(new_roll);
-        game_active.current_winning_card = ActiveValue::Set(None);
-        game_active.current_winning_player_position = ActiveValue::Set(None);
-        game_active.updated_at = ActiveValue::Set(Utc::now());
+        // Build a single UPDATE query with optimistic locking.
+        //
+        // We use update_many() with col_expr() + an explicit ::game_status CAST for the
+        // status column because:
+        //
+        // 1. Optimistic locking: update_many() lets us add `.filter(UpdatedAt.eq(read_version))`
+        //    so that if another concurrent transaction modified this row between our read and
+        //    write, the UPDATE affects 0 rows and we can retry. ActiveModel::update() only
+        //    filters by primary key, silently overwriting concurrent changes.
+        //
+        // 2. Performance: a single UPDATE query for all columns is faster than splitting into
+        //    two queries (update_many for non-enum cols + ActiveModel for the enum col).
+        //
+        // 3. The ::game_status CAST is required because col_expr() sends raw sea_orm::Value
+        //    types to the database. Without the cast, Value::String(...) is sent as PostgreSQL
+        //    `text`, which the `game_status` enum column rejects. The `::game_status` suffix
+        //    tells PostgreSQL to interpret the string as the enum type.
+        let mut update = game::Entity::update_many()
+            .col_expr(
+                game::Column::WinnerId,
+                sea_query::Expr::value(sea_orm::Value::Uuid(Some(winner_id))),
+            )
+            .col_expr(
+                game::Column::Rank,
+                sea_query::Expr::value(sea_orm::Value::Int(Some(winner_pos as i32))),
+            )
+            .col_expr(
+                game::Column::Roll,
+                sea_query::Expr::value(sea_orm::Value::Int(Some(new_roll))),
+            )
+            .col_expr(
+                game::Column::CurrentWinningCard,
+                sea_query::Expr::value(sea_orm::Value::Int(None)),
+            )
+            .col_expr(
+                game::Column::CurrentWinningPlayerPosition,
+                sea_query::Expr::value(sea_orm::Value::Int(None)),
+            )
+            .col_expr(
+                game::Column::UpdatedAt,
+                sea_query::Expr::value(sea_orm::Value::ChronoDateTimeUtc(Some(Utc::now()))),
+            )
+            .filter(game::Column::Id.eq(game_id))
+            .filter(game::Column::UpdatedAt.eq(read_version))
+            .to_owned();
+
         if game_ends {
-            game_active.status = ActiveValue::Set(final_status);
+            // Cast the string to the PostgreSQL game_status enum so the type matches.
+            // Without ::game_status, Value::String is sent as `text` which PostgreSQL rejects.
+            let status_str = final_status.to_string();
+            update = update.col_expr(
+                game::Column::Status,
+                sea_query::Expr::cust_with_values(
+                    "$1::game_status",
+                    [sea_orm::Value::String(Some(status_str))],
+                ),
+            );
         }
-        game_active.update(txn).await.map_err(|e| {
+
+        let update_result = update.exec(txn).await.map_err(|e| {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
+
+        if update_result.rows_affected == 0 {
+            return Err(GameServiceError::VersionConflict);
+        }
 
         Ok(RoundEvaluationResult {
             round,

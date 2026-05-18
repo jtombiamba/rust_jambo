@@ -2,7 +2,6 @@ use crate::messaging::events::GameEvent;
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
-use anyhow::Context;
 use chrono::Utc;
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -322,42 +321,68 @@ impl WebSocketManager {
     }
 
     /// Start a background task that subscribes to Redis channels and forwards messages.
+    /// Uses N sharded subscriber tasks (N = min(num_cpus, 8)) to distribute load.
     /// This should be called once when the server starts.
     pub async fn start_redis_subscriber(&self) -> anyhow::Result<()> {
         tracing::info!("Starting Redis subscriber");
-        let mut redis_client = match self.redis_client().await {
+        let redis_client = match self.redis_client().await {
             Some(client) => client,
             None => {
                 tracing::warn!("No Redis client available, skipping Redis subscription");
                 return Ok(());
             }
         };
-        // Subscribe to all game channels using pattern `game:*`
-        let mut pubsub = redis_client
-            .psubscribe(&["game:*"])
-            .await
-            .context("Failed to subscribe to Redis pattern")?;
-        tracing::info!("Redis subscriber subscribed to game:*");
 
-        let manager = self.clone();
-        tokio::spawn(async move {
-            let mut stream = pubsub.on_message();
-            while let Some(msg) = stream.next().await {
-                let channel: String = msg.get_channel().unwrap_or_default();
-                let payload: String = msg.get_payload().unwrap_or_default();
-                tracing::debug!("Redis message on channel {}: {}", channel, payload);
+        let shard_count = num_cpus::get().clamp(1, 8);
+        tracing::info!(
+            "Starting {} sharded Redis subscribers (pattern: game:*)",
+            shard_count
+        );
 
-                // Extract game ID from channel pattern "game:{uuid}"
-                if let Some(game_id) = Self::extract_game_id_from_channel(&channel) {
-                    // Forward the raw payload to all WebSocket connections for that game
-                    manager.broadcast_to_game(game_id, &payload).await;
-                } else {
-                    tracing::warn!("Received message on unexpected channel: {}", channel);
+        for shard in 0..shard_count {
+            let mut redis = redis_client.clone();
+            let manager = self.clone();
+
+            tokio::spawn(async move {
+                let mut pubsub = match redis.psubscribe(&["game:*"]).await {
+                    Ok(ps) => ps,
+                    Err(e) => {
+                        tracing::error!(
+                            "Shard {} failed to subscribe to Redis pattern: {}",
+                            shard,
+                            e
+                        );
+                        return;
+                    }
+                };
+                tracing::info!("Redis subscriber shard {}/{} ready", shard, shard_count);
+
+                let mut stream = pubsub.on_message();
+                while let Some(msg) = stream.next().await {
+                    let channel: String = msg.get_channel().unwrap_or_default();
+                    let payload: String = msg.get_payload().unwrap_or_default();
+                    tracing::debug!("Redis message on channel {} (shard {})", channel, shard);
+
+                    if let Some(game_id) = Self::extract_game_id_from_channel(&channel) {
+                        if Self::shard_for_game(game_id, shard_count) == shard {
+                            manager.broadcast_to_game(game_id, &payload).await;
+                        }
+                    } else {
+                        tracing::warn!("Received message on unexpected channel: {}", channel);
+                    }
                 }
-            }
-            tracing::info!("Redis subscription task ended");
-        });
+                tracing::info!("Redis subscriber shard {} ended", shard);
+            });
+        }
         Ok(())
+    }
+
+    fn shard_for_game(game_id: Uuid, shard_count: usize) -> usize {
+        let bytes = game_id.as_bytes();
+        let hash = bytes
+            .iter()
+            .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
+        (hash as usize) % shard_count
     }
 
     /// Extract game ID from a Redis channel name of the form "game:{uuid}".

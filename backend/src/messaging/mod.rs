@@ -3,7 +3,7 @@ use lapin::options::BasicQosOptions;
 use lapin::{
     options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties, Consumer,
 };
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -78,10 +78,10 @@ pub enum CircuitState {
 
 #[derive(Debug)]
 struct CircuitBreaker {
-    state: std::sync::Mutex<CircuitState>,
+    state: tokio::sync::Mutex<CircuitState>,
     consecutive_failures: AtomicU32,
-    last_failure_time: std::sync::Mutex<Option<std::time::Instant>>,
-    cooldown_start: std::sync::Mutex<Option<std::time::Instant>>,
+    last_failure_time: tokio::sync::Mutex<Option<std::time::Instant>>,
+    cooldown_start: tokio::sync::Mutex<Option<std::time::Instant>>,
     failure_threshold: u32,
     cooldown_duration: Duration,
 }
@@ -89,18 +89,18 @@ struct CircuitBreaker {
 impl CircuitBreaker {
     fn new(failure_threshold: u32, cooldown_secs: u64) -> Self {
         Self {
-            state: std::sync::Mutex::new(CircuitState::Closed),
+            state: tokio::sync::Mutex::new(CircuitState::Closed),
             consecutive_failures: AtomicU32::new(0),
-            last_failure_time: std::sync::Mutex::new(None),
-            cooldown_start: std::sync::Mutex::new(None),
+            last_failure_time: tokio::sync::Mutex::new(None),
+            cooldown_start: tokio::sync::Mutex::new(None),
             failure_threshold,
             cooldown_duration: Duration::from_secs(cooldown_secs),
         }
     }
 
-    fn record_success(&self) {
+    async fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::SeqCst);
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().await;
         if *state == CircuitState::HalfOpen {
             *state = CircuitState::Closed;
             metrics::CIRCUIT_BREAKER_STATE.set(0.0);
@@ -108,16 +108,18 @@ impl CircuitBreaker {
         }
     }
 
-    fn record_failure(&self) {
+    async fn record_failure(&self) {
         let failures = self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
-        let mut last_time = self.last_failure_time.lock().unwrap();
-        *last_time = Some(std::time::Instant::now());
+        {
+            let mut last_time = self.last_failure_time.lock().await;
+            *last_time = Some(std::time::Instant::now());
+        }
 
         if failures >= self.failure_threshold {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().await;
             if *state == CircuitState::Closed {
                 *state = CircuitState::Open;
-                let mut cooldown = self.cooldown_start.lock().unwrap();
+                let mut cooldown = self.cooldown_start.lock().await;
                 *cooldown = Some(std::time::Instant::now());
                 metrics::CIRCUIT_BREAKER_STATE.set(1.0);
                 warn!(
@@ -128,16 +130,16 @@ impl CircuitBreaker {
         }
     }
 
-    fn allow_request(&self) -> bool {
-        let state = *self.state.lock().unwrap();
+    async fn allow_request(&self) -> bool {
+        let state = *self.state.lock().await;
         match state {
             CircuitState::Closed => true,
             CircuitState::Open => {
-                let cooldown = self.cooldown_start.lock().unwrap();
+                let cooldown = self.cooldown_start.lock().await;
                 if let Some(start) = *cooldown {
                     if start.elapsed() >= self.cooldown_duration {
                         drop(cooldown);
-                        let mut s = self.state.lock().unwrap();
+                        let mut s = self.state.lock().await;
                         *s = CircuitState::HalfOpen;
                         metrics::CIRCUIT_BREAKER_STATE.set(2.0);
                         info!("Circuit breaker transitioned to HalfOpen");
@@ -198,22 +200,35 @@ pub async fn connect_to_rabbitmq_with_retry(
     Err(last_error.unwrap())
 }
 
-/// Metrics for RabbitMQ operations
-#[derive(Debug, Clone, Default)]
+/// Metrics for RabbitMQ operations (lock-free with AtomicU64)
+#[derive(Debug)]
 #[allow(dead_code)]
 pub struct RabbitMQMetrics {
-    pub publish_success_count: u64,
-    pub publish_failure_count: u64,
-    pub publish_retry_count: u64,
-    pub consume_success_count: u64,
-    pub consume_failure_count: u64,
-    pub connection_error_count: u64,
+    pub publish_success_count: AtomicU64,
+    pub publish_failure_count: AtomicU64,
+    pub publish_retry_count: AtomicU64,
+    pub consume_success_count: AtomicU64,
+    pub consume_failure_count: AtomicU64,
+    pub connection_error_count: AtomicU64,
+}
+
+impl Default for RabbitMQMetrics {
+    fn default() -> Self {
+        Self {
+            publish_success_count: AtomicU64::new(0),
+            publish_failure_count: AtomicU64::new(0),
+            publish_retry_count: AtomicU64::new(0),
+            consume_success_count: AtomicU64::new(0),
+            consume_failure_count: AtomicU64::new(0),
+            connection_error_count: AtomicU64::new(0),
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct RabbitMQClient {
     connection: std::sync::Arc<Connection>,
-    metrics: std::sync::Arc<std::sync::Mutex<RabbitMQMetrics>>,
+    metrics: std::sync::Arc<RabbitMQMetrics>,
     circuit_breaker: std::sync::Arc<CircuitBreaker>,
     publish_config: RabbitMQPublishConfig,
     /// Cached channel reused across publishes to avoid create_channel() per call.
@@ -234,24 +249,45 @@ impl RabbitMQClient {
         );
         Ok(Self {
             connection: std::sync::Arc::new(connection),
-            metrics: std::sync::Arc::new(std::sync::Mutex::new(RabbitMQMetrics::default())),
+            metrics: std::sync::Arc::new(RabbitMQMetrics::default()),
             circuit_breaker: std::sync::Arc::new(cb),
             publish_config,
             cached_channel: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
-    /// Get a copy of current metrics
+    /// Get a snapshot of current metrics
     #[allow(dead_code)]
-    pub fn get_metrics(&self) -> RabbitMQMetrics {
-        self.metrics.lock().unwrap().clone()
+    pub fn get_metrics_snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "publish_success_count": self.metrics.publish_success_count.load(Ordering::Relaxed),
+            "publish_failure_count": self.metrics.publish_failure_count.load(Ordering::Relaxed),
+            "publish_retry_count": self.metrics.publish_retry_count.load(Ordering::Relaxed),
+            "consume_success_count": self.metrics.consume_success_count.load(Ordering::Relaxed),
+            "consume_failure_count": self.metrics.consume_failure_count.load(Ordering::Relaxed),
+            "connection_error_count": self.metrics.connection_error_count.load(Ordering::Relaxed),
+        })
     }
 
     /// Reset metrics (useful for testing)
     #[allow(dead_code)]
     pub fn reset_metrics(&self) {
-        let mut metrics = self.metrics.lock().unwrap();
-        *metrics = RabbitMQMetrics::default();
+        self.metrics
+            .publish_success_count
+            .store(0, Ordering::Relaxed);
+        self.metrics
+            .publish_failure_count
+            .store(0, Ordering::Relaxed);
+        self.metrics.publish_retry_count.store(0, Ordering::Relaxed);
+        self.metrics
+            .consume_success_count
+            .store(0, Ordering::Relaxed);
+        self.metrics
+            .consume_failure_count
+            .store(0, Ordering::Relaxed);
+        self.metrics
+            .connection_error_count
+            .store(0, Ordering::Relaxed);
     }
 
     /// Publish with exponential backoff retry
@@ -260,7 +296,7 @@ impl RabbitMQClient {
         queue: &str,
         message: &[u8],
     ) -> Result<(), lapin::Error> {
-        if !self.circuit_breaker.allow_request() {
+        if !self.circuit_breaker.allow_request().await {
             warn!(
                 "Circuit breaker is open, refusing publish to queue '{}'",
                 queue
@@ -277,11 +313,14 @@ impl RabbitMQClient {
         for attempt in 0..self.publish_config.max_retries {
             match self.publish_internal(queue, message).await {
                 Ok(_) => {
-                    self.circuit_breaker.record_success();
-                    let mut metrics = self.metrics.lock().unwrap();
-                    metrics.publish_success_count += 1;
+                    self.circuit_breaker.record_success().await;
+                    self.metrics
+                        .publish_success_count
+                        .fetch_add(1, Ordering::Relaxed);
                     if attempt > 0 {
-                        metrics.publish_retry_count += 1;
+                        self.metrics
+                            .publish_retry_count
+                            .fetch_add(1, Ordering::Relaxed);
                         info!("Publish succeeded after {} retries", attempt);
                     }
                     metrics::RABBITMQ_PUBLISH_TOTAL
@@ -293,9 +332,10 @@ impl RabbitMQClient {
                     last_error = Some(e);
 
                     if attempt == self.publish_config.max_retries - 1 {
-                        self.circuit_breaker.record_failure();
-                        let mut metrics = self.metrics.lock().unwrap();
-                        metrics.publish_failure_count += 1;
+                        self.circuit_breaker.record_failure().await;
+                        self.metrics
+                            .publish_failure_count
+                            .fetch_add(1, Ordering::Relaxed);
                         metrics::RABBITMQ_PUBLISH_ERRORS_TOTAL
                             .with_label_values(&[queue])
                             .inc();
@@ -445,8 +485,9 @@ impl RabbitMQClient {
         let duration = start_time.elapsed();
         debug!("Consumer setup took {:?}", duration);
 
-        let mut metrics = self.metrics.lock().unwrap();
-        metrics.consume_success_count += 1;
+        self.metrics
+            .consume_success_count
+            .fetch_add(1, Ordering::Relaxed);
 
         metrics::RABBITMQ_CONSUME_TOTAL.inc();
 
@@ -464,8 +505,9 @@ impl RabbitMQClient {
             }
             false => {
                 error!("RabbitMQ connection is not healthy");
-                let mut metrics = self.metrics.lock().unwrap();
-                metrics.connection_error_count += 1;
+                self.metrics
+                    .connection_error_count
+                    .fetch_add(1, Ordering::Relaxed);
                 metrics::RABBITMQ_HEALTHY.set(0.0);
                 false
             }

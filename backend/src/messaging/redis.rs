@@ -29,6 +29,20 @@ impl RedisClient {
         self.connection_manager.get(key).await
     }
 
+    /// Set a string value by key with TTL, only if key doesn't exist.
+    /// Returns true if the key was set, false if it already existed.
+    pub async fn set_nx_ex(&mut self, key: &str, value: &str, ttl_secs: u64) -> RedisResult<bool> {
+        let result: Option<String> = redis::cmd("SET")
+            .arg(key)
+            .arg(value)
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_secs)
+            .query_async(&mut self.connection_manager)
+            .await?;
+        Ok(result.is_some())
+    }
+
     /// Set a string value by key (no expiry).
     #[allow(dead_code)]
     pub async fn set(&mut self, key: &str, value: &str) -> RedisResult<()> {
