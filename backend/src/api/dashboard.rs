@@ -308,7 +308,7 @@ pub async fn play_game(
     };
 
     match orchestrator
-        .play_card(game_id, player.id, payload.card_index, correlation_id)
+        .play_card(game_id, player.id, payload.card_index, correlation_id, None)
         .await
     {
         Ok(outcome) => {

@@ -1,5 +1,7 @@
 use crate::messaging::events::GameEvent;
+use crate::observability::metrics::REDIS_PUBLISH_DURATION_SECONDS;
 use redis::{aio::ConnectionManager, AsyncCommands, Client, RedisResult};
+use std::time::Instant;
 use tracing::info;
 
 /// Redis client wrapper that manages a connection pool.
@@ -25,6 +27,20 @@ impl RedisClient {
     /// Get a string value by key.
     pub async fn get(&mut self, key: &str) -> RedisResult<Option<String>> {
         self.connection_manager.get(key).await
+    }
+
+    /// Set a string value by key with TTL, only if key doesn't exist.
+    /// Returns true if the key was set, false if it already existed.
+    pub async fn set_nx_ex(&mut self, key: &str, value: &str, ttl_secs: u64) -> RedisResult<bool> {
+        let result: Option<String> = redis::cmd("SET")
+            .arg(key)
+            .arg(value)
+            .arg("NX")
+            .arg("EX")
+            .arg(ttl_secs)
+            .query_async(&mut self.connection_manager)
+            .await?;
+        Ok(result.is_some())
     }
 
     /// Set a string value by key (no expiry).
@@ -60,7 +76,13 @@ impl RedisClient {
 
     /// Publish a message to a Redis channel.
     pub async fn publish(&mut self, channel: &str, message: &str) -> RedisResult<()> {
-        self.connection_manager.publish(channel, message).await
+        let start = Instant::now();
+        let result = self.connection_manager.publish(channel, message).await;
+        let duration = start.elapsed().as_secs_f64();
+        REDIS_PUBLISH_DURATION_SECONDS
+            .with_label_values(&[])
+            .observe(duration);
+        result
     }
 
     /// Publish a game event to its appropriate Redis channel.
