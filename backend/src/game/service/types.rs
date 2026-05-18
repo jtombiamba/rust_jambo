@@ -102,8 +102,8 @@ pub enum GameServiceError {
     RoundNotComplete,
     #[error("Game already finished")]
     GameFinished,
-    #[error("Insufficient credits for bet")]
-    InsufficientCredits,
+    #[error("Insufficient credits: need {required} but have {current}")]
+    InsufficientCredits { required: i32, current: i32 },
     #[error("Game is not pending")]
     GameNotPending,
     #[error("User is not the game creator")]

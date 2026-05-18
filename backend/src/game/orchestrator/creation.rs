@@ -37,7 +37,10 @@ impl GameOrchestrator {
             })?;
 
         if profile.credit < SOLO_BET {
-            return Err(GameError::InsufficientCredits);
+            return Err(GameError::InsufficientCredits {
+                required: SOLO_BET,
+                current: profile.credit,
+            });
         }
 
         let new_credit = profile.credit - SOLO_BET;

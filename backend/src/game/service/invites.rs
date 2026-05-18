@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::database::models::{
     game, game_invite, player, player_profile, GameStatus, InviteStatus, PlayerType,
 };
+use crate::game::constants::KORA_CREDIT_MULTIPLIER;
 use crate::game::service::types::GameServiceError;
 use crate::messaging::events::GameEvent;
 
@@ -165,9 +166,13 @@ impl GameService {
             })?
             .ok_or_else(|| GameServiceError::Internal("Player profile not found".to_string()))?;
 
-        if profile.credit < bet {
+        let required_credit = bet * KORA_CREDIT_MULTIPLIER;
+        if profile.credit < required_credit {
             txn.rollback().await.ok();
-            return Err(GameServiceError::InsufficientCredits);
+            return Err(GameServiceError::InsufficientCredits {
+                required: required_credit,
+                current: profile.credit,
+            });
         }
 
         let now = chrono::Utc::now();

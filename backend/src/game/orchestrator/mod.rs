@@ -31,7 +31,9 @@ fn map_service_error(e: crate::game::service::GameServiceError) -> GameError {
         GameServiceError::InvalidCard => GameError::InvalidCard,
         GameServiceError::GameFinished => GameError::GameFinished,
         GameServiceError::RoundNotComplete => GameError::RoundNotComplete,
-        GameServiceError::InsufficientCredits => GameError::InsufficientCredits,
+        GameServiceError::InsufficientCredits { required, current } => {
+            GameError::InsufficientCredits { required, current }
+        }
         GameServiceError::GameNotPending => GameError::GameNotPending,
         GameServiceError::NotCreator => GameError::NotCreator,
         GameServiceError::NotInvited => GameError::NotInvited,
