@@ -2,11 +2,11 @@
 
 .winner-ring {
   position: absolute;
-  top: -12px;
-  left: -12px;
-  right: -12px;
-  bottom: -12px;
-  border-radius: 16px;
+  top: -8px;
+  left: -8px;
+  right: -8px;
+  bottom: -8px;
+  border-radius: 12px;
   pointer-events: none;
   z-index: 20;
   display: flex;
@@ -22,7 +22,7 @@
   right: 0;
   bottom: 0;
   border: 3px solid gold;
-  border-radius: 16px;
+  border-radius: 12px;
   animation: pulse 0.5s infinite alternate;
 }
 
@@ -35,14 +35,14 @@
 /* Kora win - orange/red ring with faster pulse */
 .winner-ring-kora .winner-ring-border {
   border-color: #ff6b35;
-  border-width: 4px;
+  border-width: 3px;
   animation: pulse-fast 0.3s infinite alternate;
   box-shadow: 0 0 20px rgba(255, 107, 53, 0.8);
 }
 
 /* Double Kora - rainbow gradient ring */
 .winner-ring-double-kora .winner-ring-border {
-  border-width: 4px;
+  border-width: 3px;
   border-style: solid;
   border-image: linear-gradient(90deg, red, orange, yellow, green, blue, indigo, violet) 1;
   animation: rainbow-pulse 1s infinite;
@@ -52,13 +52,13 @@
 /* Label styling */
 .winner-ring-label {
   position: absolute;
-  top: -40px;
+  top: -32px;
   background: rgba(0, 0, 0, 0.8);
   color: white;
-  padding: 4px 12px;
-  border-radius: 20px;
+  padding: 3px 10px;
+  border-radius: 16px;
   font-weight: bold;
-  font-size: 14px;
+  font-size: 11px;
   text-align: center;
   white-space: nowrap;
   z-index: 21;
@@ -66,40 +66,92 @@
 }
 
 .winner-ring-player-name {
-  font-size: 12px;
+  font-size: 10px;
   opacity: 0.9;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .winner-ring-win-type {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 800;
 }
 
 /* Position-specific adjustments */
 .winner-ring-north .winner-ring-label {
-  top: -40px;
+  top: -32px;
   left: 50%;
   transform: translateX(-50%);
 }
 
 .winner-ring-south .winner-ring-label {
-  bottom: -40px;
+  bottom: -32px;
   top: auto;
   left: 50%;
   transform: translateX(-50%);
 }
 
 .winner-ring-east .winner-ring-label {
-  right: -120px;
+  right: -100px;
   top: 50%;
   transform: translateY(-50%);
 }
 
 .winner-ring-west .winner-ring-label {
-  left: -120px;
+  left: -100px;
   top: 50%;
   transform: translateY(-50%);
+}
+
+/* Mobile adjustments */
+@media (max-width: 640px) {
+  .winner-ring {
+    top: -4px;
+    left: -4px;
+    right: -4px;
+    bottom: -4px;
+    border-radius: 8px;
+  }
+
+  .winner-ring-border {
+    border-width: 2px;
+    border-radius: 8px;
+  }
+
+  .winner-ring-kora .winner-ring-border,
+  .winner-ring-double-kora .winner-ring-border {
+    border-width: 2px;
+  }
+
+  .winner-ring-label {
+    top: -24px;
+    padding: 2px 8px;
+    font-size: 9px;
+    border-radius: 12px;
+  }
+
+  .winner-ring-player-name {
+    font-size: 8px;
+  }
+
+  .winner-ring-win-type {
+    font-size: 10px;
+  }
+
+  .winner-ring-north .winner-ring-label {
+    top: -24px;
+  }
+
+  .winner-ring-south .winner-ring-label {
+    bottom: -24px;
+  }
+
+  .winner-ring-east .winner-ring-label {
+    right: -80px;
+  }
+
+  .winner-ring-west .winner-ring-label {
+    left: -80px;
+  }
 }
 
 /* Animations */
