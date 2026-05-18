@@ -153,6 +153,7 @@ impl BotScheduler {
             let player_repo = PlayerRepository::new(db.clone());
             let game_card_repo = GameCardRepository::new(db.clone());
 
+            // Fetch game and check if still active
             let game = match game_repo.find_by_id(game_id).await {
                 Ok(Some(g)) => g,
                 _ => {
@@ -174,6 +175,7 @@ impl BotScheduler {
 
             let round = game.roll;
 
+            // Fetch bot's unplayed cards
             let bot_cards: Vec<i32> = match game_card_repo.list_by_player(current_player).await {
                 Ok(cards) => cards
                     .into_iter()
@@ -194,6 +196,7 @@ impl BotScheduler {
                 break;
             }
 
+            // Fetch played cards this round
             let round_cards: Vec<i32> =
                 match game_card_repo.list_by_game_and_round(game_id, round).await {
                     Ok(cards) => cards.into_iter().map(|gc| gc.card_index).collect(),
@@ -227,6 +230,7 @@ impl BotScheduler {
                 }
             }
 
+            // Determine next player after this bot's move
             let players = match player_repo.list_by_game(game_id).await {
                 Ok(list) => list,
                 Err(e) => {
