@@ -87,6 +87,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<string | null>(null)
   const [rulesOpen, setRulesOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [multiplayerOpen, setMultiplayerOpen] = useState(false)
   const [multiplayerStep, setMultiplayerStep] = useState<1 | 2>(1)
   const [multiplayerBet, setMultiplayerBet] = useState(10)
@@ -278,19 +279,50 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   return (
     <div>
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
-      <div className="fixed top-4 right-4 z-40 flex gap-2 sm:gap-3">
-        <button
-          onClick={() => setRulesOpen(true)}
-          className="px-3 sm:px-5 py-2 border border-gray-400 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 shadow-lg text-sm sm:text-base"
-        >
-          Rules
-        </button>
-        <button
-          onClick={logout}
-          className="px-5 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 shadow-lg"
-        >
-          Logout
-        </button>
+      <div className="fixed top-4 right-4 z-40">
+        <div className="hidden sm:flex gap-2 sm:gap-3">
+          <button
+            onClick={() => setRulesOpen(true)}
+            className="px-3 sm:px-5 py-2 border border-gray-400 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 shadow-lg text-sm sm:text-base"
+          >
+            Rules
+          </button>
+          <button
+            onClick={logout}
+            className="px-5 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 shadow-lg"
+          >
+            Logout
+          </button>
+        </div>
+        <div className="sm:hidden relative">
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="w-10 h-10 flex items-center justify-center bg-white border border-gray-300 rounded-lg shadow-lg text-gray-700 hover:bg-gray-100"
+            aria-label="Menu"
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+              <circle cx="10" cy="3" r="2"/>
+              <circle cx="10" cy="10" r="2"/>
+              <circle cx="10" cy="17" r="2"/>
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-12 bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[120px] z-50">
+              <button
+                onClick={() => { setRulesOpen(true); setMenuOpen(false) }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                Rules
+              </button>
+              <button
+                onClick={() => { logout(); setMenuOpen(false) }}
+                className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+              >
+                Logout
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {toast && (

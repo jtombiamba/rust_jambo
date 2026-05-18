@@ -1,5 +1,6 @@
 import React from 'react';
 import Card from './Card';
+import CardFan from './CardFan';
 
 export interface PlayerSlotProps {
   name: string;
@@ -16,6 +17,14 @@ export interface PlayerSlotProps {
   isCurrentTurn?: boolean;
   /** Optional callback when a card is clicked (only relevant for human players) */
   onCardClick?: (cardIndex: number) => void;
+  /** Whether to use compact mode (for mobile portrait) */
+  compact?: boolean;
+  /** Screen orientation */
+  orientation?: 'portrait' | 'landscape';
+  /** Currently selected card index (for human player's hand) */
+  selectedCardIndex?: number | null;
+  /** Whether cards should overlap (mobile) or be spread without overlap (desktop) */
+  overlapCards?: boolean;
 }
 
 const positionStyles: Record<PlayerSlotProps['position'], string> = {
@@ -35,15 +44,16 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
   remainingCount,
   isCurrentTurn = false,
   onCardClick,
+  compact = false,
+  selectedCardIndex = null,
+  overlapCards = true,
 }) => {
-  // For bots with empty cards, show placeholder face‑down cards based on remainingCount
   const displayCards = cards.length > 0
     ? cards
     : (type === 'bot' && remainingCount !== undefined
         ? Array.from({ length: remainingCount }, (_, i) => i)
         : []);
 
-  // Only allow clicks on real human cards, not bot placeholders
   const handleCardClick = type === 'human' && cards.length > 0 && onCardClick
     ? (cardIndex: number) => onCardClick(cardIndex)
     : undefined;
@@ -52,29 +62,52 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
     ? 'ring-4 ring-red-500 ring-offset-2'
     : '';
 
+  const renderCards = () => {
+    if (displayCards.length === 0) {
+      return <div className="text-gray-500 italic text-sm">No cards</div>;
+    }
+
+    if (overlapCards) {
+      return (
+        <CardFan
+          cards={displayCards}
+          faceUp={cardsFaceUp}
+          overlapPercent={compact ? 65 : 55}
+          onCardClick={handleCardClick}
+          selectedIndex={selectedCardIndex}
+          compact={compact}
+          playerType={type}
+        />
+      );
+    }
+
+    return (
+      <div className="flex flex-wrap gap-1 sm:gap-2 justify-center">
+        {displayCards.map((cardIndex) => (
+          <Card
+            key={cardIndex}
+            index={cardIndex}
+            faceUp={cardsFaceUp}
+            onClick={handleCardClick ? () => handleCardClick(cardIndex) : undefined}
+            selected={selectedCardIndex === cardIndex || (cards[0] === cardIndex && selectedCardIndex === 0)}
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div
       className={`flex flex-col items-center p-2 sm:p-4 ${positionStyles[position]} ${ringClass} rounded-lg`}
       data-testid={`player-slot-${playerId}`}
     >
-      <div className="text-base sm:text-lg font-semibold mb-1 sm:mb-2">
+      <div className={`${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2`}>
         {name} {type === 'bot' && '🤖'}
       </div>
-      <div className="flex flex-wrap gap-1 sm:gap-2 justify-center">
-        {displayCards.length > 0 ? (
-          displayCards.map((cardIndex) => (
-            <Card
-              key={cardIndex}
-              index={cardIndex}
-              faceUp={cardsFaceUp}
-              onClick={handleCardClick ? () => handleCardClick(cardIndex) : undefined}
-            />
-          ))
-        ) : (
-          <div className="text-gray-500 italic text-sm">No cards</div>
-        )}
+      <div className="flex justify-center w-full">
+        {renderCards()}
       </div>
-      <div className="mt-1 sm:mt-2 text-xs sm:text-sm text-gray-600">
+      <div className={`mt-1 sm:mt-2 ${compact ? 'text-[10px]' : 'text-xs sm:text-sm'} text-gray-600`}>
         {position.toUpperCase()} – {type}
       </div>
     </div>

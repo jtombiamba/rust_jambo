@@ -1,0 +1,58 @@
+.card-fan-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  margin: 0 auto;
+}
+
+.card-fan-card {
+  position: absolute;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .card-fan-card:hover {
+    transform: translateY(-8px);
+    z-index: 100 !important;
+  }
+}
+
+.card-fan-card.selected {
+  transform: translateY(-12px);
+  z-index: 100 !important;
+}
+
+.card-fan-compact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.card-fan-badge {
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: bold;
+}
+
+.card-fan-mini {
+  position: relative;
+  height: 56px;
+  width: 84px;
+}
+
+.card-fan-mini-card {
+  position: absolute;
+}
+
+@media (max-width: 640px) {
+  .card-fan-mini {
+    height: 50px;
+    width: 76px;
+  }
+}
