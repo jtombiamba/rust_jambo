@@ -89,6 +89,7 @@ impl UserRepository {
                         longitude: ActiveValue::NotSet,
                         country_code: ActiveValue::NotSet,
                         city: ActiveValue::NotSet,
+                        frozen_until: ActiveValue::NotSet,
                         created_at: Set(now),
                         updated_at: Set(now),
                     };

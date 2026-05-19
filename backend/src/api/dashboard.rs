@@ -505,4 +505,26 @@ mod tests {
         let resp = test::call_service(&app, req).await;
         assert!(!resp.status().is_success());
     }
+
+    #[actix_web::test]
+    async fn respond_accept_account_frozen() {
+        let mock = Arc::new(MockGameOrchestrator::ok());
+        mock.set_accept_invite_result(Err(GameError::AccountFrozen {
+            until: "2026-05-18T12:00:00+00:00".to_string(),
+        }));
+        let app = make_app(mock).await;
+        let user = authenticated_user();
+        let game_id = Uuid::new_v4();
+
+        let req = test::TestRequest::post()
+            .uri(&format!("/{game_id}/respond?action=accept"))
+            .to_request();
+        req.extensions_mut().insert(user);
+
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 403);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], false);
+        assert!(body["error"].as_str().unwrap().contains("frozen"));
+    }
 }

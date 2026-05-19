@@ -313,6 +313,7 @@ impl GameService {
 
                 if let Some(profile_model) = profile {
                     let won = player.id == winner_id;
+                    let was_frozen = profile_model.frozen_until.is_some();
                     let mut profile_active: player_profile::ActiveModel = profile_model.into();
                     profile_active.credit = ActiveValue::Set(new_credits);
                     profile_active.game_played =
@@ -327,6 +328,13 @@ impl GameService {
                     if won && is_kora {
                         profile_active.kora_wins =
                             ActiveValue::Set(profile_active.kora_wins.unwrap() + 1);
+                    }
+                    if new_credits <= 0 {
+                        profile_active.frozen_until = ActiveValue::Set(Some(
+                            chrono::Utc::now() + chrono::Duration::seconds(3600_i64),
+                        ));
+                    } else if was_frozen {
+                        profile_active.frozen_until = ActiveValue::Set(None);
                     }
                     profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
                     profile_active.update(txn).await.map_err(|e| {

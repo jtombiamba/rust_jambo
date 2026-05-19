@@ -15,6 +15,7 @@ use crate::database::repositories::{DashboardRepository, UserRepository};
 use crate::game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
 use crate::mailer::{self, Mailer, MailerConfig};
 use crate::messaging::{self, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
+use crate::payment::PaymentService;
 use crate::websocket::manager::WebSocketManager;
 
 #[derive(Clone)]
@@ -29,6 +30,8 @@ pub struct AppState {
     pub dashboard_service: web::Data<Arc<DashboardServiceType>>,
     pub user_cache: web::Data<Arc<UserCache>>,
     pub mailer: web::Data<Arc<dyn Mailer>>,
+    pub payment_service: web::Data<Arc<PaymentService>>,
+    pub config: web::Data<Config>,
     pub auth_middleware: AuthMiddleware,
     pub _rate_limiter_middleware: RateLimiterMiddleware,
 }
@@ -231,6 +234,15 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let auth_middleware = AuthMiddleware::new(redis_client.clone());
     let rate_limiter_middleware = RateLimiterMiddleware::new(redis_client.clone());
 
+    let payment_service = Arc::new(PaymentService::new(
+        config.paypal_client_id.clone(),
+        config.paypal_client_secret.clone(),
+        config.paypal_mode.clone(),
+        config.paypal_unfreeze_amount_eur.clone(),
+        config.paypal_sandbox_url.clone(),
+        config.paypal_live_url.clone(),
+    ));
+
     let db_data = web::Data::new(db_connection.clone());
     let redis_data = web::Data::new(redis_client);
     let rabbitmq_data = web::Data::new(rabbitmq_client);
@@ -241,6 +253,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let dashboard_service_data = web::Data::new(dashboard_service);
     let user_cache_data = web::Data::new(user_cache);
     let mailer_data = web::Data::new(mailer);
+    let payment_service_data = web::Data::new(payment_service);
+    let config_data = web::Data::new(config.clone());
 
     info!("All resources initialized successfully");
 
@@ -255,6 +269,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         dashboard_service: dashboard_service_data,
         user_cache: user_cache_data,
         mailer: mailer_data,
+        payment_service: payment_service_data,
+        config: config_data,
         auth_middleware,
         _rate_limiter_middleware: rate_limiter_middleware,
     })

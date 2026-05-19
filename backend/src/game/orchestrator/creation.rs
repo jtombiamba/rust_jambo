@@ -36,6 +36,14 @@ impl GameOrchestrator {
                 GameError::Internal(Box::new(std::io::Error::other("Player profile not found")))
             })?;
 
+        if let Some(frozen_until) = profile.frozen_until {
+            if frozen_until > chrono::Utc::now() {
+                return Err(GameError::AccountFrozen {
+                    until: frozen_until.to_rfc3339(),
+                });
+            }
+        }
+
         if profile.credit < SOLO_BET {
             return Err(GameError::InsufficientCredits {
                 required: SOLO_BET,
@@ -44,8 +52,15 @@ impl GameOrchestrator {
         }
 
         let new_credit = profile.credit - SOLO_BET;
+        let frozen_until = if new_credit <= 0 {
+            Some(chrono::Utc::now() + chrono::Duration::seconds(3600_i64))
+        } else if profile.frozen_until.is_some() {
+            None
+        } else {
+            profile.frozen_until
+        };
         profile_repo
-            .update_credit(user_id, new_credit)
+            .update_credit_and_frozen_until(user_id, new_credit, frozen_until)
             .await
             .map_err(GameError::Database)?;
 

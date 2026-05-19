@@ -43,6 +43,7 @@ fn map_service_error(e: crate::game::service::GameServiceError) -> GameError {
         GameServiceError::InviteExpired => GameError::InviteExpired,
         GameServiceError::CreatorCannotJoin => GameError::CreatorCannotJoin,
         GameServiceError::GameNotReady => GameError::GameNotReady,
+        GameServiceError::AccountFrozen { until } => GameError::AccountFrozen { until },
         GameServiceError::Internal(msg) => {
             GameError::Internal(Box::new(std::io::Error::other(msg)))
         }

@@ -84,6 +84,13 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@example.com}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-FapFap Game}
+      FREEZE_DURATION_SECS: ${FREEZE_DURATION_SECS:-3600}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET}
+      PAYPAL_MODE: ${PAYPAL_MODE:-sandbox}
+      PAYPAL_UNFREEZE_AMOUNT_EUR: ${PAYPAL_UNFREEZE_AMOUNT_EUR:-1.00}
+      PAYPAL_SANDBOX_URL: ${PAYPAL_SANDBOX_URL:-https://api-m.sandbox.paypal.com}
+      PAYPAL_LIVE_URL: ${PAYPAL_LIVE_URL:-https://api-m.paypal.com}
     networks:
       - internal
     expose:

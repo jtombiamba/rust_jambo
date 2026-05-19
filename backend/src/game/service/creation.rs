@@ -34,6 +34,15 @@ impl GameService {
             })?
             .ok_or_else(|| GameServiceError::Internal("Player profile not found".to_string()))?;
 
+        if let Some(frozen_until) = profile.frozen_until {
+            if frozen_until > chrono::Utc::now() {
+                txn.rollback().await.ok();
+                return Err(GameServiceError::AccountFrozen {
+                    until: frozen_until.to_rfc3339(),
+                });
+            }
+        }
+
         let required_credit = bet * KORA_CREDIT_MULTIPLIER;
         if profile.credit < required_credit {
             txn.rollback().await.ok();
@@ -45,8 +54,16 @@ impl GameService {
 
         let creator_credit_before = profile.credit;
         let new_credit = creator_credit_before - bet;
+        let frozen_until = if new_credit <= 0 {
+            Some(chrono::Utc::now() + chrono::Duration::seconds(3600_i64))
+        } else if profile.frozen_until.is_some() {
+            None
+        } else {
+            profile.frozen_until
+        };
         let mut profile_active: player_profile::ActiveModel = profile.into();
         profile_active.credit = ActiveValue::Set(new_credit);
+        profile_active.frozen_until = ActiveValue::Set(frozen_until);
         profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
         profile_active.update(&txn).await.map_err(|e| {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)

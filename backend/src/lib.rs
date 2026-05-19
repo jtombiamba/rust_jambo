@@ -8,6 +8,7 @@ pub mod game;
 pub mod mailer;
 pub mod messaging;
 pub mod observability;
+pub mod payment;
 pub mod websocket;
 
 pub use config::Config;

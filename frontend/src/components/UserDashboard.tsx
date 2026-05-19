@@ -4,11 +4,19 @@ import { useAuthStore } from '../stores/useAuthStore'
 import GameRules from './GameRules'
 import LeaderboardPanel from './LeaderboardPanel'
 
+function formatFreezeTime(seconds: number): string {
+  if (seconds <= 0) return '0:00'
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
 interface ProfileData {
   credit: number
   game_played: number
   wins: number
   kora_wins: number
+  frozen_until: string | null
 }
 
 interface GameItem {
@@ -99,6 +107,9 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [joiningGameId, setJoiningGameId] = useState<string | null>(null)
   const [showGames, setShowGames] = useState(false)
   const [showLeaderboard, setShowLeaderboard] = useState(false)
+  const [freezeRemainingSec, setFreezeRemainingSec] = useState(0)
+  const [unfreezing, setUnfreezing] = useState(false)
+  const freezeTimerRef = useRef<ReturnType<typeof setInterval>>()
 
   const [statusFilter, setStatusFilter] = useState('')
   const [sortField, setSortField] = useState<SortField>(null)
@@ -115,8 +126,37 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   useEffect(() => {
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current)
+      if (freezeTimerRef.current) clearInterval(freezeTimerRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (freezeRemainingSec <= 0) {
+      if (freezeTimerRef.current) {
+        clearInterval(freezeTimerRef.current)
+        freezeTimerRef.current = undefined
+      }
+      return
+    }
+    freezeTimerRef.current = setInterval(() => {
+      setFreezeRemainingSec(prev => {
+        if (prev <= 1) {
+          if (freezeTimerRef.current) {
+            clearInterval(freezeTimerRef.current)
+            freezeTimerRef.current = undefined
+          }
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => {
+      if (freezeTimerRef.current) {
+        clearInterval(freezeTimerRef.current)
+        freezeTimerRef.current = undefined
+      }
+    }
+  }, [freezeRemainingSec])
 
   const fetchData = useCallback(() => {
     setLoading(true)
@@ -135,6 +175,14 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
         setProfile(profileRes.data)
         setHistory(historyRes.data)
         setInvitations(invRes.data.invitations)
+        if (profileRes.data.frozen_until) {
+          const frozenUntil = new Date(profileRes.data.frozen_until).getTime()
+          const now = Date.now()
+          const remaining = Math.max(0, Math.floor((frozenUntil - now) / 1000))
+          setFreezeRemainingSec(remaining)
+        } else {
+          setFreezeRemainingSec(0)
+        }
         setLoading(false)
       })
       .catch((err) => {
@@ -150,6 +198,63 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   useEffect(() => {
     setPage(1)
   }, [statusFilter, sortField, sortDir, perPage])
+
+  const handleUnfreeze = async () => {
+    setUnfreezing(true)
+    try {
+      const orderRes = await axios.post('/api/me/unfreeze')
+      const { approval_url } = orderRes.data as { order_id: string; approval_url: string }
+
+      const width = 500
+      const height = 600
+      const left = window.screenX + (window.outerWidth - width) / 2
+      const top = window.screenY + (window.outerHeight - height) / 2
+      const popup = window.open(
+        approval_url,
+        'paypal_unfreeze',
+        `width=${width},height=${height},left=${left},top=${top},popup=yes`
+      )
+
+      if (!popup) {
+        showToast('Popup blocked. Please allow popups for this site.')
+        setUnfreezing(false)
+        return
+      }
+
+      await new Promise<void>((resolve) => {
+        const interval = setInterval(() => {
+          try {
+            if (popup.closed) {
+              clearInterval(interval)
+              resolve()
+            }
+          } catch {
+            clearInterval(interval)
+            resolve()
+          }
+        }, 500)
+        setTimeout(() => {
+          try {
+            if (!popup.closed) {
+              popup.close()
+            }
+          } catch {
+            // popup may already be closed or cross-origin
+          }
+          clearInterval(interval)
+          resolve()
+        }, 5 * 60 * 1000)
+      })
+
+      await fetchData()
+      showToast('Payment processed! Account status updated.')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Unfreeze failed'
+      showToast(msg)
+    } finally {
+      setUnfreezing(false)
+    }
+  }
 
   const handleGameClick = (gameId: string) => {
     axios.get<QuickGameResponse>(`/api/me/games/${gameId}`)
@@ -356,20 +461,55 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
 
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-wrap gap-2 sm:gap-3">
-            <button
-              className="px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              disabled={starting}
-              onClick={onStartGame}
-            >
-              {starting ? 'Starting game...' : 'Solo Game'}
-            </button>
-            <button
-              className="px-4 sm:px-6 py-2 sm:py-3 bg-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-purple-700 disabled:opacity-50"
-              disabled={starting}
-              onClick={openMultiplayerModal}
-            >
-              Multiplayer Game
-            </button>
+            {freezeRemainingSec > 0 ? (
+              <div className="w-full">
+                <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 mb-3">
+                  <p className="text-amber-800 font-semibold mb-1">
+                    Account Frozen - No Credits
+                  </p>
+                  <p className="text-amber-600 text-sm mb-2">
+                    You ran out of credits. Auto-unfreeze in:{' '}
+                    <span className="font-bold font-mono text-lg">
+                      {formatFreezeTime(freezeRemainingSec)}
+                    </span>
+                  </p>
+                  <button
+                    className="px-4 py-2 text-sm font-semibold rounded-lg disabled:opacity-50 bg-[#0070ba] hover:bg-[#005ea6] text-white inline-flex items-center gap-2"
+                    disabled={unfreezing}
+                    onClick={handleUnfreeze}
+                  >
+                    {unfreezing ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                        </svg>
+                        Processing...
+                      </>
+                    ) : (
+                      'Request Unfreeze - 1 EUR'
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button
+                  className="px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  disabled={starting}
+                  onClick={onStartGame}
+                >
+                  {starting ? 'Starting game...' : 'Solo Game'}
+                </button>
+                <button
+                  className="px-4 sm:px-6 py-2 sm:py-3 bg-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-purple-700 disabled:opacity-50"
+                  disabled={starting}
+                  onClick={openMultiplayerModal}
+                >
+                  Multiplayer Game
+                </button>
+              </>
+            )}
             <button
               className="px-4 sm:px-6 py-2 sm:py-3 bg-teal-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-teal-700"
               onClick={() => setShowGames(!showGames)}
@@ -418,10 +558,11 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleAcceptInvite(inv.game_id)}
-                      disabled={joiningGameId === inv.game_id}
+                      disabled={joiningGameId === inv.game_id || freezeRemainingSec > 0}
+                      title={freezeRemainingSec > 0 ? 'Account is frozen' : undefined}
                       className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium w-full sm:w-auto"
                     >
-                      {joiningGameId === inv.game_id ? '...' : 'Accept'}
+                      {joiningGameId === inv.game_id ? '...' : freezeRemainingSec > 0 ? 'Frozen' : 'Accept'}
                     </button>
                     <button
                       onClick={() => handleDeclineInvite(inv.game_id)}

@@ -76,12 +76,14 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 game_played: p.game_played,
                 wins: p.wins,
                 kora_wins: p.kora_wins,
+                frozen_until: p.frozen_until.map(|t| t.to_rfc3339()),
             },
             None => PlayerProfileResponse {
                 credit: 500,
                 game_played: 0,
                 wins: 0,
                 kora_wins: 0,
+                frozen_until: None,
             },
         };
 

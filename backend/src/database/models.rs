@@ -246,6 +246,7 @@ pub mod player_profile {
         pub longitude: Option<f64>,
         pub country_code: Option<String>,
         pub city: Option<String>,
+        pub frozen_until: Option<DateTime<Utc>>,
         pub created_at: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
     }

@@ -49,6 +49,7 @@ impl PlayerProfileRepository {
         active.update(&self.connection).await
     }
 
+    #[allow(dead_code)]
     pub async fn update_credit(&self, user_id: Uuid, credit: i32) -> Result<PlayerProfile, DbErr> {
         let profile = player_profile::Entity::find()
             .filter(player_profile::Column::UserId.eq(user_id))
@@ -57,6 +58,24 @@ impl PlayerProfileRepository {
             .ok_or_else(|| DbErr::Custom("PlayerProfile not found".to_string()))?;
         let mut active: player_profile::ActiveModel = profile.into();
         active.credit = Set(credit);
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
+    pub async fn update_credit_and_frozen_until(
+        &self,
+        user_id: Uuid,
+        credit: i32,
+        frozen_until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<PlayerProfile, DbErr> {
+        let profile = player_profile::Entity::find()
+            .filter(player_profile::Column::UserId.eq(user_id))
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("PlayerProfile not found".to_string()))?;
+        let mut active: player_profile::ActiveModel = profile.into();
+        active.credit = Set(credit);
+        active.frozen_until = Set(frozen_until);
         active.updated_at = Set(chrono::Utc::now());
         active.update(&self.connection).await
     }

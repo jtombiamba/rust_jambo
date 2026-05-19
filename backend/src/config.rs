@@ -33,6 +33,13 @@ pub struct Config {
     pub benchmark_mode: bool,
     pub benchmark_bot_delay_ms: u64,
     pub benchmark_skip_credit_check: bool,
+    pub freeze_duration_secs: u64,
+    pub paypal_client_id: String,
+    pub paypal_client_secret: String,
+    pub paypal_mode: String,
+    pub paypal_unfreeze_amount_eur: String,
+    pub paypal_sandbox_url: String,
+    pub paypal_live_url: String,
 }
 
 impl std::fmt::Debug for Config {
@@ -98,6 +105,16 @@ impl std::fmt::Debug for Config {
                 "benchmark_skip_credit_check",
                 &self.benchmark_skip_credit_check,
             )
+            .field("freeze_duration_secs", &self.freeze_duration_secs)
+            .field("paypal_client_id", &"***")
+            .field("paypal_client_secret", &"***")
+            .field("paypal_mode", &self.paypal_mode)
+            .field(
+                "paypal_unfreeze_amount_eur",
+                &self.paypal_unfreeze_amount_eur,
+            )
+            .field("paypal_sandbox_url", &self.paypal_sandbox_url)
+            .field("paypal_live_url", &self.paypal_live_url)
             .finish()
     }
 }
@@ -110,6 +127,13 @@ impl Config {
             .set_default("benchmark_mode", "false")?
             .set_default("benchmark_bot_delay_ms", "100")?
             .set_default("benchmark_skip_credit_check", "true")?
+            .set_default("freeze_duration_secs", "3600")?
+            .set_default("paypal_client_id", "")?
+            .set_default("paypal_client_secret", "")?
+            .set_default("paypal_mode", "sandbox")?
+            .set_default("paypal_unfreeze_amount_eur", "1.00")?
+            .set_default("paypal_sandbox_url", "https://api-m.sandbox.paypal.com")?
+            .set_default("paypal_live_url", "https://api-m.paypal.com")?
             .add_source(Environment::default())
             .build()?;
 
@@ -213,6 +237,19 @@ impl Config {
                 .unwrap_or_else(|_| "true".to_string())
                 .parse()
                 .unwrap_or(true),
+            freeze_duration_secs: env::var("FREEZE_DURATION_SECS")
+                .unwrap_or_else(|_| "3600".to_string())
+                .parse()
+                .unwrap_or(3600),
+            paypal_client_id: env::var("PAYPAL_CLIENT_ID").unwrap_or_default(),
+            paypal_client_secret: env::var("PAYPAL_CLIENT_SECRET").unwrap_or_default(),
+            paypal_mode: env::var("PAYPAL_MODE").unwrap_or_else(|_| "sandbox".to_string()),
+            paypal_unfreeze_amount_eur: env::var("PAYPAL_UNFREEZE_AMOUNT_EUR")
+                .unwrap_or_else(|_| "1.00".to_string()),
+            paypal_sandbox_url: env::var("PAYPAL_SANDBOX_URL")
+                .unwrap_or_else(|_| "https://api-m.sandbox.paypal.com".to_string()),
+            paypal_live_url: env::var("PAYPAL_LIVE_URL")
+                .unwrap_or_else(|_| "https://api-m.paypal.com".to_string()),
         }
     }
 }

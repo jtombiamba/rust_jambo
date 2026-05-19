@@ -104,6 +104,11 @@ fn default_search_limit() -> u64 {
     10
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CaptureOrderRequest {
+    pub order_id: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
