@@ -331,7 +331,8 @@ impl GameService {
                     }
                     if new_credits <= 0 {
                         profile_active.frozen_until = ActiveValue::Set(Some(
-                            chrono::Utc::now() + chrono::Duration::seconds(3600_i64),
+                            chrono::Utc::now()
+                                + chrono::Duration::seconds(self.freeze_duration_secs as i64),
                         ));
                     } else if was_frozen {
                         profile_active.frozen_until = ActiveValue::Set(None);

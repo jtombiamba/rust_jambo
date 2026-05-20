@@ -186,15 +186,23 @@ impl GameService {
 
         let now = chrono::Utc::now();
         let new_credit = profile.credit - bet;
-        let frozen_until_val = if new_credit <= 0 {
-            Some(now + chrono::Duration::seconds(3600_i64))
-        } else if profile.frozen_until.is_some() {
-            None
+        let freeze_duration = chrono::Duration::seconds(self.freeze_duration_secs as i64);
+        let was_previously_frozen = profile.frozen_until.is_some();
+
+        let (final_credit, frozen_until_val) = if new_credit <= 0 {
+            (new_credit, Some(now + freeze_duration))
+        } else if was_previously_frozen {
+            let auto_unfreeze_credit = if new_credit < self.unfreeze_credit_no_payment {
+                self.unfreeze_credit_no_payment
+            } else {
+                new_credit
+            };
+            (auto_unfreeze_credit, None)
         } else {
-            profile.frozen_until
+            (new_credit, profile.frozen_until)
         };
         let mut profile_active: player_profile::ActiveModel = profile.into();
-        profile_active.credit = ActiveValue::Set(new_credit);
+        profile_active.credit = ActiveValue::Set(final_credit);
         profile_active.frozen_until = ActiveValue::Set(frozen_until_val);
         profile_active.updated_at = ActiveValue::Set(now);
         profile_active.update(&txn).await.map_err(|e| {
@@ -208,7 +216,7 @@ impl GameService {
             player_type: ActiveValue::Set(PlayerType::Human),
             name: ActiveValue::Set(user_pseudo.to_string()),
             position: ActiveValue::Set(next_position),
-            credits: ActiveValue::Set(new_credit),
+            credits: ActiveValue::Set(final_credit),
             created_at: ActiveValue::Set(now),
             user_id: ActiveValue::Set(Some(user_id)),
         };

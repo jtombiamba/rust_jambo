@@ -80,6 +80,7 @@ pub async fn capture_unfreeze_order(
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
+    config: web::Data<Config>,
 ) -> HttpResponse {
     if !payment_service.is_configured() {
         return AppError::Internal("Payment service is not configured".into()).error_response();
@@ -107,6 +108,7 @@ pub async fn capture_unfreeze_order(
                     &db,
                     redis_opt.as_mut(),
                     &redis_key,
+                    config.unfreeze_credit_with_payment,
                 )
                 .await;
             }
@@ -138,7 +140,14 @@ pub async fn capture_unfreeze_order(
         let _ = rc.set_ex(&redis_key, "processing", UNFREEZE_TTL_SECS).await;
     }
 
-    unfreeze_user_and_finalize(auth_user.user_id, &db, redis_opt.as_mut(), &redis_key).await
+    unfreeze_user_and_finalize(
+        auth_user.user_id,
+        &db,
+        redis_opt.as_mut(),
+        &redis_key,
+        config.unfreeze_credit_with_payment,
+    )
+    .await
 }
 
 pub async fn paypal_return(
@@ -146,6 +155,7 @@ pub async fn paypal_return(
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
+    config: web::Data<Config>,
 ) -> HttpResponse {
     let query =
         web::Query::<std::collections::HashMap<String, String>>::from_query(req.query_string())
@@ -217,7 +227,7 @@ pub async fn paypal_return(
     let profile_repo =
         crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
     match profile_repo
-        .update_credit_and_frozen_until(user_id, 1, None)
+        .update_credit_and_frozen_until(user_id, config.unfreeze_credit_with_payment, None)
         .await
     {
         Ok(_) => {
@@ -246,11 +256,12 @@ async fn unfreeze_user_and_finalize(
     db: &web::Data<sea_orm::DatabaseConnection>,
     redis_client: Option<&mut RedisClient>,
     redis_key: &str,
+    credit: i32,
 ) -> HttpResponse {
     let profile_repo =
         crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
     match profile_repo
-        .update_credit_and_frozen_until(user_id, 1, None)
+        .update_credit_and_frozen_until(user_id, credit, None)
         .await
     {
         Ok(_) => {

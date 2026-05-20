@@ -95,7 +95,10 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
 
     let db_clone = db_connection.clone();
 
-    let user_repo = Arc::new(UserRepository::new(db_connection.clone()));
+    let user_repo = Arc::new(UserRepository::new(
+        db_connection.clone(),
+        config.default_credit,
+    ));
     let dashboard_repo = Arc::new(DashboardRepository::new(db_connection.clone()));
     let auth_service: Arc<AuthServiceType> =
         Arc::new(crate::api::services::auth_service::AuthService::new(
@@ -114,12 +117,14 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
                 dashboard_repo,
                 user_cache.clone(),
                 rc,
+                config.default_credit,
             ),
         ),
         None => Arc::new(
             crate::api::services::dashboard_service::DashboardService::new(
                 dashboard_repo,
                 user_cache.clone(),
+                config.default_credit,
             ),
         ),
     };
@@ -128,6 +133,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         db_clone,
         redis_client.clone(),
         rabbitmq_client.clone(),
+        config.clone(),
+        mailer.clone(),
     ));
 
     let ws_manager = WebSocketManager::new(redis_client.clone());
@@ -141,11 +148,14 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     {
         let redis_for_canceller = redis_client.clone();
         let db_for_canceller = db_connection.clone();
+        let cancel_config = config.clone();
+        let cancel_mailer = mailer.clone();
         tokio::spawn(async move {
             let game_service = crate::game::service::GameService::new_with_redis(
                 db_for_canceller,
                 redis_for_canceller,
-            );
+            )
+            .with_config(&cancel_config, cancel_mailer);
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
@@ -184,9 +194,28 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     }
 
     {
+        let db_for_freeze = db_connection.clone();
+        let mailer_for_freeze = mailer.clone();
+        let freeze_config = config.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                check_expired_freezes(
+                    &db_for_freeze,
+                    &*mailer_for_freeze,
+                    freeze_config.unfreeze_credit_no_payment,
+                )
+                .await;
+            }
+        });
+    }
+
+    {
         let db_for_leaderboard = db_connection.clone();
         let redis_for_leaderboard = redis_client.clone();
         let user_cache_for_leaderboard = user_cache.clone();
+        let leaderboard_config = config.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
             loop {
@@ -200,6 +229,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
                             crate::cache::leaderboard::refresh_leaderboard(redis, &profiles).await;
                             let user_repo = crate::database::repositories::UserRepository::new(
                                 db_for_leaderboard.clone(),
+                                leaderboard_config.default_credit,
                             );
                             for profile in &profiles {
                                 if let Ok(Some(user)) = user_repo.find_by_id(profile.user_id).await
@@ -274,4 +304,64 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         auth_middleware,
         _rate_limiter_middleware: rate_limiter_middleware,
     })
+}
+
+// TODO: possible to put this function in another file? (mod.rs or create a utils.rs file?)
+async fn check_expired_freezes(db: &sea_orm::DatabaseConnection, mailer: &dyn Mailer, credit: i32) {
+    use crate::database::models::{player_profile, user};
+    use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
+
+    let now = chrono::Utc::now();
+
+    let expired_profiles = match player_profile::Entity::find()
+        .filter(player_profile::Column::FrozenUntil.is_not_null())
+        .filter(player_profile::Column::FrozenUntil.lte(now))
+        .all(db)
+        .await
+    {
+        Ok(profiles) => profiles,
+        Err(e) => {
+            tracing::error!("Failed to query expired freezes: {}", e);
+            return;
+        }
+    };
+
+    // TODO: possible to bulk update here? with update_many?
+    for profile in expired_profiles {
+        let mut active: player_profile::ActiveModel = profile.clone().into();
+        active.credit = ActiveValue::Set(credit);
+        active.frozen_until = ActiveValue::Set(None);
+        active.updated_at = ActiveValue::Set(chrono::Utc::now());
+
+        if let Err(e) = active.update(db).await {
+            tracing::error!(
+                "Failed to update profile {} for expired freeze: {}",
+                profile.user_id,
+                e
+            );
+            continue;
+        }
+
+        match user::Entity::find_by_id(profile.user_id).one(db).await {
+            Ok(Some(user_model)) => {
+                if let Err(e) = mailer.send_freeze_expired(&user_model.email, credit).await {
+                    tracing::error!(
+                        "Failed to send unfreeze email to {}: {}",
+                        user_model.email,
+                        e
+                    );
+                }
+            }
+            Ok(None) => {
+                tracing::warn!("No user found for profile {}", profile.user_id);
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to look up user for profile {}: {}",
+                    profile.user_id,
+                    e
+                );
+            }
+        }
+    }
 }

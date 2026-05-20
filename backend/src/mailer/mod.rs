@@ -86,6 +86,13 @@ pub struct InvitationEmail {
     pub decline_link: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FreezeExpiredEmail {
+    pub frontend_url: String,
+    pub app_name: String,
+    pub credit: i32,
+}
+
 #[async_trait]
 pub trait Mailer: Send + Sync {
     async fn send_password_reset(&self, to_email: &str, reset_link: &str) -> Result<(), String>;
@@ -96,6 +103,8 @@ pub trait Mailer: Send + Sync {
         inviter_name: &str,
         game_id: &str,
     ) -> Result<(), String>;
+
+    async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String>;
 }
 
 pub struct SmtpMailer {
@@ -123,7 +132,6 @@ impl SmtpMailer {
                 .credentials(creds)
                 .build()
         } else {
-            // builder_dangerous defaults to Tls::None (plain/unencrypted SMTP, e.g. MailHog)
             lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(
                 &config.smtp_host,
             )
@@ -145,6 +153,13 @@ impl SmtpMailer {
         handlebars
             .register_template_string("invitation", include_str!("../../templates/invitation.hbs"))
             .map_err(|e| format!("Failed to register invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "freeze_expired",
+                include_str!("../../templates/freeze_expired.hbs"),
+            )
+            .map_err(|e| format!("Failed to register freeze_expired template: {e}"))?;
 
         Ok(Self {
             mailer: transport,
@@ -241,6 +256,39 @@ impl Mailer for SmtpMailer {
         tracing::info!("Invitation email sent to {to_email} for game {game_id}");
         Ok(())
     }
+
+    async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String> {
+        let data = FreezeExpiredEmail {
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+            credit,
+        };
+
+        let html = self
+            .handlebars
+            .render("freeze_expired", &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        let email = Message::builder()
+            .from(self.from.clone())
+            .to(to)
+            .subject("Your account has been unfrozen - FapFap Game")
+            .header(lettre::message::header::ContentType::TEXT_HTML)
+            .body(html)
+            .map_err(|e| format!("Failed to build email: {e}"))?;
+
+        self.mailer
+            .send(email)
+            .await
+            .map_err(|e| format!("Failed to send email: {e}"))?;
+
+        tracing::info!("Freeze expired email sent to {to_email}");
+        Ok(())
+    }
 }
 
 pub struct NoopMailer {
@@ -263,6 +311,13 @@ impl NoopMailer {
         handlebars
             .register_template_string("invitation", include_str!("../../templates/invitation.hbs"))
             .map_err(|e| format!("Failed to register invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "freeze_expired",
+                include_str!("../../templates/freeze_expired.hbs"),
+            )
+            .map_err(|e| format!("Failed to register freeze_expired template: {e}"))?;
 
         Ok(Self {
             handlebars: Arc::new(handlebars),
@@ -322,6 +377,24 @@ impl Mailer for NoopMailer {
 
         tracing::info!(
             "[MAILER] Invitation email for {to_email} from {inviter_name} (game {game_id}):\nAccept: {accept_link}\nDecline: {decline_link}\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String> {
+        let data = FreezeExpiredEmail {
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+            credit,
+        };
+
+        let html = self
+            .handlebars
+            .render("freeze_expired", &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Freeze expired email for {to_email} (credit={credit}):\nHTML:\n{html}"
         );
         Ok(())
     }

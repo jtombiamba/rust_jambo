@@ -142,7 +142,7 @@ impl DashboardRepoTrait for MockDashboardRepo {
 
 fn make_service(repo: Arc<MockDashboardRepo>) -> DashboardService<MockDashboardRepo> {
     let cache = Arc::new(UserCache::new());
-    DashboardService::new(repo, cache)
+    DashboardService::new(repo, cache, 500)
 }
 
 #[tokio::test]

@@ -10,14 +10,17 @@ pub use types::{
 
 use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
+use std::sync::Arc;
 use tracing;
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::database::models::{GameStatus, PlayerType};
 use crate::database::repositories::{GameRepository, PlayerRepository};
 use crate::error::GameError;
 use crate::game::bot_scheduler::BotScheduler;
 use crate::game::service::{CardPlayResult, GameService, MultiplayerGameOutcome};
+use crate::mailer::Mailer;
 use crate::messaging::{RabbitMQClient, RedisClient};
 use crate::observability::CorrelationId;
 
@@ -68,8 +71,11 @@ impl GameOrchestrator {
         db: DatabaseConnection,
         redis: Option<RedisClient>,
         rabbitmq: Option<RabbitMQClient>,
+        config: Config,
+        mailer: Arc<dyn Mailer>,
     ) -> Self {
-        let game_service = GameService::new_with_redis(db.clone(), redis.clone());
+        let game_service =
+            GameService::new_with_redis(db.clone(), redis.clone()).with_config(&config, mailer);
         let bot_scheduler = BotScheduler::new(db.clone(), rabbitmq, redis);
         Self {
             db,

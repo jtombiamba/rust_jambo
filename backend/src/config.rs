@@ -34,6 +34,9 @@ pub struct Config {
     pub benchmark_bot_delay_ms: u64,
     pub benchmark_skip_credit_check: bool,
     pub freeze_duration_secs: u64,
+    pub default_credit: i32,
+    pub unfreeze_credit_no_payment: i32,
+    pub unfreeze_credit_with_payment: i32,
     pub paypal_client_id: String,
     pub paypal_client_secret: String,
     pub paypal_mode: String,
@@ -106,6 +109,15 @@ impl std::fmt::Debug for Config {
                 &self.benchmark_skip_credit_check,
             )
             .field("freeze_duration_secs", &self.freeze_duration_secs)
+            .field("default_credit", &self.default_credit)
+            .field(
+                "unfreeze_credit_no_payment",
+                &self.unfreeze_credit_no_payment,
+            )
+            .field(
+                "unfreeze_credit_with_payment",
+                &self.unfreeze_credit_with_payment,
+            )
             .field("paypal_client_id", &"***")
             .field("paypal_client_secret", &"***")
             .field("paypal_mode", &self.paypal_mode)
@@ -127,7 +139,10 @@ impl Config {
             .set_default("benchmark_mode", "false")?
             .set_default("benchmark_bot_delay_ms", "100")?
             .set_default("benchmark_skip_credit_check", "true")?
-            .set_default("freeze_duration_secs", "3600")?
+            .set_default("freeze_duration_secs", "86400")?
+            .set_default("default_credit", "500")?
+            .set_default("unfreeze_credit_no_payment", "250")?
+            .set_default("unfreeze_credit_with_payment", "500")?
             .set_default("paypal_client_id", "")?
             .set_default("paypal_client_secret", "")?
             .set_default("paypal_mode", "sandbox")?
@@ -238,9 +253,21 @@ impl Config {
                 .parse()
                 .unwrap_or(true),
             freeze_duration_secs: env::var("FREEZE_DURATION_SECS")
-                .unwrap_or_else(|_| "3600".to_string())
+                .unwrap_or_else(|_| "86400".to_string())
                 .parse()
-                .unwrap_or(3600),
+                .unwrap_or(86400),
+            default_credit: env::var("DEFAULT_CREDIT")
+                .unwrap_or_else(|_| "500".to_string())
+                .parse()
+                .unwrap_or(500),
+            unfreeze_credit_no_payment: env::var("UNFREEZE_CREDIT_NO_PAYMENT")
+                .unwrap_or_else(|_| "250".to_string())
+                .parse()
+                .unwrap_or(250),
+            unfreeze_credit_with_payment: env::var("UNFREEZE_CREDIT_WITH_PAYMENT")
+                .unwrap_or_else(|_| "500".to_string())
+                .parse()
+                .unwrap_or(500),
             paypal_client_id: env::var("PAYPAL_CLIENT_ID").unwrap_or_default(),
             paypal_client_secret: env::var("PAYPAL_CLIENT_SECRET").unwrap_or_default(),
             paypal_mode: env::var("PAYPAL_MODE").unwrap_or_else(|_| "sandbox".to_string()),
