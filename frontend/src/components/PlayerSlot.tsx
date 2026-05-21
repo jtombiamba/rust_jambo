@@ -50,11 +50,11 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
 }) => {
   const displayCards = cards.length > 0
     ? cards
-    : (type === 'bot' && remainingCount !== undefined
+    : (remainingCount !== undefined && remainingCount > 0
         ? Array.from({ length: remainingCount }, (_, i) => i)
         : []);
 
-  const handleCardClick = type === 'human' && cards.length > 0 && onCardClick
+  const handleCardClick = cards.length > 0 && onCardClick
     ? (cardIndex: number) => onCardClick(cardIndex)
     : undefined;
 

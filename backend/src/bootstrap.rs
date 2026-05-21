@@ -269,6 +269,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         config.paypal_client_secret.clone(),
         config.paypal_mode.clone(),
         config.paypal_unfreeze_amount_eur.clone(),
+        config.paypal_topup_amount_eur.clone(),
         config.paypal_sandbox_url.clone(),
         config.paypal_live_url.clone(),
     ));

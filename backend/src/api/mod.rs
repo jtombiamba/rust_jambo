@@ -7,4 +7,5 @@ pub mod leaderboard;
 pub mod middleware;
 pub mod quickie;
 pub mod services;
+pub mod topup;
 pub mod unfreeze;

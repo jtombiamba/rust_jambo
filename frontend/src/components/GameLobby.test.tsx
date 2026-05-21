@@ -14,8 +14,8 @@ vi.mock('axios', () => ({
 
 vi.mock('../stores/useAuthStore', () => ({
   useAuthStore: vi.fn(() => ({
-    isAuthenticated: false,
-    user: null,
+    isAuthenticated: true,
+    user: { pseudo: 'Alice', email: 'alice@test.com' },
     isLoaded: true,
   })),
 }));
@@ -26,6 +26,8 @@ const mockSend = vi.fn();
 vi.mock('../hooks/useWebSocket', () => ({
   useWebSocket: vi.fn(({ onMessage }: {
     gameId: string;
+    playerId?: string;
+    playerPosition?: number;
     onMessage?: (event: { type: string; [key: string]: unknown }) => void;
     onError?: (error: Event) => void;
     onClose?: (event: CloseEvent) => void;
@@ -333,7 +335,7 @@ describe('GameLobby', () => {
           players: [
             {
               id: 'p1',
-              type: 'bot',
+              type: 'human',
               name: 'Alice',
               position: 0,
               display_position: 0,

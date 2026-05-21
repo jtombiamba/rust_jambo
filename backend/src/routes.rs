@@ -95,6 +95,14 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         .route(
                             "/unfreeze/capture",
                             web::post().to(crate::api::unfreeze::capture_unfreeze_order),
+                        )
+                        .route(
+                            "/topup",
+                            web::post().to(crate::api::topup::create_topup_order),
+                        )
+                        .route(
+                            "/topup/capture",
+                            web::post().to(crate::api::topup::capture_topup_order),
                         ),
                 )
                 .service(
@@ -134,6 +142,14 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         .route(
                             "/cancel",
                             web::get().to(crate::api::unfreeze::paypal_cancel),
+                        )
+                        .route(
+                            "/topup/return",
+                            web::get().to(crate::api::topup::paypal_return_topup),
+                        )
+                        .route(
+                            "/topup/cancel",
+                            web::get().to(crate::api::topup::paypal_cancel_topup),
                         ),
                 ),
         )

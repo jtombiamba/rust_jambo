@@ -1,4 +1,5 @@
-use crate::messaging::events::GameEvent;
+use crate::game::service::compute_display_position;
+use crate::messaging::events::{GameEvent, GameStartedPlayer};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
@@ -262,6 +263,32 @@ impl WebSocketManager {
         }
     }
 
+    /// Send a message to only the connections belonging to a specific player within a game.
+    pub async fn send_to_player(&self, game_id: Uuid, player_id: Uuid, message: &str) {
+        let inner = self.inner.read().await;
+        if let Some(connections) = inner.connections.get(&game_id) {
+            metrics::WS_MESSAGES_SENT_TOTAL.inc();
+            for connection in connections {
+                if connection.player_id == Some(player_id) {
+                    if let Err(e) = connection.sender.send(message.to_string()) {
+                        tracing::debug!(
+                            "Failed to send message to player {} (conn {}): {}",
+                            player_id,
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
+                }
+            }
+        } else {
+            tracing::debug!(
+                "No connections for game {}, message not sent to player {}",
+                game_id,
+                player_id
+            );
+        }
+    }
+
     /// Get the number of active connections for a specific game.
     #[allow(dead_code)]
     pub async fn connection_count(&self, game_id: Uuid) -> usize {
@@ -365,7 +392,19 @@ impl WebSocketManager {
 
                     if let Some(game_id) = Self::extract_game_id_from_channel(&channel) {
                         if Self::shard_for_game(game_id, shard_count) == shard {
-                            manager.broadcast_to_game(game_id, &payload).await;
+                            match serde_json::from_str::<GameEvent>(&payload) {
+                                Ok(event) => {
+                                    manager.route_event(game_id, event).await;
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to parse game event for game {}: {}",
+                                        game_id,
+                                        e
+                                    );
+                                    manager.broadcast_to_game(game_id, &payload).await;
+                                }
+                            }
                         }
                     } else {
                         tracing::warn!("Received message on unexpected channel: {}", channel);
@@ -375,6 +414,68 @@ impl WebSocketManager {
             });
         }
         Ok(())
+    }
+
+    /// Route a parsed game event to the appropriate delivery method.
+    async fn route_event(&self, game_id: Uuid, event: GameEvent) {
+        match &event {
+            GameEvent::CardsDealt { player_id, .. } => {
+                self.send_to_player(game_id, *player_id, &event.to_json())
+                    .await;
+            }
+            GameEvent::GameStarted { .. } => {
+                self.send_game_started_per_player(game_id, &event).await;
+            }
+            _ => {
+                self.broadcast_to_game(game_id, &event.to_json()).await;
+            }
+        }
+    }
+
+    /// Send a personalized GameStarted event to each player with `display_position`
+    /// rotated so that the receiving player is always at position 0 (south).
+    async fn send_game_started_per_player(&self, game_id: Uuid, event: &GameEvent) {
+        let (players, current_turn, correlation_id) = match event {
+            GameEvent::GameStarted {
+                players,
+                current_turn,
+                correlation_id,
+                ..
+            } => (players, current_turn, correlation_id),
+            _ => return,
+        };
+
+        let num_players = players.len();
+
+        for player in players {
+            let my_position = player.position as usize;
+
+            let rotated_players: Vec<GameStartedPlayer> = players
+                .iter()
+                .map(|p| {
+                    let display_pos =
+                        compute_display_position(p.position as usize, num_players, my_position);
+                    GameStartedPlayer {
+                        id: p.id,
+                        name: p.name.clone(),
+                        position: p.position,
+                        display_position: display_pos as i32,
+                        cards_count: p.cards_count,
+                        player_type: p.player_type.clone(),
+                    }
+                })
+                .collect();
+
+            let personalized = GameEvent::GameStarted {
+                game_id,
+                players: rotated_players,
+                current_turn: *current_turn,
+                correlation_id: *correlation_id,
+            };
+
+            self.send_to_player(game_id, player.id, &personalized.to_json())
+                .await;
+        }
     }
 
     fn shard_for_game(game_id: Uuid, shard_count: usize) -> usize {
@@ -454,3 +555,7 @@ impl WebSocketManager {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "manager_tests.rs"]
+mod tests;

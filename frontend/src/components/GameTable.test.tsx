@@ -22,19 +22,13 @@ vi.mock('./GameOverModal', () => ({
 
 function createPlayers(count: number): GamePlayer[] {
   const names = ['Alice', 'Bob', 'Charlie', 'Diana'];
-  const cardsList = [
-    [0, 1, 2, 3, 4],
-    [5, 6, 7, 8, 9],
-    [10, 11, 12, 13, 14],
-    [15, 16, 17, 18, 19],
-  ];
   return names.slice(0, count).map((name, i) => ({
     id: `player-${i}`,
     type: i === 0 ? 'human' : 'bot',
     name,
     position: i,
     display_position: i,
-    cards: cardsList[i],
+    cards: i === 0 ? [0, 1, 2, 3, 4] : [],
   }));
 }
 
@@ -165,9 +159,14 @@ describe('GameTable', () => {
     });
 
     it('renders bot player cards face-down', () => {
-      render(<GameTable players={createPlayers(2)} />);
-      const card5 = screen.getByTestId('card-5');
-      expect(card5.classList).toContain('bg-blue-800');
+      render(<GameTable
+        players={createPlayers(2)}
+        remainingCards={{ 'player-0': 5, 'player-1': 5 }}
+      />);
+      const botSlot = screen.getByTestId('player-slot-player-1');
+      const botCards = botSlot.querySelectorAll('[data-testid^="card-"]');
+      expect(botCards.length).toBe(5);
+      expect(botCards[0].classList).toContain('bg-blue-800');
     });
   });
 

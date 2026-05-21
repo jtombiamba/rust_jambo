@@ -97,8 +97,11 @@ services:
       PAYPAL_CLIENT_SECRET: "EH3PT62FDJ0RIWIHU6CIUNdJFtmm8If9QYyxICy7yYyY9ccT7TGi8W97H2tradvjPfAU3Oh8DTXTIw00"
       PAYPAL_MODE: sandbox
       PAYPAL_UNFREEZE_AMOUNT_EUR: "1.00"
+      PAYPAL_TOPUP_AMOUNT_EUR: "1.00"
       PAYPAL_SANDBOX_URL: https://api-m.sandbox.paypal.com
       PAYPAL_LIVE_URL: https://api-m.paypal.com
+      TOPUP_CREDIT_THRESHOLD: "50"
+      TOPUP_CREDIT_AMOUNT: "500"
     ports:
       - "8080:8080"
     volumes:

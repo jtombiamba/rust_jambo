@@ -85,6 +85,7 @@ function AppContent() {
     const inviteAction = params.get('invite_action')
     if (inviteGameId && inviteAction) {
       if (isAuthenticated) {
+        clearPendingInvite()
         processInvite(inviteGameId, inviteAction)
         const url = new URL(window.location.href)
         url.searchParams.delete('invite_game_id')
@@ -95,7 +96,7 @@ function AppContent() {
         openAuthModal('Log in to respond to the game invitation.')
       }
     }
-  }, [isAuthenticated, openAuthModal, processInvite])
+  }, [isAuthenticated, openAuthModal, processInvite, clearPendingInvite])
 
   useEffect(() => {
     if (isAuthenticated && pendingInvite) {

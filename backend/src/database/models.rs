@@ -122,6 +122,7 @@ pub mod game_card {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+// TODO: round is not used anywhere, refactor and delete it from database models and Table
 pub mod round {
     use super::*;
 

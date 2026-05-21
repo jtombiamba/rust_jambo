@@ -78,13 +78,14 @@ pub enum GameEvent {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameStartedPlayer {
     pub id: Uuid,
     pub name: String,
     pub position: i32,
     pub display_position: i32,
     pub cards_count: i32,
+    pub player_type: String, // "human" or "bot"
 }
 
 impl GameEvent {

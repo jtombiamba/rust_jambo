@@ -8,6 +8,7 @@ pub struct PaymentService {
     client_id: String,
     client_secret: String,
     unfreeze_amount_eur: String,
+    topup_amount_eur: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +75,7 @@ impl PaymentService {
         client_secret: String,
         mode: String,
         unfreeze_amount_eur: String,
+        topup_amount_eur: String,
         sandbox_url: String,
         live_url: String,
     ) -> Self {
@@ -93,6 +95,7 @@ impl PaymentService {
             client_id,
             client_secret,
             unfreeze_amount_eur,
+            topup_amount_eur,
         }
     }
 
@@ -139,6 +142,61 @@ impl PaymentService {
                     value: self.unfreeze_amount_eur.clone(),
                 },
                 description: "Account unfreeze - 1 hour access".to_string(),
+            }],
+            application_context: ApplicationContext {
+                return_url: return_url.to_string(),
+                cancel_url: cancel_url.to_string(),
+            },
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/v2/checkout/orders", self.base_url))
+            .bearer_auth(&access_token)
+            .json(&order_request)
+            .send()
+            .await
+            .map_err(|e| format!("PayPal create order request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("PayPal create order failed ({}): {}", status, body));
+        }
+
+        let order: CreateOrderResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse PayPal create order response: {}", e))?;
+
+        let approval_url = order
+            .links
+            .iter()
+            .find(|link| link.rel == "approve")
+            .map(|link| link.href.clone())
+            .ok_or_else(|| "No approval URL in PayPal response".to_string())?;
+
+        Ok(OrderCreated {
+            order_id: order.id,
+            approval_url,
+        })
+    }
+
+    pub async fn create_topup_order(
+        &self,
+        return_url: &str,
+        cancel_url: &str,
+    ) -> Result<OrderCreated, String> {
+        let access_token = self.get_access_token().await?;
+
+        let order_request = CreateOrderRequest {
+            intent: "CAPTURE".to_string(),
+            purchase_units: vec![PurchaseUnit {
+                amount: Amount {
+                    currency_code: "EUR".to_string(),
+                    value: self.topup_amount_eur.clone(),
+                },
+                description: "Credit top-up".to_string(),
             }],
             application_context: ApplicationContext {
                 return_url: return_url.to_string(),
@@ -227,6 +285,7 @@ mod tests {
             "".to_string(),
             "sandbox".to_string(),
             "1.00".to_string(),
+            "1.00".to_string(),
             "https://sandbox.paypal.com".to_string(),
             "https://live.paypal.com".to_string(),
         );
@@ -239,6 +298,7 @@ mod tests {
             "client_id".to_string(),
             "secret".to_string(),
             "sandbox".to_string(),
+            "1.00".to_string(),
             "1.00".to_string(),
             "https://sandbox.paypal.com".to_string(),
             "https://live.paypal.com".to_string(),
@@ -253,6 +313,7 @@ mod tests {
             "secret".to_string(),
             "sandbox".to_string(),
             "1.00".to_string(),
+            "1.00".to_string(),
             "https://sandbox.paypal.com".to_string(),
             "https://live.paypal.com".to_string(),
         );
@@ -265,6 +326,7 @@ mod tests {
             "id".to_string(),
             "secret".to_string(),
             "live".to_string(),
+            "1.00".to_string(),
             "1.00".to_string(),
             "https://sandbox.paypal.com".to_string(),
             "https://live.paypal.com".to_string(),

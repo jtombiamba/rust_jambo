@@ -41,8 +41,11 @@ pub struct Config {
     pub paypal_client_secret: String,
     pub paypal_mode: String,
     pub paypal_unfreeze_amount_eur: String,
+    pub paypal_topup_amount_eur: String,
     pub paypal_sandbox_url: String,
     pub paypal_live_url: String,
+    pub topup_credit_threshold: i32,
+    pub topup_credit_amount: i32,
 }
 
 impl std::fmt::Debug for Config {
@@ -125,8 +128,11 @@ impl std::fmt::Debug for Config {
                 "paypal_unfreeze_amount_eur",
                 &self.paypal_unfreeze_amount_eur,
             )
+            .field("paypal_topup_amount_eur", &self.paypal_topup_amount_eur)
             .field("paypal_sandbox_url", &self.paypal_sandbox_url)
             .field("paypal_live_url", &self.paypal_live_url)
+            .field("topup_credit_threshold", &self.topup_credit_threshold)
+            .field("topup_credit_amount", &self.topup_credit_amount)
             .finish()
     }
 }
@@ -147,8 +153,11 @@ impl Config {
             .set_default("paypal_client_secret", "")?
             .set_default("paypal_mode", "sandbox")?
             .set_default("paypal_unfreeze_amount_eur", "1.00")?
+            .set_default("paypal_topup_amount_eur", "1.00")?
             .set_default("paypal_sandbox_url", "https://api-m.sandbox.paypal.com")?
             .set_default("paypal_live_url", "https://api-m.paypal.com")?
+            .set_default("topup_credit_threshold", "50")?
+            .set_default("topup_credit_amount", "500")?
             .add_source(Environment::default())
             .build()?;
 
@@ -273,10 +282,20 @@ impl Config {
             paypal_mode: env::var("PAYPAL_MODE").unwrap_or_else(|_| "sandbox".to_string()),
             paypal_unfreeze_amount_eur: env::var("PAYPAL_UNFREEZE_AMOUNT_EUR")
                 .unwrap_or_else(|_| "1.00".to_string()),
+            paypal_topup_amount_eur: env::var("PAYPAL_TOPUP_AMOUNT_EUR")
+                .unwrap_or_else(|_| "1.00".to_string()),
             paypal_sandbox_url: env::var("PAYPAL_SANDBOX_URL")
                 .unwrap_or_else(|_| "https://api-m.sandbox.paypal.com".to_string()),
             paypal_live_url: env::var("PAYPAL_LIVE_URL")
                 .unwrap_or_else(|_| "https://api-m.paypal.com".to_string()),
+            topup_credit_threshold: env::var("TOPUP_CREDIT_THRESHOLD")
+                .unwrap_or_else(|_| "50".to_string())
+                .parse()
+                .unwrap_or(50),
+            topup_credit_amount: env::var("TOPUP_CREDIT_AMOUNT")
+                .unwrap_or_else(|_| "500".to_string())
+                .parse()
+                .unwrap_or(500),
         }
     }
 }

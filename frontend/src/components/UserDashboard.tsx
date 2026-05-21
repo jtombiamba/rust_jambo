@@ -110,6 +110,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [showLeaderboard, setShowLeaderboard] = useState(false)
   const [freezeRemainingSec, setFreezeRemainingSec] = useState(0)
   const [unfreezing, setUnfreezing] = useState(false)
+  const [toppingUp, setToppingUp] = useState(false)
   const freezeTimerRef = useRef<ReturnType<typeof setInterval>>()
 
   const [statusFilter, setStatusFilter] = useState('')
@@ -200,6 +201,62 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     setPage(1)
   }, [statusFilter, sortField, sortDir, perPage])
 
+  const handleTopUp = async () => {
+    setToppingUp(true)
+    try {
+      const orderRes = await axios.post('/api/me/topup')
+      const { approval_url } = orderRes.data as { order_id: string; approval_url: string }
+
+      const width = 500
+      const height = 600
+      const left = window.screenX + (window.outerWidth - width) / 2
+      const top = window.screenY + (window.outerHeight - height) / 2
+      const popup = window.open(
+        approval_url,
+        'paypal_topup',
+        `width=${width},height=${height},left=${left},top=${top},popup=yes`
+      )
+
+      if (!popup) {
+        showToast('Popup blocked. Please allow popups for this site.')
+        setToppingUp(false)
+        return
+      }
+
+      await new Promise<void>((resolve) => {
+        const interval = setInterval(() => {
+          try {
+            if (popup.closed) {
+              clearInterval(interval)
+              resolve()
+            }
+          } catch {
+            clearInterval(interval)
+            resolve()
+          }
+        }, 500)
+        setTimeout(() => {
+          try {
+            if (!popup.closed) {
+              popup.close()
+            }
+          } catch {
+            // popup may already be closed or cross-origin
+          }
+          clearInterval(interval)
+          resolve()
+        }, 5 * 60 * 1000)
+      })
+
+      await fetchData()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Top up failed'
+      showToast(msg)
+    } finally {
+      setToppingUp(false)
+    }
+  }
+
   const handleUnfreeze = async () => {
     setUnfreezing(true)
     try {
@@ -248,7 +305,6 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       })
 
       await fetchData()
-      showToast('Payment processed! Account status updated.')
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Unfreeze failed'
       showToast(msg)
@@ -509,6 +565,25 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 >
                   Multiplayer Game
                 </button>
+                {(profile?.credit ?? 0) > 0 && (profile?.credit ?? 0) < 50 && (
+                  <button
+                    className="px-4 sm:px-6 py-2 sm:py-3 bg-[#0070ba] hover:bg-[#005ea6] text-white text-sm sm:text-base font-semibold rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+                    disabled={toppingUp}
+                    onClick={handleTopUp}
+                  >
+                    {toppingUp ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                        </svg>
+                        Processing...
+                      </>
+                    ) : (
+                      'Top Up (+500)'
+                    )}
+                  </button>
+                )}
               </>
             )}
             <button

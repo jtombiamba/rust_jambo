@@ -3,53 +3,72 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::api::dto::requests::CaptureOrderRequest;
-use crate::api::dto::responses::{UnfreezeCaptureResponse, UnfreezeOrderResponse};
+use crate::api::dto::responses::{TopupCaptureResponse, TopupOrderResponse};
+use crate::api::unfreeze::close_window_html;
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::messaging::RedisClient;
 
-const UNFREEZE_CAPTURE_PREFIX: &str = "unfreeze_capture";
-const UNFREEZE_ORDER_PREFIX: &str = "unfreeze_order";
-const UNFREEZE_TTL_SECS: u64 = 86400;
-const UNFREEZE_IDEM_PREFIX: &str = "unfreeze";
+const TOPUP_CAPTURE_PREFIX: &str = "topup_capture";
+const TOPUP_ORDER_PREFIX: &str = "topup_order";
+const TOPUP_TTL_SECS: u64 = 86400;
+const TOPUP_IDEM_PREFIX: &str = "topup";
 
-pub(crate) fn close_window_html(title: &str) -> HttpResponse {
-    HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .body(format!(
-            "<!DOCTYPE html><html><head><title>{}</title></head>\
-             <body style=\"font-family:sans-serif;text-align:center;padding-top:40px\">\
-             <p>{}</p><p>This window will close automatically.</p>\
-             <script>window.close();</script></body></html>",
-            title, title
-        ))
-}
-
-pub async fn create_unfreeze_order(
+pub async fn create_topup_order(
     auth_user: AuthenticatedUser,
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
     config: web::Data<Config>,
     redis: web::Data<Option<RedisClient>>,
+    db: web::Data<sea_orm::DatabaseConnection>,
 ) -> HttpResponse {
     if !payment_service.is_configured() {
         return AppError::Internal("Payment service is not configured".into()).error_response();
     }
 
+    let profile_repo =
+        crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
+    let profile = match profile_repo.find_by_user_id(auth_user.user_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return AppError::NotFound("Player profile not found".into()).error_response();
+        }
+        Err(e) => return AppError::Database(e).error_response(),
+    };
+
+    if let Some(frozen_until) = profile.frozen_until {
+        if frozen_until > chrono::Utc::now() {
+            return AppError::Forbidden("Account is frozen, cannot top up".into()).error_response();
+        }
+    }
+
+    if profile.credit >= config.topup_credit_threshold {
+        return AppError::BadRequest("Credit is already sufficient, top up not needed".into())
+            .error_response();
+    }
+
+    if profile.credit <= 0 {
+        return AppError::BadRequest("Credit depleted, use unfreeze instead".into())
+            .error_response();
+    }
+
     let return_url = format!(
-        "{}/api/paypal/return",
+        "{}/api/paypal/topup/return",
         config.frontend_url.trim_end_matches('/')
     );
     let cancel_url = format!(
-        "{}/api/paypal/cancel",
+        "{}/api/paypal/topup/cancel",
         config.frontend_url.trim_end_matches('/')
     );
 
-    let order = match payment_service.create_order(&return_url, &cancel_url).await {
+    let order = match payment_service
+        .create_topup_order(&return_url, &cancel_url)
+        .await
+    {
         Ok(o) => o,
         Err(e) => {
             tracing::error!(
-                "PayPal create order failed for user {}: {}",
+                "PayPal create topup order failed for user {}: {}",
                 auth_user.user_id,
                 e
             );
@@ -58,23 +77,19 @@ pub async fn create_unfreeze_order(
     };
 
     if let Some(mut redis_client) = redis.get_ref().clone() {
-        let order_key = format!("{}:{}", UNFREEZE_ORDER_PREFIX, order.order_id);
+        let order_key = format!("{}:{}", TOPUP_ORDER_PREFIX, order.order_id);
         let _ = redis_client
-            .set_ex(
-                &order_key,
-                &auth_user.user_id.to_string(),
-                UNFREEZE_TTL_SECS,
-            )
+            .set_ex(&order_key, &auth_user.user_id.to_string(), TOPUP_TTL_SECS)
             .await;
     }
 
-    HttpResponse::Ok().json(UnfreezeOrderResponse {
+    HttpResponse::Ok().json(TopupOrderResponse {
         order_id: order.order_id,
         approval_url: order.approval_url,
     })
 }
 
-pub async fn capture_unfreeze_order(
+pub async fn capture_topup_order(
     auth_user: AuthenticatedUser,
     body: web::Json<CaptureOrderRequest>,
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
@@ -89,26 +104,37 @@ pub async fn capture_unfreeze_order(
     let order_id = &body.order_id;
     let redis_key = format!(
         "{}:{}:{}",
-        UNFREEZE_CAPTURE_PREFIX, auth_user.user_id, order_id
+        TOPUP_CAPTURE_PREFIX, auth_user.user_id, order_id
     );
-    let paypal_idem_key = format!("{}_{}", UNFREEZE_IDEM_PREFIX, order_id);
+    let paypal_idem_key = format!("{}_{}", TOPUP_IDEM_PREFIX, order_id);
 
     let mut redis_opt = redis.get_ref().clone();
     if let Some(ref mut rc) = redis_opt {
         match rc.get(&redis_key).await {
             Ok(Some(ref cached)) if cached == "completed" => {
-                return HttpResponse::Ok().json(UnfreezeCaptureResponse {
+                let profile_repo = crate::database::repositories::PlayerProfileRepository::new(
+                    db.get_ref().clone(),
+                );
+                let credit = profile_repo
+                    .find_by_user_id(auth_user.user_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|p| p.credit)
+                    .unwrap_or(0);
+                return HttpResponse::Ok().json(TopupCaptureResponse {
                     success: true,
-                    message: "Account unfrozen. Welcome back!".into(),
+                    message: "Credits already added!".into(),
+                    credit,
                 });
             }
             Ok(Some(ref cached)) if cached == "processing" => {
-                return unfreeze_user_and_finalize(
+                return topup_user_and_finalize(
                     auth_user.user_id,
                     &db,
                     redis_opt.as_mut(),
                     &redis_key,
-                    config.unfreeze_credit_with_payment,
+                    config.topup_credit_amount,
                 )
                 .await;
             }
@@ -137,20 +163,20 @@ pub async fn capture_unfreeze_order(
     }
 
     if let Some(ref mut rc) = redis_opt {
-        let _ = rc.set_ex(&redis_key, "processing", UNFREEZE_TTL_SECS).await;
+        let _ = rc.set_ex(&redis_key, "processing", TOPUP_TTL_SECS).await;
     }
 
-    unfreeze_user_and_finalize(
+    topup_user_and_finalize(
         auth_user.user_id,
         &db,
         redis_opt.as_mut(),
         &redis_key,
-        config.unfreeze_credit_with_payment,
+        config.topup_credit_amount,
     )
     .await
 }
 
-pub async fn paypal_return(
+pub async fn paypal_return_topup(
     req: HttpRequest,
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
     redis: web::Data<Option<RedisClient>>,
@@ -173,7 +199,7 @@ pub async fn paypal_return(
     let mut redis_opt = redis.get_ref().clone();
     let user_id = match redis_opt.as_mut() {
         Some(rc) => {
-            let order_key = format!("{}:{}", UNFREEZE_ORDER_PREFIX, order_id);
+            let order_key = format!("{}:{}", TOPUP_ORDER_PREFIX, order_id);
             match rc.get(&order_key).await {
                 Ok(Some(uid_str)) => Uuid::parse_str(&uid_str).ok(),
                 _ => None,
@@ -187,19 +213,19 @@ pub async fn paypal_return(
         None => return close_window_html("Payment Error — session expired"),
     };
 
-    let redis_key = format!("{}:{}:{}", UNFREEZE_CAPTURE_PREFIX, user_id, order_id);
-    let paypal_idem_key = format!("{}_{}", UNFREEZE_IDEM_PREFIX, order_id);
+    let redis_key = format!("{}:{}:{}", TOPUP_CAPTURE_PREFIX, user_id, order_id);
+    let paypal_idem_key = format!("{}_{}", TOPUP_IDEM_PREFIX, order_id);
 
     if let Some(ref mut rc) = redis_opt {
         if let Ok(Some(ref cached)) = rc.get(&redis_key).await {
             if cached == "completed" {
-                return close_window_html("Payment Complete — Account Unfrozen");
+                return close_window_html("Payment Complete — Credits Added");
             }
         }
     }
 
     if let Some(ref mut rc) = redis_opt {
-        let _ = rc.set_ex(&redis_key, "processing", UNFREEZE_TTL_SECS).await;
+        let _ = rc.set_ex(&redis_key, "processing", TOPUP_TTL_SECS).await;
     }
 
     let capture_ok = match payment_service
@@ -209,7 +235,7 @@ pub async fn paypal_return(
         Ok(r) => r.success,
         Err(e) => {
             tracing::error!(
-                "PayPal capture on return failed for order {}: {}",
+                "PayPal capture on return for topup failed for order {}: {}",
                 order_id,
                 e
             );
@@ -226,93 +252,69 @@ pub async fn paypal_return(
 
     let profile_repo =
         crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
+    let profile = match profile_repo.find_by_user_id(user_id).await {
+        Ok(Some(p)) => p,
+        _ => return close_window_html("Payment Error — profile not found"),
+    };
+
+    let new_credit = profile.credit + config.topup_credit_amount;
+
     match profile_repo
-        .update_credit_and_frozen_until(user_id, config.unfreeze_credit_with_payment, None)
+        .update_credit_and_frozen_until(user_id, new_credit, profile.frozen_until)
         .await
     {
         Ok(_) => {
             if let Some(ref mut rc) = redis_opt {
-                let _ = rc.set_ex(&redis_key, "completed", UNFREEZE_TTL_SECS).await;
+                let _ = rc.set_ex(&redis_key, "completed", TOPUP_TTL_SECS).await;
             }
-            close_window_html("Payment Complete — Account Unfrozen")
+            close_window_html("Payment Complete — Credits Added")
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to unfreeze user {} after payment on return: {}",
-                user_id,
-                e
-            );
-            close_window_html("Payment Complete — unfreeze in progress (retry if needed)")
+            tracing::error!("Failed to top up user {} after payment: {}", user_id, e);
+            close_window_html("Payment Complete — top up in progress (retry if needed)")
         }
     }
 }
 
-pub async fn paypal_cancel() -> HttpResponse {
+pub async fn paypal_cancel_topup() -> HttpResponse {
     close_window_html("Payment Cancelled")
 }
 
-async fn unfreeze_user_and_finalize(
+async fn topup_user_and_finalize(
     user_id: Uuid,
     db: &web::Data<sea_orm::DatabaseConnection>,
     redis_client: Option<&mut RedisClient>,
     redis_key: &str,
-    credit: i32,
+    credit_add: i32,
 ) -> HttpResponse {
     let profile_repo =
         crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
+    let profile = match profile_repo.find_by_user_id(user_id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return AppError::NotFound("Player profile not found".into()).error_response();
+        }
+        Err(e) => return AppError::Database(e).error_response(),
+    };
+
+    let new_credit = profile.credit + credit_add;
     match profile_repo
-        .update_credit_and_frozen_until(user_id, credit, None)
+        .update_credit_and_frozen_until(user_id, new_credit, profile.frozen_until)
         .await
     {
         Ok(_) => {
             if let Some(rc) = redis_client {
-                let _ = rc.set_ex(redis_key, "completed", UNFREEZE_TTL_SECS).await;
+                let _ = rc.set_ex(redis_key, "completed", TOPUP_TTL_SECS).await;
             }
-            HttpResponse::Ok().json(UnfreezeCaptureResponse {
+            HttpResponse::Ok().json(TopupCaptureResponse {
                 success: true,
-                message: "Account unfrozen. Welcome back!".into(),
+                message: "Credits topped up!".into(),
+                credit: new_credit,
             })
         }
         Err(e) => {
-            tracing::error!("Failed to unfreeze user {} after payment: {}", user_id, e);
+            tracing::error!("Failed to top up user {} after payment: {}", user_id, e);
             AppError::Database(e).error_response()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use uuid::Uuid;
-
-    #[test]
-    fn test_unfreeze_redis_key_format() {
-        let user_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        let order_id = "ORDER123";
-        let key = format!("{}:{}:{}", UNFREEZE_CAPTURE_PREFIX, user_id, order_id);
-        assert_eq!(
-            key,
-            "unfreeze_capture:550e8400-e29b-41d4-a716-446655440000:ORDER123"
-        );
-    }
-
-    #[test]
-    fn test_paypal_idem_key_format() {
-        let order_id = "ORDER456";
-        let key = format!("{}_{}", UNFREEZE_IDEM_PREFIX, order_id);
-        assert_eq!(key, "unfreeze_ORDER456");
-    }
-
-    #[test]
-    fn test_order_redis_key_format() {
-        let order_id = "ORDER789";
-        let key = format!("{}:{}", UNFREEZE_ORDER_PREFIX, order_id);
-        assert_eq!(key, "unfreeze_order:ORDER789");
-    }
-
-    #[test]
-    fn test_close_window_html_returns_ok() {
-        let resp = close_window_html("Test Title");
-        assert!(resp.status().is_success());
     }
 }
