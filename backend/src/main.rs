@@ -42,9 +42,12 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to bootstrap application");
 
+    let cors_config = config.clone();
+
     HttpServer::new(move || {
         info!("Registering routes");
         App::new()
+            .wrap(cors_config.cors_middleware())
             .wrap(crate::observability::middleware::CorrelationIdMiddleware)
             .wrap(crate::api::middleware::ip_forward::ForwardedIpMiddleware)
             .configure(|cfg| configure(cfg, &state))

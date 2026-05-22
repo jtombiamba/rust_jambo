@@ -17,6 +17,8 @@ pub struct Config {
     pub jwt_expiry_hours: i64,
     pub ip_hash_pepper: String,
     pub frontend_url: String,
+    pub cors_allowed_origins: String,
+    pub cors_max_age: u64,
     pub rabbitmq_publish_max_retries: u32,
     pub rabbitmq_publish_initial_retry_delay_ms: u64,
     pub rabbitmq_publish_max_retry_delay_ms: u64,
@@ -65,6 +67,8 @@ impl std::fmt::Debug for Config {
             .field("jwt_expiry_hours", &self.jwt_expiry_hours)
             .field("ip_hash_pepper", &"***")
             .field("frontend_url", &self.frontend_url)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field("cors_max_age", &self.cors_max_age)
             .field(
                 "rabbitmq_publish_max_retries",
                 &self.rabbitmq_publish_max_retries,
@@ -158,10 +162,39 @@ impl Config {
             .set_default("paypal_live_url", "https://api-m.paypal.com")?
             .set_default("topup_credit_threshold", "50")?
             .set_default("topup_credit_amount", "500")?
+            .set_default("cors_allowed_origins", "http://localhost:5173")?
+            .set_default("cors_max_age", "3600")?
             .add_source(Environment::default())
             .build()?;
 
         cfg.try_deserialize()
+    }
+
+    pub fn cors_middleware(&self) -> actix_cors::Cors {
+        use actix_cors::Cors;
+
+        let mut cors = Cors::default()
+            .allow_any_method()
+            .allow_any_header()
+            .supports_credentials()
+            .max_age(self.cors_max_age as usize);
+
+        let origins: Vec<&str> = self
+            .cors_allowed_origins
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if origins.contains(&"*") {
+            cors = cors.allow_any_origin();
+        } else {
+            for origin in origins {
+                cors = cors.allowed_origin(origin);
+            }
+        }
+
+        cors
     }
 
     #[allow(clippy::should_implement_trait)]
@@ -296,6 +329,12 @@ impl Config {
                 .unwrap_or_else(|_| "500".to_string())
                 .parse()
                 .unwrap_or(500),
+            cors_allowed_origins: env::var("CORS_ALLOWED_ORIGINS")
+                .unwrap_or_else(|_| "http://localhost:5173".to_string()),
+            cors_max_age: env::var("CORS_MAX_AGE")
+                .unwrap_or_else(|_| "3600".to_string())
+                .parse()
+                .unwrap_or(3600),
         }
     }
 }

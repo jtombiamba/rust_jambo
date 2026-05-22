@@ -11,6 +11,7 @@ repository = ""
 
 [dependencies]
 actix-web = "4.6"
+actix-cors = "0.7"
 actix-http = "3"
 actix-ws = "0.3"
 actix-rt = "2.9"
