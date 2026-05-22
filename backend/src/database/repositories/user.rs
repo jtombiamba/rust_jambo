@@ -10,11 +10,15 @@ use crate::database::traits::UserRepoTrait;
 
 pub struct UserRepository {
     connection: DatabaseConnection,
+    default_credit: i32,
 }
 
 impl UserRepository {
-    pub fn new(connection: DatabaseConnection) -> Self {
-        Self { connection }
+    pub fn new(connection: DatabaseConnection, default_credit: i32) -> Self {
+        Self {
+            connection,
+            default_credit,
+        }
     }
 
     pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, DbErr> {
@@ -61,6 +65,7 @@ impl UserRepository {
         let email = email.to_string();
         let password_hash = password_hash.to_string();
         let ip_hash = ip_hash.map(|s| s.to_string());
+        let default_credit = self.default_credit;
 
         self.connection
             .transaction(|txn| {
@@ -80,7 +85,7 @@ impl UserRepository {
                         id: Set(profile_id),
                         user_id: Set(user_id),
                         player_type: Set(PlayerType::Human),
-                        credit: Set(500),
+                        credit: Set(default_credit),
                         game_played: Set(0),
                         wins: Set(0),
                         kora_wins: Set(0),
@@ -89,6 +94,7 @@ impl UserRepository {
                         longitude: ActiveValue::NotSet,
                         country_code: ActiveValue::NotSet,
                         city: ActiveValue::NotSet,
+                        frozen_until: ActiveValue::NotSet,
                         created_at: Set(now),
                         updated_at: Set(now),
                     };

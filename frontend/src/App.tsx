@@ -85,6 +85,7 @@ function AppContent() {
     const inviteAction = params.get('invite_action')
     if (inviteGameId && inviteAction) {
       if (isAuthenticated) {
+        clearPendingInvite()
         processInvite(inviteGameId, inviteAction)
         const url = new URL(window.location.href)
         url.searchParams.delete('invite_game_id')
@@ -95,7 +96,7 @@ function AppContent() {
         openAuthModal('Log in to respond to the game invitation.')
       }
     }
-  }, [isAuthenticated, openAuthModal, processInvite])
+  }, [isAuthenticated, openAuthModal, processInvite, clearPendingInvite])
 
   useEffect(() => {
     if (isAuthenticated && pendingInvite) {
@@ -315,6 +316,8 @@ function AppContent() {
   const gamesPlayed = stats?.games_played ?? 0
   const gamesAllowed = stats?.games_allowed ?? 10
   const gamesRemaining = Math.max(0, gamesAllowed - gamesPlayed)
+  const anonymousCredits = stats?.credits ?? 0
+  const anonymousOutOfCredits = anonymousCredits <= 0
 
   return (
     <div>
@@ -384,7 +387,7 @@ function AppContent() {
             </div>
             <div className="bg-white p-3 sm:p-4 rounded shadow">
               <p className="text-sm sm:text-lg">Credits</p>
-              <p className="text-xl sm:text-2xl font-bold">{stats?.credits ?? 0}</p>
+              <p className="text-xl sm:text-2xl font-bold">{anonymousCredits}</p>
             </div>
             <div className="bg-white p-3 sm:p-4 rounded shadow">
               <p className="text-sm sm:text-lg">Remaining</p>
@@ -392,7 +395,16 @@ function AppContent() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 sm:gap-3 mt-4 sm:mt-6">
-            {gamesPlayed < gamesAllowed && (
+            {anonymousOutOfCredits ? (
+              <div className="w-full bg-amber-50 border border-amber-300 rounded-lg p-4">
+                <p className="text-amber-800 font-semibold mb-1">
+                  Out of credits
+                </p>
+                <p className="text-amber-600 text-sm">
+                  Create an account to unlock more games and access the unfreeze system.
+                </p>
+              </div>
+            ) : gamesPlayed < gamesAllowed && (
               <button
                 className="px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 disabled={startingGame}

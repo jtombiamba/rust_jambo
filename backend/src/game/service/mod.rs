@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::config::Config;
+use crate::mailer::Mailer;
 use crate::messaging::RedisClient;
 pub use types::{CardPlayResult, GameServiceError, MultiplayerGameOutcome};
 
@@ -26,7 +28,6 @@ pub const fn compute_display_position(
     (num_players + actual_pos - my_pos) % num_players
 }
 
-/// Check if a database error is a PostgreSQL unique constraint violation (code 23505).
 fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
     if let sea_orm::DbErr::Exec(exec_err) = e {
         exec_err.to_string().contains("23505")
@@ -39,6 +40,9 @@ pub struct GameService {
     db: sea_orm::DatabaseConnection,
     redis_client: Option<RedisClient>,
     accept_invite_locks: tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
+    pub(crate) freeze_duration_secs: u64,
+    pub(crate) unfreeze_credit_no_payment: i32,
+    mailer: Option<Arc<dyn Mailer>>,
 }
 
 impl GameService {
@@ -48,6 +52,9 @@ impl GameService {
             db,
             redis_client: None,
             accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
+            freeze_duration_secs: 86400,
+            unfreeze_credit_no_payment: 250,
+            mailer: None,
         }
     }
 
@@ -59,11 +66,53 @@ impl GameService {
             db,
             redis_client,
             accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
+            freeze_duration_secs: 86400,
+            unfreeze_credit_no_payment: 250,
+            mailer: None,
         }
+    }
+
+    pub fn with_config(mut self, config: &Config, mailer: Arc<dyn Mailer>) -> Self {
+        self.freeze_duration_secs = config.freeze_duration_secs;
+        self.unfreeze_credit_no_payment = config.unfreeze_credit_no_payment;
+        self.mailer = Some(mailer);
+        self
     }
 
     #[allow(dead_code)]
     pub fn redis_client(&self) -> Option<RedisClient> {
         self.redis_client.clone()
+    }
+
+    pub(crate) async fn send_unfreeze_email(&self, user_id: Uuid) {
+        let mailer = match &self.mailer {
+            Some(m) => m.clone(),
+            None => return,
+        };
+
+        use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+        let profile = match crate::database::models::player_profile::Entity::find()
+            .filter(crate::database::models::player_profile::Column::UserId.eq(user_id))
+            .one(&self.db)
+            .await
+        {
+            Ok(Some(p)) => p,
+            _ => return,
+        };
+
+        let user = match crate::database::models::user::Entity::find_by_id(profile.user_id)
+            .one(&self.db)
+            .await
+        {
+            Ok(Some(u)) => u,
+            _ => return,
+        };
+
+        if let Err(e) = mailer
+            .send_freeze_expired(&user.email, profile.credit)
+            .await
+        {
+            tracing::error!("Failed to send unfreeze email to {}: {}", user.email, e);
+        }
     }
 }

@@ -142,7 +142,7 @@ impl DashboardRepoTrait for MockDashboardRepo {
 
 fn make_service(repo: Arc<MockDashboardRepo>) -> DashboardService<MockDashboardRepo> {
     let cache = Arc::new(UserCache::new());
-    DashboardService::new(repo, cache)
+    DashboardService::new(repo, cache, 500)
 }
 
 #[tokio::test]
@@ -174,4 +174,45 @@ async fn test_list_games_empty() {
         .unwrap();
     assert_eq!(resp.games.len(), 0);
     assert_eq!(resp.total, 0);
+}
+
+#[tokio::test]
+async fn test_get_profile_with_frozen_until() {
+    use crate::database::models::PlayerType as ModelPlayerType;
+
+    let repo = Arc::new(MockDashboardRepo::new());
+    let frozen_time = chrono::Utc::now() + chrono::Duration::hours(1);
+
+    let profile = PlayerProfile {
+        id: Uuid::new_v4(),
+        user_id: Uuid::new_v4(),
+        player_type: ModelPlayerType::Human,
+        credit: 0,
+        game_played: 5,
+        wins: 2,
+        kora_wins: 0,
+        winning_streak: 0,
+        latitude: None,
+        longitude: None,
+        country_code: None,
+        city: None,
+        frozen_until: Some(frozen_time),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+    *repo.profile.lock().unwrap() = Some(profile.clone());
+
+    let service = make_service(repo);
+    let resp = service.get_profile(profile.user_id).await.unwrap();
+    assert_eq!(resp.credit, 0);
+    assert!(resp.frozen_until.is_some());
+}
+
+#[tokio::test]
+async fn test_get_profile_not_frozen() {
+    let repo = Arc::new(MockDashboardRepo::new());
+    let service = make_service(repo);
+    let resp = service.get_profile(Uuid::new_v4()).await.unwrap();
+    assert_eq!(resp.credit, 500);
+    assert!(resp.frozen_until.is_none());
 }

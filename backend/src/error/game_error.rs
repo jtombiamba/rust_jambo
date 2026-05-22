@@ -52,6 +52,33 @@ pub enum GameError {
     CreatorCannotJoin,
     #[error("Game is not in ready state")]
     GameNotReady,
+    #[error("Account is frozen until {until}")]
+    AccountFrozen { until: String },
     #[error("{0}")]
     Internal(#[source] Box<dyn std::error::Error + Send>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_account_frozen_display() {
+        let err = GameError::AccountFrozen {
+            until: "2026-05-18T12:00:00+00:00".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "Account is frozen until 2026-05-18T12:00:00+00:00"
+        );
+    }
+
+    #[test]
+    fn test_insufficient_credits_display() {
+        let err = GameError::InsufficientCredits {
+            required: 10,
+            current: 5,
+        };
+        assert_eq!(err.to_string(), "Insufficient credits: need 10 but have 5");
+    }
 }

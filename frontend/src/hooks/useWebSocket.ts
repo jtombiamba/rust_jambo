@@ -10,6 +10,7 @@ export interface GameStartedPlayer {
   position: number;
   display_position: number;
   cards_count: number;
+  player_type: string;
 }
 
 export type GameEvent =
@@ -20,6 +21,7 @@ export type GameEvent =
   | { type: 'player_joined'; game_id: string; player_id: string; user_id: string; pseudo: string; position: number; player_count: number; max_players: number }
   | { type: 'game_cancelled'; game_id: string; reason: string }
   | { type: 'game_ready'; game_id: string }
+  | { type: 'cards_dealt'; game_id: string; player_id: string; cards: number[] }
   | { type: 'game_started'; game_id: string; players: GameStartedPlayer[]; current_turn: string }
   | { type: 'player_disconnected'; game_id: string; player_id: string; player_position: number; disconnected_at?: string }
   | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string };
@@ -31,6 +33,8 @@ export type OutgoingMessage =
 
 interface UseWebSocketOptions {
   gameId: string;
+  playerId?: string;
+  playerPosition?: number;
   onMessage?: (event: GameEvent) => void;
   onError?: (error: Event) => void;
   onClose?: (event: CloseEvent) => void;
@@ -51,9 +55,16 @@ class WebSocketManager {
   private isConnecting = false;
   private usageCount = 0;
   private gameId: string;
+  private playerId: string | null = null;
+  private playerPosition: number | null = null;
 
   private constructor(gameId: string) {
     this.gameId = gameId;
+  }
+
+  setPlayerIdentity(playerId: string, playerPosition: number): void {
+    this.playerId = playerId;
+    this.playerPosition = playerPosition;
   }
 
   static getInstance(gameId: string): WebSocketManager {
@@ -158,14 +169,20 @@ class WebSocketManager {
     ws.onopen = () => {
       this.isConnecting = false;
       log(`WebSocket connected to game ${this.gameId}`);
-      // Send join message
-      this.send({ type: 'join_game', game_id: this.gameId });
+      // Send join message with player identity if available
+      const joinMsg: OutgoingMessage = {
+        type: 'join_game',
+        game_id: this.gameId,
+        ...(this.playerId ? { player_id: this.playerId } : {}),
+        ...(this.playerPosition !== null ? { player_position: this.playerPosition } : {}),
+      };
+      this.send(joinMsg);
     };
 
       ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed', 'player_joined', 'game_cancelled', 'game_ready', 'game_started', 'player_disconnected', 'player_reconnected'].includes(data.type)) {
+        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed', 'player_joined', 'game_cancelled', 'game_ready', 'cards_dealt', 'game_started', 'player_disconnected', 'player_reconnected'].includes(data.type)) {
           log('Received GameEvent:', data);
           this.subscribers.forEach(callback => callback(data as GameEvent));
         } else {
@@ -237,6 +254,8 @@ class WebSocketManager {
  */
 export function useWebSocket({
   gameId,
+  playerId,
+  playerPosition,
   onMessage,
   onError,
   onClose,
@@ -306,6 +325,12 @@ export function useWebSocket({
     // Subscribe to the WebSocket manager
     try {
       const manager = WebSocketManager.getInstance(gameId);
+
+      // Set player identity on the manager so it's included in join_game message
+      if (playerId && playerPosition !== undefined) {
+        manager.setPlayerIdentity(playerId, playerPosition);
+      }
+
       unsubscribeRef.current = manager.subscribe(
         wrappedOnMessage,
         wrappedOnError,
@@ -329,7 +354,7 @@ export function useWebSocket({
       console.error('Failed to subscribe to WebSocket manager:', err);
       setLastError('Invalid gameId');
     }
-  }, [gameId, onMessage, onError, onClose, updateConnectionStatus]);
+  }, [gameId, playerId, playerPosition, onMessage, onError, onClose, updateConnectionStatus]);
 
   // Expose a manual reconnect function
   const reconnect = useCallback(() => {

@@ -14,8 +14,8 @@ vi.mock('axios', () => ({
 
 vi.mock('../stores/useAuthStore', () => ({
   useAuthStore: vi.fn(() => ({
-    isAuthenticated: false,
-    user: null,
+    isAuthenticated: true,
+    user: { pseudo: 'Alice', email: 'alice@test.com' },
     isLoaded: true,
   })),
 }));
@@ -26,6 +26,8 @@ const mockSend = vi.fn();
 vi.mock('../hooks/useWebSocket', () => ({
   useWebSocket: vi.fn(({ onMessage }: {
     gameId: string;
+    playerId?: string;
+    playerPosition?: number;
     onMessage?: (event: { type: string; [key: string]: unknown }) => void;
     onError?: (error: Event) => void;
     onClose?: (event: CloseEvent) => void;
@@ -314,6 +316,7 @@ describe('GameLobby', () => {
               position: 0,
               display_position: 0,
               cards_count: 5,
+              player_type: 'human',
             },
             {
               id: 'p2',
@@ -321,6 +324,7 @@ describe('GameLobby', () => {
               position: 1,
               display_position: 1,
               cards_count: 5,
+              player_type: 'bot',
             },
           ],
           current_turn: 'p1',
@@ -333,7 +337,7 @@ describe('GameLobby', () => {
           players: [
             {
               id: 'p1',
-              type: 'bot',
+              type: 'human',
               name: 'Alice',
               position: 0,
               display_position: 0,
@@ -368,9 +372,9 @@ describe('GameLobby', () => {
           type: 'game_started',
           game_id: 'g1',
           players: [
-            { id: 'p1', name: 'Alice', position: 0, display_position: 0, cards_count: 5 },
-            { id: 'p2', name: 'Bob', position: 1, display_position: 1, cards_count: 5 },
-            { id: 'p3', name: 'Charlie', position: 2, display_position: 2, cards_count: 5 },
+            { id: 'p1', name: 'Alice', position: 0, display_position: 0, cards_count: 5, player_type: 'human' },
+            { id: 'p2', name: 'Bob', position: 1, display_position: 1, cards_count: 5, player_type: 'bot' },
+            { id: 'p3', name: 'Charlie', position: 2, display_position: 2, cards_count: 5, player_type: 'bot' },
           ],
           current_turn: 'p3',
         });
@@ -394,7 +398,7 @@ describe('GameLobby', () => {
           type: 'game_started',
           game_id: 'g1',
           players: [
-            { id: 'p1', name: 'Alice', position: 0, display_position: 0, cards_count: 5 },
+            { id: 'p1', name: 'Alice', position: 0, display_position: 0, cards_count: 5, player_type: 'human' },
           ],
           current_turn: 'non-existent-id',
         });
@@ -422,7 +426,7 @@ describe('GameLobby', () => {
           type: 'game_started',
           game_id: 'g1',
           players: [
-            { id: 'p1', name: 'Alice', position: 0, display_position: 0, cards_count: 5 },
+            { id: 'p1', name: 'Alice', position: 0, display_position: 0, cards_count: 5, player_type: 'human' },
           ],
           current_turn: 'p1',
         });

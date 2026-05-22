@@ -117,7 +117,7 @@ const GameTable: React.FC<GameTableProps> = ({
           position={position}
           type={player.type}
           cards={player.cards}
-          cardsFaceUp={player.type === 'human'}
+          cardsFaceUp={player.cards.length > 0}
           remainingCount={remainingCards[player.id]}
           isCurrentTurn={isCurrentTurn}
           onCardClick={(cardIndex) => onCardClick?.(player.id, cardIndex)}
@@ -325,7 +325,7 @@ const GameTable: React.FC<GameTableProps> = ({
                     position={position}
                     type={player.type}
                     cards={player.cards}
-                    cardsFaceUp={player.type === 'human'}
+                    cardsFaceUp={player.cards.length > 0}
                     remainingCount={remainingCards[player.id]}
                     isCurrentTurn={isCurrentTurn}
                     onCardClick={(cardIndex) => onCardClick?.(player.id, cardIndex)}

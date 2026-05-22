@@ -120,6 +120,8 @@ pub enum GameServiceError {
     CreatorCannotJoin,
     #[error("Game is not in ready state")]
     GameNotReady,
+    #[error("Account is frozen until {until}")]
+    AccountFrozen { until: String },
     #[error("Duplicate player: user is already a player in this game")]
     DuplicatePlayer,
     #[error("Optimistic lock conflict: game state was modified concurrently")]

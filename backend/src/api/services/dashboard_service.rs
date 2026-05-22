@@ -27,6 +27,7 @@ pub struct DashboardService<R: DashboardRepoTrait> {
     repo: Arc<R>,
     user_cache: Arc<UserCache>,
     redis_client: Option<RedisClient>,
+    default_credit: i32,
 }
 
 #[derive(Debug)]
@@ -36,11 +37,12 @@ pub struct SendInvitesParams {
 }
 
 impl<R: DashboardRepoTrait> DashboardService<R> {
-    pub fn new(repo: Arc<R>, user_cache: Arc<UserCache>) -> Self {
+    pub fn new(repo: Arc<R>, user_cache: Arc<UserCache>, default_credit: i32) -> Self {
         Self {
             repo,
             user_cache,
             redis_client: None,
+            default_credit,
         }
     }
 
@@ -48,11 +50,13 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
         repo: Arc<R>,
         user_cache: Arc<UserCache>,
         redis_client: RedisClient,
+        default_credit: i32,
     ) -> Self {
         Self {
             repo,
             user_cache,
             redis_client: Some(redis_client),
+            default_credit,
         }
     }
 
@@ -76,12 +80,14 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 game_played: p.game_played,
                 wins: p.wins,
                 kora_wins: p.kora_wins,
+                frozen_until: p.frozen_until.map(|t| t.to_rfc3339()),
             },
             None => PlayerProfileResponse {
-                credit: 500,
+                credit: self.default_credit,
                 game_played: 0,
                 wins: 0,
                 kora_wins: 0,
+                frozen_until: None,
             },
         };
 

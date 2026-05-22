@@ -122,6 +122,7 @@ pub mod game_card {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+// TODO: round is not used anywhere, refactor and delete it from database models and Table
 pub mod round {
     use super::*;
 
@@ -246,6 +247,7 @@ pub mod player_profile {
         pub longitude: Option<f64>,
         pub country_code: Option<String>,
         pub city: Option<String>,
+        pub frozen_until: Option<DateTime<Utc>>,
         pub created_at: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
     }

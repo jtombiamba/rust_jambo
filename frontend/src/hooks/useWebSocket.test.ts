@@ -28,6 +28,7 @@ function createGameStartedEvent(): GameEvent {
       position: 0,
       display_position: 0,
       cards_count: 5,
+      player_type: 'human',
     }],
     current_turn: '11111111-1111-1111-1111-111111111111',
   };
@@ -86,6 +87,7 @@ describe('useWebSocket - GameEvent validation', () => {
         position: 0,
         display_position: 0,
         cards_count: 5,
+        player_type: 'human',
       };
       expect(typeof player.id).toBe('string');
       expect(typeof player.name).toBe('string');

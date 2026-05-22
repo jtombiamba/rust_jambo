@@ -108,3 +108,28 @@ pub struct UserSearchItem {
 pub struct UserSearchResponse {
     pub users: Vec<UserSearchItem>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct UnfreezeOrderResponse {
+    pub order_id: String,
+    pub approval_url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnfreezeCaptureResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TopupOrderResponse {
+    pub order_id: String,
+    pub approval_url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TopupCaptureResponse {
+    pub success: bool,
+    pub message: String,
+    pub credit: i32,
+}

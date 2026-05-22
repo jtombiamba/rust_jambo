@@ -24,6 +24,7 @@ interface LoginPayload {
 interface AuthState {
   isAuthenticated: boolean
   user: UserInfo | null
+  frozenUntil: string | null
   authModalOpen: boolean
   authView: AuthView
   authError: { error: string; field?: string } | null
@@ -33,6 +34,7 @@ interface AuthState {
   closeAuthModal: () => void
   setAuthView: (view: AuthView) => void
   clearPendingInvite: () => void
+  setFrozenUntil: (frozenUntil: string | null) => void
   checkAuth: () => Promise<void>
   register: (data: RegisterPayload) => Promise<boolean>
   login: (data: LoginPayload) => Promise<boolean>
@@ -43,6 +45,7 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: false,
   user: null,
+  frozenUntil: null,
   authModalOpen: false,
   authView: 'choice',
   authError: null,
@@ -53,6 +56,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   closeAuthModal: () => set({ authModalOpen: false, authError: null }),
   setAuthView: (view) => set({ authView: view, authError: null }),
   clearPendingInvite: () => set({ pendingInviteMessage: null }),
+  setFrozenUntil: (frozenUntil) => set({ frozenUntil }),
 
   checkAuth: async () => {
     try {
@@ -135,6 +139,6 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       // ignore
     }
-    set({ isAuthenticated: false, user: null })
+    set({ isAuthenticated: false, user: null, frozenUntil: null })
   },
 }))

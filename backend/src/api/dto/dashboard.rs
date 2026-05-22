@@ -6,6 +6,8 @@ pub struct PlayerProfileResponse {
     pub game_played: i32,
     pub wins: i32,
     pub kora_wins: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frozen_until: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

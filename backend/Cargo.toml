@@ -45,6 +45,7 @@ lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
 handlebars = "6"
 clap = { version = "4", features = ["derive"] }
 sysinfo = "0.31"
+reqwest = { version = "0.12", features = ["json"] }
 
 [[bin]]
 name = "ai-worker"

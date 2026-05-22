@@ -15,6 +15,7 @@ use crate::database::repositories::{DashboardRepository, UserRepository};
 use crate::game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
 use crate::mailer::{self, Mailer, MailerConfig};
 use crate::messaging::{self, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
+use crate::payment::PaymentService;
 use crate::websocket::manager::WebSocketManager;
 
 #[derive(Clone)]
@@ -29,6 +30,8 @@ pub struct AppState {
     pub dashboard_service: web::Data<Arc<DashboardServiceType>>,
     pub user_cache: web::Data<Arc<UserCache>>,
     pub mailer: web::Data<Arc<dyn Mailer>>,
+    pub payment_service: web::Data<Arc<PaymentService>>,
+    pub config: web::Data<Config>,
     pub auth_middleware: AuthMiddleware,
     pub _rate_limiter_middleware: RateLimiterMiddleware,
 }
@@ -92,7 +95,10 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
 
     let db_clone = db_connection.clone();
 
-    let user_repo = Arc::new(UserRepository::new(db_connection.clone()));
+    let user_repo = Arc::new(UserRepository::new(
+        db_connection.clone(),
+        config.default_credit,
+    ));
     let dashboard_repo = Arc::new(DashboardRepository::new(db_connection.clone()));
     let auth_service: Arc<AuthServiceType> =
         Arc::new(crate::api::services::auth_service::AuthService::new(
@@ -111,12 +117,14 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
                 dashboard_repo,
                 user_cache.clone(),
                 rc,
+                config.default_credit,
             ),
         ),
         None => Arc::new(
             crate::api::services::dashboard_service::DashboardService::new(
                 dashboard_repo,
                 user_cache.clone(),
+                config.default_credit,
             ),
         ),
     };
@@ -125,6 +133,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         db_clone,
         redis_client.clone(),
         rabbitmq_client.clone(),
+        config.clone(),
+        mailer.clone(),
     ));
 
     let ws_manager = WebSocketManager::new(redis_client.clone());
@@ -138,11 +148,14 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     {
         let redis_for_canceller = redis_client.clone();
         let db_for_canceller = db_connection.clone();
+        let cancel_config = config.clone();
+        let cancel_mailer = mailer.clone();
         tokio::spawn(async move {
             let game_service = crate::game::service::GameService::new_with_redis(
                 db_for_canceller,
                 redis_for_canceller,
-            );
+            )
+            .with_config(&cancel_config, cancel_mailer);
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
@@ -181,9 +194,28 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     }
 
     {
+        let db_for_freeze = db_connection.clone();
+        let mailer_for_freeze = mailer.clone();
+        let freeze_config = config.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                check_expired_freezes(
+                    &db_for_freeze,
+                    &*mailer_for_freeze,
+                    freeze_config.unfreeze_credit_no_payment,
+                )
+                .await;
+            }
+        });
+    }
+
+    {
         let db_for_leaderboard = db_connection.clone();
         let redis_for_leaderboard = redis_client.clone();
         let user_cache_for_leaderboard = user_cache.clone();
+        let leaderboard_config = config.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5 * 60));
             loop {
@@ -197,6 +229,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
                             crate::cache::leaderboard::refresh_leaderboard(redis, &profiles).await;
                             let user_repo = crate::database::repositories::UserRepository::new(
                                 db_for_leaderboard.clone(),
+                                leaderboard_config.default_credit,
                             );
                             for profile in &profiles {
                                 if let Ok(Some(user)) = user_repo.find_by_id(profile.user_id).await
@@ -231,6 +264,16 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let auth_middleware = AuthMiddleware::new(redis_client.clone());
     let rate_limiter_middleware = RateLimiterMiddleware::new(redis_client.clone());
 
+    let payment_service = Arc::new(PaymentService::new(
+        config.paypal_client_id.clone(),
+        config.paypal_client_secret.clone(),
+        config.paypal_mode.clone(),
+        config.paypal_unfreeze_amount_eur.clone(),
+        config.paypal_topup_amount_eur.clone(),
+        config.paypal_sandbox_url.clone(),
+        config.paypal_live_url.clone(),
+    ));
+
     let db_data = web::Data::new(db_connection.clone());
     let redis_data = web::Data::new(redis_client);
     let rabbitmq_data = web::Data::new(rabbitmq_client);
@@ -241,6 +284,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let dashboard_service_data = web::Data::new(dashboard_service);
     let user_cache_data = web::Data::new(user_cache);
     let mailer_data = web::Data::new(mailer);
+    let payment_service_data = web::Data::new(payment_service);
+    let config_data = web::Data::new(config.clone());
 
     info!("All resources initialized successfully");
 
@@ -255,7 +300,69 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         dashboard_service: dashboard_service_data,
         user_cache: user_cache_data,
         mailer: mailer_data,
+        payment_service: payment_service_data,
+        config: config_data,
         auth_middleware,
         _rate_limiter_middleware: rate_limiter_middleware,
     })
+}
+
+// TODO: possible to put this function in another file? (mod.rs or create a utils.rs file?)
+async fn check_expired_freezes(db: &sea_orm::DatabaseConnection, mailer: &dyn Mailer, credit: i32) {
+    use crate::database::models::{player_profile, user};
+    use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
+
+    let now = chrono::Utc::now();
+
+    let expired_profiles = match player_profile::Entity::find()
+        .filter(player_profile::Column::FrozenUntil.is_not_null())
+        .filter(player_profile::Column::FrozenUntil.lte(now))
+        .all(db)
+        .await
+    {
+        Ok(profiles) => profiles,
+        Err(e) => {
+            tracing::error!("Failed to query expired freezes: {}", e);
+            return;
+        }
+    };
+
+    // TODO: possible to bulk update here? with update_many?
+    for profile in expired_profiles {
+        let mut active: player_profile::ActiveModel = profile.clone().into();
+        active.credit = ActiveValue::Set(credit);
+        active.frozen_until = ActiveValue::Set(None);
+        active.updated_at = ActiveValue::Set(chrono::Utc::now());
+
+        if let Err(e) = active.update(db).await {
+            tracing::error!(
+                "Failed to update profile {} for expired freeze: {}",
+                profile.user_id,
+                e
+            );
+            continue;
+        }
+
+        match user::Entity::find_by_id(profile.user_id).one(db).await {
+            Ok(Some(user_model)) => {
+                if let Err(e) = mailer.send_freeze_expired(&user_model.email, credit).await {
+                    tracing::error!(
+                        "Failed to send unfreeze email to {}: {}",
+                        user_model.email,
+                        e
+                    );
+                }
+            }
+            Ok(None) => {
+                tracing::warn!("No user found for profile {}", profile.user_id);
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Failed to look up user for profile {}: {}",
+                    profile.user_id,
+                    e
+                );
+            }
+        }
+    }
 }

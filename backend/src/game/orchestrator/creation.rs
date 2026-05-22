@@ -36,6 +36,14 @@ impl GameOrchestrator {
                 GameError::Internal(Box::new(std::io::Error::other("Player profile not found")))
             })?;
 
+        if let Some(frozen_until) = profile.frozen_until {
+            if frozen_until > chrono::Utc::now() {
+                return Err(GameError::AccountFrozen {
+                    until: frozen_until.to_rfc3339(),
+                });
+            }
+        }
+
         if profile.credit < SOLO_BET {
             return Err(GameError::InsufficientCredits {
                 required: SOLO_BET,
@@ -44,10 +52,32 @@ impl GameOrchestrator {
         }
 
         let new_credit = profile.credit - SOLO_BET;
+        let freeze_duration =
+            chrono::Duration::seconds(self.game_service.freeze_duration_secs as i64);
+        let was_previously_frozen = profile.frozen_until.is_some();
+
+        let (final_credit, frozen_until) = if new_credit <= 0 {
+            (new_credit, Some(chrono::Utc::now() + freeze_duration))
+        } else if was_previously_frozen {
+            let auto_unfreeze_credit = if new_credit < self.game_service.unfreeze_credit_no_payment
+            {
+                self.game_service.unfreeze_credit_no_payment
+            } else {
+                new_credit
+            };
+            (auto_unfreeze_credit, None)
+        } else {
+            (new_credit, profile.frozen_until)
+        };
+
         profile_repo
-            .update_credit(user_id, new_credit)
+            .update_credit_and_frozen_until(user_id, final_credit, frozen_until)
             .await
             .map_err(GameError::Database)?;
+
+        if was_previously_frozen && frozen_until.is_none() {
+            let _ = self.game_service.send_unfreeze_email(user_id).await;
+        }
 
         let game = game_repo.create(10, false).await.map_err(|e| {
             tracing::error!("Failed to create game: {}", e);
@@ -63,7 +93,7 @@ impl GameOrchestrator {
             })?;
 
         player_repo
-            .update_credits(human_player.id, new_credit)
+            .update_credits(human_player.id, final_credit)
             .await
             .map_err(|e| {
                 tracing::error!("Failed to update player credits: {}", e);

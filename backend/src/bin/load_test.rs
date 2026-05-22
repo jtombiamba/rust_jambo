@@ -197,10 +197,17 @@ async fn main() -> Result<()> {
         }
     };
 
+    let config = jambo_backend::Config::default();
+    let mailer_config = jambo_backend::mailer::MailerConfig::from_env();
+    let mailer =
+        jambo_backend::mailer::create_mailer(mailer_config).expect("Failed to create mailer");
+
     let orchestrator: Arc<dyn GameOrchestratorTrait> = Arc::new(GameOrchestrator::new(
         db.clone(),
         redis_client.clone(),
         rabbitmq_client.clone(),
+        config.clone(),
+        mailer,
     ));
 
     let games_created = Arc::new(AtomicU64::new(0));

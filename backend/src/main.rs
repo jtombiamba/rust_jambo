@@ -12,6 +12,7 @@ mod game;
 mod mailer;
 mod messaging;
 mod observability;
+mod payment;
 mod routes;
 mod websocket;
 

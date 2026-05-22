@@ -5,7 +5,9 @@ use sea_orm::{
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::database::models::{game, game_card, player, player_profile, GameMode, GameStatus};
+use crate::database::models::{
+    game, game_card, player, player_profile, GameMode, GameStatus, PlayerType,
+};
 use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
 use crate::game::service::types::{GameCreationTimer, GameServiceError};
 use crate::messaging::events::GameEvent;
@@ -178,6 +180,7 @@ impl GameService {
 
         let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
+        // TODO: it is O(n²), is it possible to reduce the embedded for loops with bulk insert or does the transaction make it complicate?
         let now = chrono::Utc::now();
         for (i, &pid) in player_ids.iter().enumerate() {
             let start = i * CARDS_PER_PLAYER;
@@ -241,12 +244,19 @@ impl GameService {
 
             let game_started_players: Vec<crate::messaging::events::GameStartedPlayer> = players
                 .iter()
-                .map(|p| crate::messaging::events::GameStartedPlayer {
-                    id: p.id,
-                    name: p.name.clone(),
-                    position: p.position,
-                    display_position: p.position,
-                    cards_count: CARDS_PER_PLAYER as i32,
+                .map(|p| {
+                    let player_type_str = match p.player_type {
+                        PlayerType::Human => "human",
+                        PlayerType::Bot => "bot",
+                    };
+                    crate::messaging::events::GameStartedPlayer {
+                        id: p.id,
+                        name: p.name.clone(),
+                        position: p.position,
+                        display_position: p.position,
+                        cards_count: CARDS_PER_PLAYER as i32,
+                        player_type: player_type_str.to_string(),
+                    }
                 })
                 .collect();
 

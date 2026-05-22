@@ -5,6 +5,7 @@ import { updateAnonymousStatsAfterGame } from '../utils/storage';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useToast } from '../components/useToast';
 
+
 export function useGameWebSocket(gameId: string | null) {
   const {
     applyCardPlayed,
@@ -14,6 +15,7 @@ export function useGameWebSocket(gameId: string | null) {
     clearRoundWinner,
     clearDeckSlots,
     setGameOver,
+    updatePlayerCards,
     players,
     bet,
   } = useGameStore();
@@ -22,8 +24,15 @@ export function useGameWebSocket(gameId: string | null) {
   const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const deckClearTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
+  // Find the human player's id and position for WebSocket identity
+  const humanPlayer = players.find((p) => p.type === 'human');
+  const myPlayerId = humanPlayer?.id;
+  const myPosition = humanPlayer?.position;
+
   const { isConnected, lastError, send } = useWebSocket({
     gameId: gameId || '',
+    playerId: myPlayerId,
+    playerPosition: myPosition,
     onMessage: (event: GameEvent) => {
       switch (event.type) {
         case 'card_played': {
@@ -111,6 +120,13 @@ export function useGameWebSocket(gameId: string | null) {
         }
         case 'game_ready': {
           showToast('All players ready!', 'success');
+          break;
+        }
+        case 'cards_dealt': {
+          const humanPlayer = players.find((p) => p.type === 'human');
+          if (humanPlayer && event.player_id === humanPlayer.id) {
+            updatePlayerCards(event.player_id, event.cards);
+          }
           break;
         }
         default:

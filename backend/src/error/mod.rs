@@ -109,6 +109,7 @@ fn game_error_status_code(e: &GameError) -> StatusCode {
         | GameError::InvalidCard
         | GameError::NotCreator
         | GameError::NotInvited => StatusCode::FORBIDDEN,
+        GameError::AccountFrozen { .. } => StatusCode::FORBIDDEN,
         GameError::GameFinished
         | GameError::GameNotPending
         | GameError::AlreadyJoined

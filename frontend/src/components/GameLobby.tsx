@@ -31,6 +31,10 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
   const [isCreator, setIsCreator] = useState(false)
   const [starting, setStarting] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [myPlayerId, setMyPlayerId] = useState<string | null>(null)
+  const [myPosition, setMyPosition] = useState<number | null>(null)
+
+  const dealtCardsRef = useRef<Record<string, number[]>>({})
 
   const [slotPseudos, setSlotPseudos] = useState<Record<number, string>>({})
   const [slotSearchResults, setSlotSearchResults] = useState<Record<number, UserSearchItem[]>>({})
@@ -62,13 +66,20 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       setMaxPlayers(data.max_players ?? data.players?.length ?? 4)
 
       const rawPlayers = data.players || []
-      const lobbyPlayers: LobbyPlayer[] = rawPlayers.map((p: { name: string; position: number; is_current_user?: boolean }) => ({
+      const lobbyPlayers: LobbyPlayer[] = rawPlayers.map((p: { id?: string; name: string; position: number; is_current_user?: boolean }) => ({
         pseudo: p.name,
         position: p.position,
         isCurrentUser: p.is_current_user ?? false,
       }))
       setPlayers(lobbyPlayers)
       setIsCreator(lobbyPlayers.some(p => p.position === 0 && p.isCurrentUser))
+
+      // Store current player's id and position for WebSocket identity
+      const currentPlayer = rawPlayers.find((p: { is_current_user?: boolean }) => p.is_current_user)
+      if (currentPlayer?.id) {
+        setMyPlayerId(currentPlayer.id)
+        setMyPosition(currentPlayer.position)
+      }
 
       const expiresHeader = data.invite_expires_at
       if (expiresHeader) setExpiresAt(expiresHeader)
@@ -93,25 +104,31 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
 
   const handleGameStarted = useCallback((event: Extract<GameEvent, { type: 'game_started' }>) => {
     const turnPlayer = event.players.find(p => p.id === event.current_turn)
+    const myPseudo = user?.pseudo
     onGameStart({
       game_id: event.game_id,
-      players: event.players.map(p => ({
-        id: p.id,
-        type: 'bot' as const,
-        name: p.name,
-        position: p.position,
-        display_position: p.display_position,
-        cards: [],
-        cards_count: p.cards_count,
-      })),
+      players: event.players.map(p => {
+        const isMe = myPseudo != null && p.name === myPseudo
+        return {
+          id: p.id,
+          type: p.player_type as 'human' | 'bot',
+          name: p.name,
+          position: p.position,
+          display_position: p.display_position,
+          cards: isMe ? (dealtCardsRef.current[p.id] || []) : [],
+          cards_count: p.cards_count,
+        }
+      }),
       status: 'active',
       current_turn: turnPlayer?.display_position ?? 0,
       bet: bet,
     })
-  }, [onGameStart, bet])
+  }, [onGameStart, bet, user?.pseudo])
 
   useWebSocket({
     gameId,
+    playerId: myPlayerId ?? undefined,
+    playerPosition: myPosition ?? undefined,
     onMessage: useCallback((event: GameEvent) => {
       switch (event.type) {
         case 'player_joined':
@@ -130,6 +147,9 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
         case 'game_cancelled':
           showToast(event.reason || 'Game has been cancelled.')
           onBack()
+          break
+        case 'cards_dealt':
+          dealtCardsRef.current[event.player_id] = event.cards
           break
         case 'game_started':
           handleGameStarted(event)
