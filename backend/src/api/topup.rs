@@ -304,6 +304,8 @@ async fn topup_user_and_finalize(
     {
         Ok(_) => {
             if let Some(rc) = redis_client {
+                // Invalidate the dashboard profile cache so the user sees their updated credit immediately
+                let _ = rc.del(&format!("dashboard:profile:{user_id}")).await;
                 let _ = rc.set_ex(redis_key, "completed", TOPUP_TTL_SECS).await;
             }
             HttpResponse::Ok().json(TopupCaptureResponse {
