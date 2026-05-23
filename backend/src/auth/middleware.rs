@@ -1,4 +1,5 @@
 use std::future::{ready, Ready};
+use std::sync::Arc;
 
 use actix_web::{
     body::MessageBody,
@@ -10,16 +11,21 @@ use serde_json::json;
 use super::config::AuthConfig;
 use super::extractors::AuthenticatedUser;
 use super::jwt;
+use crate::i18n::{extract_lang, Translator};
 use crate::messaging::RedisClient;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct AuthMiddleware {
     redis_client: Option<RedisClient>,
+    translator: Arc<Translator>,
 }
 
 impl AuthMiddleware {
-    pub fn new(redis_client: Option<RedisClient>) -> Self {
-        Self { redis_client }
+    pub fn new(redis_client: Option<RedisClient>, translator: Arc<Translator>) -> Self {
+        Self {
+            redis_client,
+            translator,
+        }
     }
 }
 
@@ -39,6 +45,7 @@ where
         ready(Ok(AuthMiddlewareService {
             service,
             redis_client: self.redis_client.clone(),
+            translator: self.translator.clone(),
         }))
     }
 }
@@ -46,6 +53,7 @@ where
 pub struct AuthMiddlewareService<S> {
     service: S,
     redis_client: Option<RedisClient>,
+    translator: Arc<Translator>,
 }
 
 impl<S, B> Service<ServiceRequest> for AuthMiddlewareService<S>
@@ -70,11 +78,15 @@ where
             _ => None,
         };
 
+        let lang = extract_lang(&req);
+        let translator = self.translator.clone();
+
         let claims = match claims {
             Some(c) => c,
             None => {
                 let error = actix_web::error::ErrorUnauthorized(
-                    json!({"success": false, "error": "Authentication required"}).to_string(),
+                    json!({"success": false, "error": translator.t("auth.auth_required", lang)})
+                        .to_string(),
                 );
                 return Box::pin(async move { Err(error) });
             }
@@ -85,8 +97,6 @@ where
         let user_id = claims.sub;
         let pseudo = claims.pseudo;
 
-        // Insert AuthenticatedUser BEFORE calling the service so the handler
-        // can extract it via FromRequest
         req.extensions_mut().insert(AuthenticatedUser {
             user_id,
             pseudo: pseudo.clone(),
@@ -101,7 +111,8 @@ where
                     .unwrap_or(false)
                 {
                     return Err(actix_web::error::ErrorUnauthorized(
-                        json!({"success": false, "error": "Token has been revoked"}).to_string(),
+                        json!({"success": false, "error": translator.t("auth.token_revoked", lang)})
+                            .to_string(),
                     ));
                 }
             }

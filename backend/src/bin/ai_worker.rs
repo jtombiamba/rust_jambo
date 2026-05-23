@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
         let mut interval = tokio::time::interval(pool_metrics_interval);
         loop {
             interval.tick().await;
-            metrics::update_db_pool_metrics(&db_for_pool_metrics);
+            metrics::update_db_pool_metrics(&db_for_pool_metrics, "ai_worker");
         }
     });
 

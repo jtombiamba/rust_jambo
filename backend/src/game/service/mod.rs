@@ -109,7 +109,11 @@ impl GameService {
         };
 
         if let Err(e) = mailer
-            .send_freeze_expired(&user.email, profile.credit)
+            .send_freeze_expired(
+                &user.email,
+                profile.credit,
+                crate::i18n::Lang::parse(&user.language).unwrap_or_default(),
+            )
             .await
         {
             tracing::error!("Failed to send unfreeze email to {}: {}", user.email, e);

@@ -5,11 +5,14 @@ use std::sync::Arc;
 use super::{
     ContactFormEmail, FreezeExpiredEmail, InvitationEmail, MailerConfig, PasswordResetEmail,
 };
+use crate::i18n::{Lang, Translator};
 use crate::mailer::Mailer;
 
 pub struct NoopMailer {
     pub(crate) handlebars: Arc<Handlebars<'static>>,
     pub(crate) config: MailerConfig,
+    #[allow(dead_code)]
+    translator: Arc<Translator>,
 }
 
 impl NoopMailer {
@@ -19,39 +22,82 @@ impl NoopMailer {
 
         handlebars
             .register_template_string(
-                "password_reset",
-                include_str!("../../templates/password_reset.hbs"),
+                "en_password_reset",
+                include_str!("../../templates/en/password_reset.hbs"),
             )
-            .map_err(|e| format!("Failed to register password_reset template: {e}"))?;
-
-        handlebars
-            .register_template_string("invitation", include_str!("../../templates/invitation.hbs"))
-            .map_err(|e| format!("Failed to register invitation template: {e}"))?;
+            .map_err(|e| format!("Failed to register en/password_reset template: {e}"))?;
 
         handlebars
             .register_template_string(
-                "freeze_expired",
-                include_str!("../../templates/freeze_expired.hbs"),
+                "fr_password_reset",
+                include_str!("../../templates/fr/password_reset.hbs"),
             )
-            .map_err(|e| format!("Failed to register freeze_expired template: {e}"))?;
+            .map_err(|e| format!("Failed to register fr/password_reset template: {e}"))?;
 
         handlebars
             .register_template_string(
-                "contact_form",
-                include_str!("../../templates/contact_form.hbs"),
+                "en_invitation",
+                include_str!("../../templates/en/invitation.hbs"),
             )
-            .map_err(|e| format!("Failed to register contact_form template: {e}"))?;
+            .map_err(|e| format!("Failed to register en/invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "fr_invitation",
+                include_str!("../../templates/fr/invitation.hbs"),
+            )
+            .map_err(|e| format!("Failed to register fr/invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "en_freeze_expired",
+                include_str!("../../templates/en/freeze_expired.hbs"),
+            )
+            .map_err(|e| format!("Failed to register en/freeze_expired template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "fr_freeze_expired",
+                include_str!("../../templates/fr/freeze_expired.hbs"),
+            )
+            .map_err(|e| format!("Failed to register fr/freeze_expired template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "en_contact_form",
+                include_str!("../../templates/en/contact_form.hbs"),
+            )
+            .map_err(|e| format!("Failed to register en/contact_form template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "fr_contact_form",
+                include_str!("../../templates/fr/contact_form.hbs"),
+            )
+            .map_err(|e| format!("Failed to register fr/contact_form template: {e}"))?;
+
+        let translator = Arc::new(Translator::new());
 
         Ok(Self {
             handlebars: Arc::new(handlebars),
             config,
+            translator,
         })
+    }
+
+    fn template_name(&self, name: &str, lang: Lang) -> String {
+        format!("{}_{name}", lang.as_str())
     }
 }
 
 #[async_trait]
 impl Mailer for NoopMailer {
-    async fn send_password_reset(&self, to_email: &str, reset_link: &str) -> Result<(), String> {
+    async fn send_password_reset(
+        &self,
+        to_email: &str,
+        reset_link: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
         let data = PasswordResetEmail {
             reset_link: reset_link.to_string(),
             frontend_url: self.config.frontend_url.clone(),
@@ -60,7 +106,7 @@ impl Mailer for NoopMailer {
 
         let html = self
             .handlebars
-            .render("password_reset", &data)
+            .render(&self.template_name("password_reset", lang), &data)
             .map_err(|e| format!("Failed to render template: {e}"))?;
 
         tracing::info!(
@@ -74,6 +120,7 @@ impl Mailer for NoopMailer {
         to_email: &str,
         inviter_name: &str,
         game_id: &str,
+        lang: Lang,
     ) -> Result<(), String> {
         let accept_link = format!(
             "{}?invite_game_id={game_id}&invite_action=accept",
@@ -95,7 +142,7 @@ impl Mailer for NoopMailer {
 
         let html = self
             .handlebars
-            .render("invitation", &data)
+            .render(&self.template_name("invitation", lang), &data)
             .map_err(|e| format!("Failed to render template: {e}"))?;
 
         tracing::info!(
@@ -104,7 +151,12 @@ impl Mailer for NoopMailer {
         Ok(())
     }
 
-    async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String> {
+    async fn send_freeze_expired(
+        &self,
+        to_email: &str,
+        credit: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
         let data = FreezeExpiredEmail {
             frontend_url: self.config.frontend_url.clone(),
             app_name: self.config.smtp_from_name.clone(),
@@ -113,7 +165,7 @@ impl Mailer for NoopMailer {
 
         let html = self
             .handlebars
-            .render("freeze_expired", &data)
+            .render(&self.template_name("freeze_expired", lang), &data)
             .map_err(|e| format!("Failed to render template: {e}"))?;
 
         tracing::info!(
@@ -128,6 +180,7 @@ impl Mailer for NoopMailer {
         email: &str,
         subject: &str,
         message: &str,
+        lang: Lang,
     ) -> Result<(), String> {
         let data = ContactFormEmail {
             name: name.to_string(),
@@ -138,7 +191,7 @@ impl Mailer for NoopMailer {
 
         let html = self
             .handlebars
-            .render("contact_form", &data)
+            .render(&self.template_name("contact_form", lang), &data)
             .map_err(|e| format!("Failed to render template: {e}"))?;
 
         tracing::info!(

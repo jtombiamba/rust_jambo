@@ -76,6 +76,7 @@ impl UserRepository {
                         email: Set(email),
                         password_hash: Set(password_hash),
                         last_ip_hash: Set(ip_hash),
+                        language: Set("en".to_string()),
                         created_at: Set(now),
                         updated_at: Set(now),
                     };
@@ -130,6 +131,17 @@ impl UserRepository {
         active.updated_at = Set(chrono::Utc::now());
         active.update(&self.connection).await
     }
+
+    pub async fn update_language(&self, id: Uuid, language: &str) -> Result<User, DbErr> {
+        let user_model = user::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+        let mut active: user::ActiveModel = user_model.into();
+        active.language = Set(language.to_string());
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
 }
 
 #[async_trait]
@@ -167,5 +179,9 @@ impl UserRepoTrait for UserRepository {
 
     async fn update_last_ip_hash(&self, id: Uuid, hash: &str) -> Result<User, DbErr> {
         self.update_last_ip_hash(id, hash).await
+    }
+
+    async fn update_language(&self, id: Uuid, language: &str) -> Result<User, DbErr> {
+        self.update_language(id, language).await
     }
 }

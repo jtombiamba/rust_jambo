@@ -13,6 +13,7 @@ use crate::cache::UserCache;
 use crate::config::Config;
 use crate::database::repositories::{DashboardRepository, UserRepository};
 use crate::game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
+use crate::i18n::Translator;
 use crate::mailer::{self, Mailer, MailerConfig};
 use crate::messaging::{self, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
 use crate::payment::PaymentService;
@@ -34,6 +35,7 @@ pub struct AppState {
     pub config: web::Data<Config>,
     pub auth_middleware: AuthMiddleware,
     pub _rate_limiter_middleware: RateLimiterMiddleware,
+    pub translator: web::Data<Arc<Translator>>,
 }
 
 pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::Error>> {
@@ -100,11 +102,13 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         config.default_credit,
     ));
     let dashboard_repo = Arc::new(DashboardRepository::new(db_connection.clone()));
+    let translator = Arc::new(Translator::new());
     let auth_service: Arc<AuthServiceType> =
         Arc::new(crate::api::services::auth_service::AuthService::new(
             user_repo,
             auth_config.clone(),
             mailer.clone(),
+            translator.clone(),
         ));
 
     let user_cache = match redis_client.clone() {
@@ -256,13 +260,17 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
             let mut interval = tokio::time::interval(pool_metrics_interval);
             loop {
                 interval.tick().await;
-                crate::observability::metrics::update_db_pool_metrics(&db_for_pool_metrics);
+                crate::observability::metrics::update_db_pool_metrics(
+                    &db_for_pool_metrics,
+                    "backend",
+                );
             }
         });
     }
 
-    let auth_middleware = AuthMiddleware::new(redis_client.clone());
-    let rate_limiter_middleware = RateLimiterMiddleware::new(redis_client.clone());
+    let auth_middleware = AuthMiddleware::new(redis_client.clone(), translator.clone());
+    let rate_limiter_middleware =
+        RateLimiterMiddleware::new(redis_client.clone(), translator.clone());
 
     let payment_service = Arc::new(PaymentService::new(
         config.paypal_client_id.clone(),
@@ -286,6 +294,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let mailer_data = web::Data::new(mailer);
     let payment_service_data = web::Data::new(payment_service);
     let config_data = web::Data::new(config.clone());
+    let translator_data = web::Data::new(translator);
 
     info!("All resources initialized successfully");
 
@@ -304,6 +313,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         config: config_data,
         auth_middleware,
         _rate_limiter_middleware: rate_limiter_middleware,
+        translator: translator_data,
     })
 }
 
@@ -343,7 +353,14 @@ async fn check_expired_freezes(db: &sea_orm::DatabaseConnection, mailer: &dyn Ma
 
         match user::Entity::find_by_id(profile.user_id).one(db).await {
             Ok(Some(user_model)) => {
-                if let Err(e) = mailer.send_freeze_expired(&user_model.email, credit).await {
+                if let Err(e) = mailer
+                    .send_freeze_expired(
+                        &user_model.email,
+                        credit,
+                        crate::i18n::Lang::parse(&user_model.language).unwrap_or_default(),
+                    )
+                    .await
+                {
                     tracing::error!(
                         "Failed to send unfreeze email to {}: {}",
                         user_model.email,
