@@ -63,8 +63,19 @@ class WebSocketManager {
   }
 
   setPlayerIdentity(playerId: string, playerPosition: number): void {
+    const hadNoIdentity = !this.playerId;
     this.playerId = playerId;
     this.playerPosition = playerPosition;
+
+    if (hadNoIdentity && this.ws?.readyState === WebSocket.OPEN) {
+      const joinMsg: OutgoingMessage = {
+        type: 'join_game',
+        game_id: this.gameId,
+        player_id: playerId,
+        player_position: playerPosition,
+      };
+      this.send(joinMsg);
+    }
   }
 
   static getInstance(gameId: string): WebSocketManager {

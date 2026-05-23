@@ -307,7 +307,6 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     })
 }
 
-// TODO: possible to put this function in another file? (mod.rs or create a utils.rs file?)
 async fn check_expired_freezes(db: &sea_orm::DatabaseConnection, mailer: &dyn Mailer, credit: i32) {
     use crate::database::models::{player_profile, user};
     use sea_orm::{ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter};
@@ -327,7 +326,6 @@ async fn check_expired_freezes(db: &sea_orm::DatabaseConnection, mailer: &dyn Ma
         }
     };
 
-    // TODO: possible to bulk update here? with update_many?
     for profile in expired_profiles {
         let mut active: player_profile::ActiveModel = profile.clone().into();
         active.credit = ActiveValue::Set(credit);

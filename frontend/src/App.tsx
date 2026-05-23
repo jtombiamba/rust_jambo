@@ -6,6 +6,7 @@ import AuthModal from './components/AuthModal'
 import GameRules from './components/GameRules'
 import UserDashboard from './components/UserDashboard'
 import GameLobby from './components/GameLobby'
+import Footer from './components/Footer'
 import { ToastProvider } from './components/Toast'
 import { useToast } from './components/useToast'
 import { useGameStore } from './stores/useGameStore'
@@ -231,59 +232,65 @@ function AppContent() {
 
   if (gameId) {
     return (
-      <div>
-        {!isConnected && (
-          <div className="sticky top-0 z-30 bg-yellow-500 text-white text-center py-2 px-4 text-sm font-medium">
-            Reconnecting to game server...
-          </div>
-        )}
-        <GameTable
-          players={players}
-          currentTurn={currentTurn}
-          deckSlots={deckSlots}
-          remainingCards={remainingCards}
-          roundWinner={roundWinner}
-          gameOver={gameOver}
-          onCardClick={handleCardClick}
-          showPlayAgain={!isMultiplayer}
-          onPlayAgain={startGame}
-          onReturnToLobby={resetGame}
-          onCloseGameOver={clearGameOver}
-        />
-        {cardError && (
-          <div className="container mx-auto px-4 sm:px-8">
-            <div className="p-3 bg-red-100 text-red-700 rounded flex items-center justify-between">
-              <span>{cardError}</span>
-              <button
-                onClick={() => setCardError(null)}
-                className="text-red-500 hover:text-red-700 ml-2"
-              >
-                &times;
-              </button>
+      <div className="min-h-screen flex flex-col">
+        <div className="flex-1">
+          {!isConnected && (
+            <div className="sticky top-0 z-30 bg-yellow-500 text-white text-center py-2 px-4 text-sm font-medium">
+              Reconnecting to game server...
             </div>
+          )}
+          <GameTable
+            players={players}
+            currentTurn={currentTurn}
+            deckSlots={deckSlots}
+            remainingCards={remainingCards}
+            roundWinner={roundWinner}
+            gameOver={gameOver}
+            onCardClick={handleCardClick}
+            showPlayAgain={!isMultiplayer}
+            onPlayAgain={startGame}
+            onReturnToLobby={resetGame}
+            onCloseGameOver={clearGameOver}
+          />
+          {cardError && (
+            <div className="container mx-auto px-4 sm:px-8">
+              <div className="p-3 bg-red-100 text-red-700 rounded flex items-center justify-between">
+                <span>{cardError}</span>
+                <button
+                  onClick={() => setCardError(null)}
+                  className="text-red-500 hover:text-red-700 ml-2"
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="container mx-auto px-4 sm:px-8 pb-8">
+            <button
+              className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+              onClick={() => resetGame()}
+            >
+              Back to Dashboard
+            </button>
           </div>
-        )}
-        <div className="container mx-auto px-4 sm:px-8 pb-8">
-          <button
-            className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-            onClick={() => resetGame()}
-          >
-            Back to Dashboard
-          </button>
         </div>
+        <Footer />
       </div>
     )
   }
 
   if (lobbyGameId) {
     return (
-      <div>
+      <div className="min-h-screen flex flex-col">
         <AuthModal />
-        <GameLobby
-          gameId={lobbyGameId}
-          onBack={handleLobbyBack}
-          onGameStart={handleGameStartFromLobby}
-        />
+        <div className="flex-1">
+          <GameLobby
+            gameId={lobbyGameId}
+            onBack={handleLobbyBack}
+            onGameStart={handleGameStartFromLobby}
+          />
+        </div>
+        <Footer />
       </div>
     )
   }
@@ -298,17 +305,20 @@ function AppContent() {
 
   if (isAuthenticated) {
     return (
-      <div>
+      <div className="min-h-screen flex flex-col">
         <AuthModal />
         <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
-        <UserDashboard
-          onStartGame={startGame}
-          onStartMultiplayerGame={startMultiplayerGame}
-          onResumeGame={handleResumeGame}
-          onViewLobby={handleViewLobby}
-          starting={startingGame}
-          error={error}
-        />
+        <div className="flex-1">
+          <UserDashboard
+            onStartGame={startGame}
+            onStartMultiplayerGame={startMultiplayerGame}
+            onResumeGame={handleResumeGame}
+            onViewLobby={handleViewLobby}
+            starting={startingGame}
+            error={error}
+          />
+        </div>
+        <Footer />
       </div>
     )
   }
@@ -320,7 +330,7 @@ function AppContent() {
   const anonymousOutOfCredits = anonymousCredits <= 0
 
   return (
-    <div>
+    <div className="min-h-screen flex flex-col">
       <AuthModal />
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
       <div className="fixed top-4 right-4 z-40">
@@ -368,7 +378,7 @@ function AppContent() {
           )}
         </div>
       </div>
-      <div className="container mx-auto p-4 sm:p-8">
+      <div className="container mx-auto p-4 sm:p-8 flex-1">
         <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">FapFap Card Game</h1>
         <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
           <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Dashboard</h2>
@@ -426,10 +436,8 @@ function AppContent() {
             </div>
           )}
         </div>
-        <div className="text-gray-500 text-xs sm:text-sm">
-          Sprint 5: Resilience &amp; production polish.
-        </div>
       </div>
+      <Footer />
     </div>
   )
 }

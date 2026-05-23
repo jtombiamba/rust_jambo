@@ -180,29 +180,35 @@ impl GameService {
 
         let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
-        // TODO: it is O(n²), is it possible to reduce the embedded for loops with bulk insert or does the transaction make it complicate?
+        // collect all cards per player into a single Vec for bulk insert
         let now = chrono::Utc::now();
-        for (i, &pid) in player_ids.iter().enumerate() {
-            let start = i * CARDS_PER_PLAYER;
-            let end = start + CARDS_PER_PLAYER;
-            for &card_index in &cards[start..end] {
-                game_card::Entity::insert(game_card::ActiveModel {
-                    id: ActiveValue::Set(Uuid::new_v4()),
-                    game_id: ActiveValue::Set(game_id),
-                    player_id: ActiveValue::Set(Some(pid)),
-                    card_index: ActiveValue::Set(card_index),
-                    played: ActiveValue::Set(false),
-                    played_at: ActiveValue::NotSet,
-                    round: ActiveValue::NotSet,
-                    created_at: ActiveValue::Set(now),
-                })
-                .exec(&txn)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
-            }
-        }
+        let card_models: Vec<game_card::ActiveModel> = player_ids
+            .iter()
+            .enumerate()
+            .flat_map(|(i, &pid)| {
+                let start = i * CARDS_PER_PLAYER;
+                let end = start + CARDS_PER_PLAYER;
+                cards[start..end]
+                    .iter()
+                    .map(move |&card_index| game_card::ActiveModel {
+                        id: ActiveValue::Set(Uuid::new_v4()),
+                        game_id: ActiveValue::Set(game_id),
+                        player_id: ActiveValue::Set(Some(pid)),
+                        card_index: ActiveValue::Set(card_index),
+                        played: ActiveValue::Set(false),
+                        played_at: ActiveValue::NotSet,
+                        round: ActiveValue::NotSet,
+                        created_at: ActiveValue::Set(now),
+                    })
+            })
+            .collect();
+
+        game_card::Entity::insert_many(card_models)
+            .exec(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
 
         let initial_rank = 0i32;
         let first_player_id = player_ids[0];

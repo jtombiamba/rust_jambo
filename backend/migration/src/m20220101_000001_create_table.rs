@@ -133,28 +133,6 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Step 6: Create rounds table
-        manager
-            .create_table(
-                Table::create()
-                    .table(Rounds::Table)
-                    .if_not_exists()
-                    .col(uuid(Rounds::Id).primary_key())
-                    .col(uuid(Rounds::GameId))
-                    .col(integer(Rounds::RoundNumber))
-                    .col(integer(Rounds::WinnerPosition).null())
-                    .col(timestamp_with_time_zone(Rounds::CreatedAt))
-                    .foreign_key(
-                        ForeignKey::create()
-                            .name("fk_rounds_game_id")
-                            .from(Rounds::Table, Rounds::GameId)
-                            .to(Games::Table, Games::Id)
-                            .on_delete(ForeignKeyAction::Cascade),
-                    )
-                    .to_owned(),
-            )
-            .await?;
-
         // Step 7: Create indexes for common query patterns
         manager
             .create_index(
@@ -188,30 +166,6 @@ impl MigrationTrait for Migration {
             .await?;
 
         manager
-            .create_index(
-                Index::create()
-                    .name("idx_rounds_game_round")
-                    .table(Rounds::Table)
-                    .col(Rounds::GameId)
-                    .col(Rounds::RoundNumber)
-                    .to_owned(),
-            )
-            .await?;
-
-        Ok(())
-    }
-
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Drop indexes
-        manager
-            .drop_index(
-                Index::drop()
-                    .name("idx_rounds_game_round")
-                    .table(Rounds::Table)
-                    .to_owned(),
-            )
-            .await?;
-        manager
             .drop_index(
                 Index::drop()
                     .name("idx_game_cards_player_id")
@@ -237,9 +191,6 @@ impl MigrationTrait for Migration {
             .await?;
 
         // Drop tables in reverse order (respecting FK constraints)
-        manager
-            .drop_table(Table::drop().table(Rounds::Table).to_owned())
-            .await?;
         manager
             .drop_table(Table::drop().table(GameCards::Table).to_owned())
             .await?;
@@ -325,16 +276,6 @@ enum GameCards {
     Played,
     PlayedAt,
     Round,
-    CreatedAt,
-}
-
-#[derive(DeriveIden)]
-enum Rounds {
-    Table,
-    Id,
-    GameId,
-    RoundNumber,
-    WinnerPosition,
     CreatedAt,
 }
 

@@ -154,7 +154,6 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 bet: game.bet,
                 result,
                 played_at: game.created_at.to_rfc3339(),
-                credits_after: player.credits,
                 player_count: game.max_players as i32,
             });
         }
