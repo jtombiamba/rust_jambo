@@ -26,7 +26,6 @@ interface GameItem {
   bet: number
   result: string
   played_at: string
-  credits_after: number
   player_count: number
 }
 
@@ -706,7 +705,6 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                     >
                       Bet{sortIndicator('bet')}
                     </th>
-                    <th className="py-2 pr-4">Credits</th>
                     <th className="py-2 pr-4">Players</th>
                     <th
                       className="py-2 cursor-pointer select-none hover:text-blue-600"
@@ -756,7 +754,6 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                         </span>
                       </td>
                       <td className="py-2 pr-4">{game.bet}</td>
-                      <td className="py-2 pr-4">{game.credits_after}</td>
                       <td className="py-2 pr-4 text-gray-500">{game.player_count}</td>
                       <td className="py-2 text-gray-500 text-xs">
                         {new Date(game.played_at).toLocaleDateString()}

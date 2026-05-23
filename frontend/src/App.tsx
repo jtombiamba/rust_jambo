@@ -6,6 +6,7 @@ import AuthModal from './components/AuthModal'
 import GameRules from './components/GameRules'
 import UserDashboard from './components/UserDashboard'
 import GameLobby from './components/GameLobby'
+import Footer from './components/Footer'
 import { ToastProvider } from './components/Toast'
 import { useToast } from './components/useToast'
 import { useGameStore } from './stores/useGameStore'
@@ -271,6 +272,7 @@ function AppContent() {
             Back to Dashboard
           </button>
         </div>
+        <Footer />
       </div>
     )
   }
@@ -284,6 +286,7 @@ function AppContent() {
           onBack={handleLobbyBack}
           onGameStart={handleGameStartFromLobby}
         />
+        <Footer />
       </div>
     )
   }
@@ -309,6 +312,7 @@ function AppContent() {
           starting={startingGame}
           error={error}
         />
+        <Footer />
       </div>
     )
   }
@@ -426,9 +430,7 @@ function AppContent() {
             </div>
           )}
         </div>
-        <div className="text-gray-500 text-xs sm:text-sm">
-          Sprint 5: Resilience &amp; production polish.
-        </div>
+        <Footer />
       </div>
     </div>
   )

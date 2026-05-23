@@ -122,27 +122,6 @@ pub mod game_card {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-// TODO: round is not used anywhere, refactor and delete it from database models and Table
-pub mod round {
-    use super::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-    #[sea_orm(table_name = "rounds")]
-    pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: Uuid,
-        pub game_id: Uuid,
-        pub round_number: i32,
-        pub winner_position: Option<i32>,
-        pub created_at: DateTime<Utc>,
-    }
-
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
-
-    impl ActiveModelBehavior for ActiveModel {}
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "player_type")]
 pub enum PlayerType {
@@ -321,6 +300,4 @@ pub use game::Model as Game;
 pub use game_card::Model as GameCard;
 pub use player::Model as Player;
 pub use player_profile::Model as PlayerProfile;
-#[allow(unused_imports)]
-pub use round::Model as Round;
 pub use user::Model as User;

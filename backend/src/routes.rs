@@ -63,6 +63,10 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                                 .route(web::get().to(crate::api::auth::me)),
                         ),
                 )
+                .route(
+                    "/contact",
+                    web::post().to(crate::api::contact::send_contact),
+                )
                 .service(
                     web::scope("/me")
                         .wrap(auth_mw.clone())

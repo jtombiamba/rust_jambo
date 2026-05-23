@@ -1,9 +1,11 @@
 use async_trait::async_trait;
-use handlebars::Handlebars;
-use lettre::message::Mailbox;
-use lettre::{AsyncTransport, Message};
 use serde::Deserialize;
 use std::sync::Arc;
+
+pub mod noop;
+pub mod smtp;
+pub use noop::NoopMailer;
+pub use smtp::SmtpMailer;
 
 #[derive(Clone, Deserialize)]
 pub struct MailerConfig {
@@ -16,6 +18,7 @@ pub struct MailerConfig {
     pub smtp_from_email: String,
     pub smtp_from_name: String,
     pub frontend_url: String,
+    pub contact_to_email: String,
 }
 
 impl std::fmt::Debug for MailerConfig {
@@ -30,6 +33,7 @@ impl std::fmt::Debug for MailerConfig {
             .field("smtp_from_email", &self.smtp_from_email)
             .field("smtp_from_name", &self.smtp_from_name)
             .field("frontend_url", &self.frontend_url)
+            .field("contact_to_email", &self.contact_to_email)
             .finish()
     }
 }
@@ -54,6 +58,8 @@ impl MailerConfig {
             std::env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "FapFap Game".to_string());
         let frontend_url =
             std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".to_string());
+        let contact_to_email =
+            std::env::var("CONTACT_TO_EMAIL").unwrap_or_else(|_| smtp_from_email.clone());
 
         Self {
             mailer_mode,
@@ -65,6 +71,7 @@ impl MailerConfig {
             smtp_from_email,
             smtp_from_name,
             frontend_url,
+            contact_to_email,
         }
     }
 }
@@ -93,6 +100,14 @@ pub struct FreezeExpiredEmail {
     pub credit: i32,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ContactFormEmail {
+    pub name: String,
+    pub email: String,
+    pub subject: String,
+    pub message: String,
+}
+
 #[async_trait]
 pub trait Mailer: Send + Sync {
     async fn send_password_reset(&self, to_email: &str, reset_link: &str) -> Result<(), String>;
@@ -105,299 +120,14 @@ pub trait Mailer: Send + Sync {
     ) -> Result<(), String>;
 
     async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String>;
-}
 
-pub struct SmtpMailer {
-    mailer: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
-    from: Mailbox,
-    handlebars: Arc<Handlebars<'static>>,
-    config: MailerConfig,
-}
-
-impl SmtpMailer {
-    pub fn new(config: MailerConfig) -> Result<Self, String> {
-        let from: Mailbox = format!("{} <{}>", config.smtp_from_name, config.smtp_from_email)
-            .parse()
-            .map_err(|e| format!("Invalid from address: {e}"))?;
-
-        let creds = lettre::transport::smtp::authentication::Credentials::new(
-            config.smtp_username.clone(),
-            config.smtp_password.clone(),
-        );
-
-        let transport = if config.smtp_tls {
-            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&config.smtp_host)
-                .map_err(|e| format!("Failed to create SMTP transport: {e}"))?
-                .port(config.smtp_port)
-                .credentials(creds)
-                .build()
-        } else {
-            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous(
-                &config.smtp_host,
-            )
-            .port(config.smtp_port)
-            .credentials(creds)
-            .build()
-        };
-
-        let mut handlebars = Handlebars::new();
-        handlebars.set_strict_mode(true);
-
-        handlebars
-            .register_template_string(
-                "password_reset",
-                include_str!("../../templates/password_reset.hbs"),
-            )
-            .map_err(|e| format!("Failed to register password_reset template: {e}"))?;
-
-        handlebars
-            .register_template_string("invitation", include_str!("../../templates/invitation.hbs"))
-            .map_err(|e| format!("Failed to register invitation template: {e}"))?;
-
-        handlebars
-            .register_template_string(
-                "freeze_expired",
-                include_str!("../../templates/freeze_expired.hbs"),
-            )
-            .map_err(|e| format!("Failed to register freeze_expired template: {e}"))?;
-
-        Ok(Self {
-            mailer: transport,
-            from,
-            handlebars: Arc::new(handlebars),
-            config,
-        })
-    }
-}
-
-#[async_trait]
-impl Mailer for SmtpMailer {
-    async fn send_password_reset(&self, to_email: &str, reset_link: &str) -> Result<(), String> {
-        let data = PasswordResetEmail {
-            reset_link: reset_link.to_string(),
-            frontend_url: self.config.frontend_url.clone(),
-            app_name: self.config.smtp_from_name.clone(),
-        };
-
-        let html = self
-            .handlebars
-            .render("password_reset", &data)
-            .map_err(|e| format!("Failed to render template: {e}"))?;
-
-        let to: Mailbox = format!("<{to_email}>")
-            .parse()
-            .map_err(|e| format!("Invalid to address: {e}"))?;
-
-        let email = Message::builder()
-            .from(self.from.clone())
-            .to(to)
-            .subject("Reset your password - FapFap Game")
-            .header(lettre::message::header::ContentType::TEXT_HTML)
-            .body(html)
-            .map_err(|e| format!("Failed to build email: {e}"))?;
-
-        self.mailer
-            .send(email)
-            .await
-            .map_err(|e| format!("Failed to send email: {e}"))?;
-
-        tracing::info!("Password reset email sent to {to_email}");
-        Ok(())
-    }
-
-    async fn send_invitation(
+    async fn send_contact_form(
         &self,
-        to_email: &str,
-        inviter_name: &str,
-        game_id: &str,
-    ) -> Result<(), String> {
-        let accept_link = format!(
-            "{}?invite_game_id={game_id}&invite_action=accept",
-            self.config.frontend_url
-        );
-        let decline_link = format!(
-            "{}?invite_game_id={game_id}&invite_action=decline",
-            self.config.frontend_url
-        );
-
-        let data = InvitationEmail {
-            inviter_name: inviter_name.to_string(),
-            game_id: game_id.to_string(),
-            frontend_url: self.config.frontend_url.clone(),
-            app_name: self.config.smtp_from_name.clone(),
-            accept_link,
-            decline_link,
-        };
-
-        let html = self
-            .handlebars
-            .render("invitation", &data)
-            .map_err(|e| format!("Failed to render template: {e}"))?;
-
-        let to: Mailbox = format!("<{to_email}>")
-            .parse()
-            .map_err(|e| format!("Invalid to address: {e}"))?;
-
-        let subject = format!("{inviter_name} invited you to a game - FapFap Game");
-
-        let email = Message::builder()
-            .from(self.from.clone())
-            .to(to)
-            .subject(subject)
-            .header(lettre::message::header::ContentType::TEXT_HTML)
-            .body(html)
-            .map_err(|e| format!("Failed to build email: {e}"))?;
-
-        self.mailer
-            .send(email)
-            .await
-            .map_err(|e| format!("Failed to send email: {e}"))?;
-
-        tracing::info!("Invitation email sent to {to_email} for game {game_id}");
-        Ok(())
-    }
-
-    async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String> {
-        let data = FreezeExpiredEmail {
-            frontend_url: self.config.frontend_url.clone(),
-            app_name: self.config.smtp_from_name.clone(),
-            credit,
-        };
-
-        let html = self
-            .handlebars
-            .render("freeze_expired", &data)
-            .map_err(|e| format!("Failed to render template: {e}"))?;
-
-        let to: Mailbox = format!("<{to_email}>")
-            .parse()
-            .map_err(|e| format!("Invalid to address: {e}"))?;
-
-        let email = Message::builder()
-            .from(self.from.clone())
-            .to(to)
-            .subject("Your account has been unfrozen - FapFap Game")
-            .header(lettre::message::header::ContentType::TEXT_HTML)
-            .body(html)
-            .map_err(|e| format!("Failed to build email: {e}"))?;
-
-        self.mailer
-            .send(email)
-            .await
-            .map_err(|e| format!("Failed to send email: {e}"))?;
-
-        tracing::info!("Freeze expired email sent to {to_email}");
-        Ok(())
-    }
-}
-
-pub struct NoopMailer {
-    handlebars: Arc<Handlebars<'static>>,
-    config: MailerConfig,
-}
-
-impl NoopMailer {
-    pub fn new(config: MailerConfig) -> Result<Self, String> {
-        let mut handlebars = Handlebars::new();
-        handlebars.set_strict_mode(true);
-
-        handlebars
-            .register_template_string(
-                "password_reset",
-                include_str!("../../templates/password_reset.hbs"),
-            )
-            .map_err(|e| format!("Failed to register password_reset template: {e}"))?;
-
-        handlebars
-            .register_template_string("invitation", include_str!("../../templates/invitation.hbs"))
-            .map_err(|e| format!("Failed to register invitation template: {e}"))?;
-
-        handlebars
-            .register_template_string(
-                "freeze_expired",
-                include_str!("../../templates/freeze_expired.hbs"),
-            )
-            .map_err(|e| format!("Failed to register freeze_expired template: {e}"))?;
-
-        Ok(Self {
-            handlebars: Arc::new(handlebars),
-            config,
-        })
-    }
-}
-
-#[async_trait]
-impl Mailer for NoopMailer {
-    async fn send_password_reset(&self, to_email: &str, reset_link: &str) -> Result<(), String> {
-        let data = PasswordResetEmail {
-            reset_link: reset_link.to_string(),
-            frontend_url: self.config.frontend_url.clone(),
-            app_name: self.config.smtp_from_name.clone(),
-        };
-
-        let html = self
-            .handlebars
-            .render("password_reset", &data)
-            .map_err(|e| format!("Failed to render template: {e}"))?;
-
-        tracing::info!(
-            "[MAILER] Password reset email for {to_email}:\nReset link: {reset_link}\nHTML:\n{html}"
-        );
-        Ok(())
-    }
-
-    async fn send_invitation(
-        &self,
-        to_email: &str,
-        inviter_name: &str,
-        game_id: &str,
-    ) -> Result<(), String> {
-        let accept_link = format!(
-            "{}?invite_game_id={game_id}&invite_action=accept",
-            self.config.frontend_url
-        );
-        let decline_link = format!(
-            "{}?invite_game_id={game_id}&invite_action=decline",
-            self.config.frontend_url
-        );
-
-        let data = InvitationEmail {
-            inviter_name: inviter_name.to_string(),
-            game_id: game_id.to_string(),
-            frontend_url: self.config.frontend_url.clone(),
-            app_name: self.config.smtp_from_name.clone(),
-            accept_link: accept_link.clone(),
-            decline_link: decline_link.clone(),
-        };
-
-        let html = self
-            .handlebars
-            .render("invitation", &data)
-            .map_err(|e| format!("Failed to render template: {e}"))?;
-
-        tracing::info!(
-            "[MAILER] Invitation email for {to_email} from {inviter_name} (game {game_id}):\nAccept: {accept_link}\nDecline: {decline_link}\nHTML:\n{html}"
-        );
-        Ok(())
-    }
-
-    async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String> {
-        let data = FreezeExpiredEmail {
-            frontend_url: self.config.frontend_url.clone(),
-            app_name: self.config.smtp_from_name.clone(),
-            credit,
-        };
-
-        let html = self
-            .handlebars
-            .render("freeze_expired", &data)
-            .map_err(|e| format!("Failed to render template: {e}"))?;
-
-        tracing::info!(
-            "[MAILER] Freeze expired email for {to_email} (credit={credit}):\nHTML:\n{html}"
-        );
-        Ok(())
-    }
+        name: &str,
+        email: &str,
+        subject: &str,
+        message: &str,
+    ) -> Result<(), String>;
 }
 
 pub fn create_mailer(config: MailerConfig) -> Result<Arc<dyn Mailer>, String> {
@@ -436,6 +166,7 @@ mod tests {
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
+            contact_to_email: "support@example.com".to_string(),
         };
         let mailer = NoopMailer::new(config).unwrap();
         let result = mailer
@@ -456,6 +187,7 @@ mod tests {
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
+            contact_to_email: "support@example.com".to_string(),
         };
         let mailer = NoopMailer::new(config).unwrap();
         let result = mailer
@@ -505,6 +237,7 @@ mod tests {
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
+            contact_to_email: "support@example.com".to_string(),
         };
         let mailer = create_mailer(config).unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -525,6 +258,7 @@ mod tests {
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test Game".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
+            contact_to_email: "support@example.com".to_string(),
         };
         let mailer = NoopMailer::new(config).unwrap();
         let data = PasswordResetEmail {
@@ -549,6 +283,7 @@ mod tests {
             smtp_from_email: "test@test.com".to_string(),
             smtp_from_name: "Test Game".to_string(),
             frontend_url: "http://localhost:3000".to_string(),
+            contact_to_email: "support@example.com".to_string(),
         };
         let mailer = NoopMailer::new(config).unwrap();
         let data = InvitationEmail {

@@ -17,7 +17,6 @@ pub struct GameHistoryItem {
     pub bet: i32,
     pub result: String,
     pub played_at: String,
-    pub credits_after: i32,
     pub player_count: i32,
 }
 
