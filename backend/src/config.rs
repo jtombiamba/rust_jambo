@@ -161,6 +161,7 @@ impl Config {
             .set_default("paypal_topup_amount_eur", "1.00")?
             .set_default("paypal_sandbox_url", "https://api-m.sandbox.paypal.com")?
             .set_default("paypal_live_url", "https://api-m.paypal.com")?
+            .set_default("paypal_donate_url", "https://www.paypal.me/jtombi")?
             .set_default("topup_credit_threshold", "50")?
             .set_default("topup_credit_amount", "500")?
             .set_default("cors_allowed_origins", "http://localhost:5173")?
@@ -322,9 +323,8 @@ impl Config {
                 .unwrap_or_else(|_| "https://api-m.sandbox.paypal.com".to_string()),
             paypal_live_url: env::var("PAYPAL_LIVE_URL")
                 .unwrap_or_else(|_| "https://api-m.paypal.com".to_string()),
-            paypal_donate_url: env::var("PAYPAL_DONATE_URL").unwrap_or_else(|_| {
-                "https://www.paypal.com/donate?business=tombisales@gmail.com".to_string()
-            }),
+            paypal_donate_url: env::var("PAYPAL_DONATE_URL")
+                .unwrap_or_else(|_| "https://www.paypal.me/jtombi".to_string()),
             topup_credit_threshold: env::var("TOPUP_CREDIT_THRESHOLD")
                 .unwrap_or_else(|_| "50".to_string())
                 .parse()
