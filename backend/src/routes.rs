@@ -42,6 +42,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         .service(
             web::scope("/api")
                 .service(get_anonymous_stats)
+                .service(crate::api::config::client_config)
                 .service(create_quick_game)
                 .service(play_card)
                 .service(

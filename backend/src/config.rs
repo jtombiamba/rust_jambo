@@ -46,6 +46,7 @@ pub struct Config {
     pub paypal_topup_amount_eur: String,
     pub paypal_sandbox_url: String,
     pub paypal_live_url: String,
+    pub paypal_donate_url: String,
     pub topup_credit_threshold: i32,
     pub topup_credit_amount: i32,
 }
@@ -321,6 +322,9 @@ impl Config {
                 .unwrap_or_else(|_| "https://api-m.sandbox.paypal.com".to_string()),
             paypal_live_url: env::var("PAYPAL_LIVE_URL")
                 .unwrap_or_else(|_| "https://api-m.paypal.com".to_string()),
+            paypal_donate_url: env::var("PAYPAL_DONATE_URL").unwrap_or_else(|_| {
+                "https://www.paypal.com/donate?business=tombisales@gmail.com".to_string()
+            }),
             topup_credit_threshold: env::var("TOPUP_CREDIT_THRESHOLD")
                 .unwrap_or_else(|_| "50".to_string())
                 .parse()

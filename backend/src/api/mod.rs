@@ -1,5 +1,6 @@
 pub mod anonymous;
 pub mod auth;
+pub mod config;
 pub mod contact;
 pub mod dashboard;
 pub mod dto;

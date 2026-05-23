@@ -1,10 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import axios from 'axios'
 import LegalMentions from './LegalMentions'
 import ContactForm from './ContactForm'
 
 export default function Footer() {
   const [legalOpen, setLegalOpen] = useState(false)
   const [contactOpen, setContactOpen] = useState(false)
+  const [donateUrl, setDonateUrl] = useState('https://www.paypal.com/donate')
+
+  useEffect(() => {
+    axios.get('/api/config')
+      .then((res) => {
+        setDonateUrl(res.data.paypal_donate_url)
+      })
+      .catch(() => {
+        // fallback to default URL
+      })
+  }, [])
 
   return (
     <>
@@ -27,7 +39,7 @@ export default function Footer() {
             </div>
             <div>
               <a
-                href="https://www.paypal.com/donate"
+                href={donateUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0070ba] text-white text-xs font-semibold rounded-full hover:bg-[#005ea6] transition-colors"
@@ -55,7 +67,7 @@ export default function Footer() {
               Contact Us
             </button>
             <a
-              href="https://www.paypal.com/donate"
+              href={donateUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700 py-1"
