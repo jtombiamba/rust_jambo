@@ -5,6 +5,7 @@ export interface UserInfo {
   id: string
   pseudo: string
   email: string
+  language?: string
 }
 
 export type AuthView = 'choice' | 'register' | 'login' | 'forgot-password'

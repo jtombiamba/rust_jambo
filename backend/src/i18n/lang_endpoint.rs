@@ -1,9 +1,7 @@
-use actix_web::{web, HttpMessage, HttpResponse};
+use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 
 use super::{Lang, Translator};
-use crate::auth::extractors::AuthenticatedUser;
-use crate::database::repositories::UserRepository;
 
 #[derive(Debug, Serialize)]
 pub struct LanguagesResponse {
@@ -49,7 +47,6 @@ pub async fn set_language(
     req: actix_web::HttpRequest,
     body: web::Json<SetLanguageRequest>,
     translator: web::Data<std::sync::Arc<Translator>>,
-    user_repo: web::Data<std::sync::Arc<UserRepository>>,
 ) -> HttpResponse {
     let requested_lang = match Lang::parse(&body.lang) {
         Some(l) => l,
@@ -61,17 +58,6 @@ pub async fn set_language(
             }));
         }
     };
-
-    let auth_user_id = req
-        .extensions()
-        .get::<AuthenticatedUser>()
-        .map(|u| u.user_id);
-
-    if let Some(user_id) = auth_user_id {
-        let _ = user_repo
-            .update_language(user_id, requested_lang.as_str())
-            .await;
-    }
 
     let mut resp = HttpResponse::Ok();
     let mut lang_cookie =

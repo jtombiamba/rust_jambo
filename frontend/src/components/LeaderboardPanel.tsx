@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 
 interface LeaderboardEntry {
@@ -18,6 +19,7 @@ interface LeaderboardResponse {
 }
 
 export default function LeaderboardPanel() {
+  const { t } = useTranslation()
   const [data, setData] = useState<LeaderboardResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -30,15 +32,15 @@ export default function LeaderboardPanel() {
         setLoading(false)
       })
       .catch((err) => {
-        setError(err.response?.data?.error || 'Failed to load leaderboard')
+        setError(err.response?.data?.error || t('leaderboard.failedToLoad'))
         setLoading(false)
       })
-  }, [])
+  }, [t])
 
   if (loading) {
     return (
       <div className="bg-white p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
-        <p className="text-gray-500">Loading leaderboard...</p>
+        <p className="text-gray-500">{t('leaderboard.loading')}</p>
       </div>
     )
   }
@@ -55,20 +57,20 @@ export default function LeaderboardPanel() {
 
   return (
     <div className="bg-white p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
-      <h2 className="text-lg sm:text-xl font-semibold mb-4">Leaderboard</h2>
+      <h2 className="text-lg sm:text-xl font-semibold mb-4">{t('leaderboard.title')}</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
         <div>
           <h3 className="text-sm font-semibold text-gray-600 mb-2 uppercase tracking-wide">
-            Top by Wins
+            {t('leaderboard.topByWins')}
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b text-gray-500">
-                  <th className="py-2 pr-2">#</th>
-                  <th className="py-2 pr-2">Player</th>
-                  <th className="py-2 pr-2">Wins</th>
+                  <th className="py-2 pr-2">{t('leaderboard.rank')}</th>
+                  <th className="py-2 pr-2">{t('leaderboard.player')}</th>
+                  <th className="py-2 pr-2">{t('leaderboard.wins')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -83,7 +85,7 @@ export default function LeaderboardPanel() {
                     <td className="py-2 pr-2">
                       {entry.pseudo}
                       {entry.is_current_user && (
-                        <span className="text-blue-600 text-xs ml-1">(you)</span>
+                        <span className="text-blue-600 text-xs ml-1">{t('leaderboard.you')}</span>
                       )}
                     </td>
                     <td className="py-2 pr-2">{entry.wins}</td>
@@ -92,7 +94,7 @@ export default function LeaderboardPanel() {
                 {data.current_user_wins_rank && (
                   <tr className="border-b text-gray-500 italic">
                     <td className="py-2 pr-2">{data.current_user_wins_rank}</td>
-                    <td className="py-2 pr-2">You</td>
+                    <td className="py-2 pr-2">{t('leaderboard.youRow')}</td>
                     <td className="py-2 pr-2">-</td>
                   </tr>
                 )}
@@ -103,15 +105,15 @@ export default function LeaderboardPanel() {
 
         <div>
           <h3 className="text-sm font-semibold text-gray-600 mb-2 uppercase tracking-wide">
-            Top by Streak
+            {t('leaderboard.topByStreak')}
           </h3>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b text-gray-500">
-                  <th className="py-2 pr-2">#</th>
-                  <th className="py-2 pr-2">Player</th>
-                  <th className="py-2 pr-2">Streak</th>
+                  <th className="py-2 pr-2">{t('leaderboard.rank')}</th>
+                  <th className="py-2 pr-2">{t('leaderboard.player')}</th>
+                  <th className="py-2 pr-2">{t('leaderboard.streak')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -126,7 +128,7 @@ export default function LeaderboardPanel() {
                     <td className="py-2 pr-2">
                       {entry.pseudo}
                       {entry.is_current_user && (
-                        <span className="text-blue-600 text-xs ml-1">(you)</span>
+                        <span className="text-blue-600 text-xs ml-1">{t('leaderboard.you')}</span>
                       )}
                     </td>
                     <td className="py-2 pr-2">{entry.winning_streak}</td>
@@ -135,7 +137,7 @@ export default function LeaderboardPanel() {
                 {data.current_user_streak_rank && (
                   <tr className="border-b text-gray-500 italic">
                     <td className="py-2 pr-2">{data.current_user_streak_rank}</td>
-                    <td className="py-2 pr-2">You</td>
+                    <td className="py-2 pr-2">{t('leaderboard.youRow')}</td>
                     <td className="py-2 pr-2">-</td>
                   </tr>
                 )}

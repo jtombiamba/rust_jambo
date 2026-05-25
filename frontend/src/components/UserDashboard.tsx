@@ -1,8 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import axios from 'axios'
+import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../stores/useAuthStore'
+import { useLanguageStore } from '../stores/useLanguageStore'
 import GameRules from './GameRules'
 import LeaderboardPanel from './LeaderboardPanel'
+import LanguageSwitcher from './LanguageSwitcher'
 
 function formatFreezeTime(seconds: number): string {
   if (seconds <= 0) return '0:00:00'
@@ -89,6 +92,7 @@ const STATUS_OPTIONS = [
 
 export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onResumeGame, onViewLobby, starting, error }: Props) {
   const { user, logout } = useAuthStore()
+  const { t } = useTranslation()
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [history, setHistory] = useState<GameHistoryData | null>(null)
   const [page, setPage] = useState(1)
@@ -217,7 +221,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       )
 
       if (!popup) {
-        showToast('Popup blocked. Please allow popups for this site.')
+        showToast(t('dashboard.popupBlocked'))
         setToppingUp(false)
         return
       }
@@ -273,7 +277,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       )
 
       if (!popup) {
-        showToast('Popup blocked. Please allow popups for this site.')
+        showToast(t('dashboard.popupBlocked'))
         setUnfreezing(false)
         return
       }
@@ -319,16 +323,16 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       })
       .catch((err) => {
         if (err.response?.status === 410) {
-          showToast('Game already finished')
+          showToast(t('dashboard.gameAlreadyFinished'))
         } else {
-          showToast('Failed to load game')
+          showToast(t('dashboard.failedLoadGame'))
         }
       })
   }
 
   const handleStep1Submit = async () => {
     if (multiplayerBet <= 0 || multiplayerBet > (profile?.credit ?? 0)) {
-      setMultiplayerError('Insufficient credits or invalid bet')
+      setMultiplayerError(t('dashboard.insufficientCredits'))
       return
     }
 
@@ -341,7 +345,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     for (const p of filledPseudos) {
       const lower = p.toLowerCase()
       if (seen.has(lower)) {
-        setMultiplayerError(`Duplicate pseudo: ${p}`)
+        setMultiplayerError(t('dashboard.duplicatePseudo', { pseudo: p }))
         return
       }
       seen.add(lower)
@@ -359,13 +363,13 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       setMultiplayerOpen(false)
       setMultiplayerStep(1)
       setMultiplayerPseudos({})
-      showToast('Multiplayer game created! Inviting players...')
+      showToast(t('dashboard.multiplayerCreated'))
 
       if (filledPseudos.length > 0) {
         try {
           await axios.post(`/api/games/${result.gameId}/invites`, { pseudos: filledPseudos })
         } catch (err: unknown) {
-          showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Failed to send some invites')
+          showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('dashboard.failedSendInvites'))
         }
       }
       onViewLobby(result.gameId)
@@ -389,7 +393,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
       onViewLobby(gameId)
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Failed to join game')
+      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('dashboard.failedJoinGame'))
     } finally {
       setJoiningGameId(null)
     }
@@ -400,9 +404,9 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     try {
       await axios.post(`/api/games/${gameId}/respond?action=decline`)
       setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
-      showToast('Invitation declined')
+      showToast(t('dashboard.invitationDeclined'))
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Failed to decline invitation')
+      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('dashboard.failedDeclineInvitation'))
     } finally {
       setJoiningGameId(null)
     }
@@ -432,7 +436,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   if (loading && !history) {
     return (
       <div className="container mx-auto p-4 sm:p-8">
-        <p className="text-gray-600">Loading dashboard...</p>
+        <p className="text-gray-600">{t('dashboard.loadingDashboard')}</p>
       </div>
     )
   }
@@ -442,24 +446,25 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
       <div className="fixed top-4 right-4 z-40">
         <div className="hidden sm:flex gap-2 sm:gap-3">
+          <LanguageSwitcher />
           <button
             onClick={() => setRulesOpen(true)}
             className="px-3 sm:px-5 py-2 border border-gray-400 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 shadow-lg text-sm sm:text-base"
           >
-            Rules
+            {t('dashboard.rules')}
           </button>
           <button
             onClick={logout}
             className="px-5 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 shadow-lg"
           >
-            Logout
+            {t('auth.logout')}
           </button>
         </div>
         <div className="sm:hidden relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
             className="w-10 h-10 flex items-center justify-center bg-white border border-gray-300 rounded-lg shadow-lg text-gray-700 hover:bg-gray-100"
-            aria-label="Menu"
+            aria-label={t('common.menu')}
           >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
               <circle cx="10" cy="3" r="2"/>
@@ -473,13 +478,13 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 onClick={() => { setRulesOpen(true); setMenuOpen(false) }}
                 className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
               >
-                Rules
+                {t('dashboard.rules')}
               </button>
               <button
                 onClick={() => { logout(); setMenuOpen(false) }}
                 className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
               >
-                Logout
+                {t('auth.logout')}
               </button>
             </div>
           )}
@@ -493,24 +498,24 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       )}
 
       <div className="container mx-auto p-4 sm:p-8">
-        <h1 className="text-2xl sm:text-3xl font-bold mb-2">Welcome, {user?.pseudo}</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold mb-2">{t('dashboard.welcome', { pseudo: user?.pseudo })}</h1>
         <p className="text-gray-500 mb-4 sm:mb-6">{user?.email}</p>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
           <div className="bg-white p-3 sm:p-4 rounded-lg shadow border">
-            <p className="text-xs sm:text-sm text-gray-500">Credit</p>
+            <p className="text-xs sm:text-sm text-gray-500">{t('dashboard.credit')}</p>
             <p className="text-xl sm:text-2xl font-bold">{profile?.credit ?? 0}</p>
           </div>
           <div className="bg-white p-3 sm:p-4 rounded-lg shadow border">
-            <p className="text-xs sm:text-sm text-gray-500">Games Played</p>
+            <p className="text-xs sm:text-sm text-gray-500">{t('dashboard.gamesPlayed')}</p>
             <p className="text-xl sm:text-2xl font-bold">{profile?.game_played ?? 0}</p>
           </div>
           <div className="bg-white p-3 sm:p-4 rounded-lg shadow border">
-            <p className="text-xs sm:text-sm text-gray-500">Wins</p>
+            <p className="text-xs sm:text-sm text-gray-500">{t('dashboard.wins')}</p>
             <p className="text-xl sm:text-2xl font-bold text-green-600">{profile?.wins ?? 0}</p>
           </div>
           <div className="bg-white p-3 sm:p-4 rounded-lg shadow border">
-            <p className="text-xs sm:text-sm text-gray-500">Kora Wins</p>
+            <p className="text-xs sm:text-sm text-gray-500">{t('dashboard.koraWins')}</p>
             <p className="text-xl sm:text-2xl font-bold text-yellow-600">{profile?.kora_wins ?? 0}</p>
           </div>
         </div>
@@ -521,10 +526,10 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
               <div className="w-full">
                 <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 mb-3">
                   <p className="text-amber-800 font-semibold mb-1">
-                    Account Frozen - No Credits
+                    {t('dashboard.accountFrozen')}
                   </p>
                   <p className="text-amber-600 text-sm mb-2">
-                    You ran out of credits. Auto-unfreeze in:{' '}
+                    {t('dashboard.autoUnfreeze')}{' '}
                     <span className="font-bold font-mono text-lg">
                       {formatFreezeTime(freezeRemainingSec)}
                     </span>
@@ -540,10 +545,10 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                         </svg>
-                        Processing...
+                        {t('dashboard.processing')}
                       </>
                     ) : (
-                      'Request Unfreeze - 1 EUR'
+                      t('dashboard.requestUnfreeze')
                     )}
                   </button>
                 </div>
@@ -555,14 +560,14 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                   disabled={starting}
                   onClick={onStartGame}
                 >
-                  {starting ? 'Starting game...' : 'Solo Game'}
+                  {starting ? t('dashboard.startGameLoading') : t('dashboard.soloGame')}
                 </button>
                 <button
                   className="px-4 sm:px-6 py-2 sm:py-3 bg-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-purple-700 disabled:opacity-50"
                   disabled={starting}
                   onClick={openMultiplayerModal}
                 >
-                  Multiplayer Game
+                  {t('dashboard.multiplayerGame')}
                 </button>
                 {(profile?.credit ?? 0) > 0 && (profile?.credit ?? 0) < 50 && (
                   <button
@@ -576,10 +581,10 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                         </svg>
-                        Processing...
+                        {t('dashboard.processing')}
                       </>
                     ) : (
-                      'Top Up (+500)'
+                      t('dashboard.topUp')
                     )}
                   </button>
                 )}
@@ -589,18 +594,18 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
               className="px-4 sm:px-6 py-2 sm:py-3 bg-teal-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-teal-700"
               onClick={() => setShowGames(!showGames)}
             >
-              {showGames ? 'Hide Games' : 'Games'}
+              {showGames ? t('dashboard.hideGames') : t('dashboard.games')}
             </button>
             <button
               className="px-4 sm:px-6 py-2 sm:py-3 bg-orange-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-orange-700"
               onClick={() => setShowLeaderboard(!showLeaderboard)}
             >
-              {showLeaderboard ? 'Hide Leaderboard' : 'Leaderboard'}
+              {showLeaderboard ? t('dashboard.hideLeaderboard') : t('dashboard.leaderboard')}
             </button>
           </div>
           {error && (
             <div className="mt-4 p-3 bg-red-100 text-red-700 rounded text-sm flex items-center justify-between">
-              <span>Failed to start game: {error}</span>
+              <span>{t('dashboard.failedStartGame')}: {error}</span>
               <button onClick={() => {}} className="text-red-500 hover:text-red-700 ml-2">&times;</button>
             </div>
           )}
@@ -609,7 +614,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
         {invitations.length > 0 && (
           <div className="bg-purple-50 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8 border border-purple-200">
             <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 text-purple-800">
-              Pending Invitations ({invitations.length})
+              {t('dashboard.pendingInvitations')} ({invitations.length})
             </h2>
             <div className="space-y-2 sm:space-y-3">
               {invitations.map((inv) => (
@@ -619,14 +624,14 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 >
                   <div>
                     <p className="font-semibold">
-                      {inv.creator_pseudo}'s game
+                      {t('dashboard.possessionGame', { pseudo: inv.creator_pseudo })}
                     </p>
                     <p className="text-xs sm:text-sm text-gray-500">
-                      Bet: {inv.bet} | Players: {inv.player_count}/{inv.max_players}
+                      {t('dashboard.betInfo', { bet: inv.bet, current: inv.player_count, max: inv.max_players })}
                     </p>
                     {inv.expires_at && (
                       <p className="text-xs text-gray-400">
-                        Expires: {new Date(inv.expires_at).toLocaleTimeString()}
+                        {t('dashboard.expires', { time: new Date(inv.expires_at).toLocaleTimeString(useLanguageStore.getState().language) })}
                       </p>
                     )}
                   </div>
@@ -634,17 +639,17 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                     <button
                       onClick={() => handleAcceptInvite(inv.game_id)}
                       disabled={joiningGameId === inv.game_id || freezeRemainingSec > 0}
-                      title={freezeRemainingSec > 0 ? 'Account is frozen' : undefined}
+                      title={freezeRemainingSec > 0 ? t('dashboard.accountIsFrozen') : undefined}
                       className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium w-full sm:w-auto"
                     >
-                      {joiningGameId === inv.game_id ? '...' : freezeRemainingSec > 0 ? 'Frozen' : 'Accept'}
+                      {joiningGameId === inv.game_id ? '...' : freezeRemainingSec > 0 ? t('dashboard.frozen') : t('dashboard.accept')}
                     </button>
                     <button
                       onClick={() => handleDeclineInvite(inv.game_id)}
                       disabled={joiningGameId === inv.game_id}
                       className="px-4 py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500 disabled:opacity-50 text-sm font-medium w-full sm:w-auto"
                     >
-                      Decline
+                      {t('dashboard.decline')}
                     </button>
                   </div>
                 </div>
@@ -657,11 +662,11 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
         <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
           <div className="flex flex-wrap items-center justify-between mb-4">
             <h2 className="text-lg sm:text-xl font-semibold">
-              Game History
+              {t('dashboard.gameHistory')}
               {history && <span className="text-gray-500 text-sm ml-2">({history.total} total)</span>}
             </h2>
             <div className="flex items-center gap-2 mt-2 sm:mt-0">
-              <span className="text-xs text-gray-500">Per page:</span>
+              <span className="text-xs text-gray-500">{t('dashboard.perPage')}</span>
               <select
                 value={perPage}
                 onChange={(e) => setPerPage(Number(e.target.value))}
@@ -691,26 +696,26 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
           </div>
 
           {history && history.games.length === 0 ? (
-            <p className="text-gray-500">No games found.</p>
+            <p className="text-gray-500">{t('dashboard.noGamesFound')}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="py-2 pr-4">Status</th>
-                    <th className="py-2 pr-4">Result</th>
+                    <th className="py-2 pr-4">{t('dashboard.status')}</th>
+                    <th className="py-2 pr-4">{t('dashboard.result')}</th>
                     <th
                       className="py-2 pr-4 cursor-pointer select-none hover:text-blue-600"
                       onClick={() => handleSort('bet')}
                     >
-                      Bet{sortIndicator('bet')}
+                      {t('dashboard.bet')}{sortIndicator('bet')}
                     </th>
-                    <th className="py-2 pr-4">Players</th>
+                    <th className="py-2 pr-4">{t('dashboard.players')}</th>
                     <th
                       className="py-2 cursor-pointer select-none hover:text-blue-600"
                       onClick={() => handleSort('date')}
                     >
-                      Date{sortIndicator('date')}
+                      {t('dashboard.date')}{sortIndicator('date')}
                     </th>
                   </tr>
                 </thead>
@@ -772,7 +777,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 disabled={page <= 1}
                 className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50 hover:bg-gray-300 text-sm"
               >
-                Prev
+                {t('common.prev')}
               </button>
               {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
                 let pageNum: number
@@ -804,7 +809,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 disabled={page >= totalPages}
                 className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50 hover:bg-gray-300 text-sm"
               >
-                Next
+                {t('common.next')}
               </button>
             </div>
           )}
@@ -819,7 +824,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
           <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">
-                {multiplayerStep === 1 ? 'Create Multiplayer Game' : 'Invite Players'}
+                {multiplayerStep === 1 ? t('dashboard.createMultiplayerGame') : t('dashboard.invitePlayers')}
               </h2>
               <button
                 onClick={() => { setMultiplayerOpen(false); setMultiplayerError(null); setMultiplayerStep(1) }}
@@ -833,7 +838,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
               <>
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Bet Amount
+                    {t('dashboard.betAmount')}
                   </label>
                   <input
                     type="number"
@@ -844,25 +849,25 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                   />
                   <p className="text-sm text-gray-500 mt-1">
-                    Your credit: {profile?.credit ?? 0}
+                    {t('dashboard.yourCredit', { credit: profile?.credit ?? 0 })}
                   </p>
                 </div>
 
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Number of Players
+                    {t('dashboard.numberOfPlayers')}
                   </label>
                   <select
                     value={multiplayerMaxPlayers}
                     onChange={(e) => setMultiplayerMaxPlayers(parseInt(e.target.value))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                   >
-                    <option value={2}>2 players</option>
-                    <option value={3}>3 players</option>
-                    <option value={4}>4 players</option>
+                    <option value={2}>{t('dashboard.xPlayers', { count: 2 })}</option>
+                    <option value={3}>{t('dashboard.xPlayers', { count: 3 })}</option>
+                    <option value={4}>{t('dashboard.xPlayers', { count: 4 })}</option>
                   </select>
                   <p className="text-sm text-gray-400 mt-1">
-                    Game will be cancelled after 6 minutes if not full.
+                    {t('dashboard.gameCancelExpiry')}
                   </p>
                 </div>
 
@@ -877,14 +882,14 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                     onClick={() => { setMultiplayerOpen(false); setMultiplayerError(null) }}
                     className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
                   <button
                     onClick={() => setMultiplayerStep(2)}
                     disabled={multiplayerBet <= 0 || multiplayerBet > (profile?.credit ?? 0)}
                     className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
                   >
-                    Next: Invite Players
+                    {t('dashboard.nextInvitePlayers')}
                   </button>
                 </div>
               </>
@@ -893,17 +898,17 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
             {multiplayerStep === 2 && (
               <>
                 <p className="text-sm text-gray-500 mb-4">
-                  Bet: {multiplayerBet} credits | Players: {multiplayerMaxPlayers} (you + {multiplayerMaxPlayers - 1} others)
+                  {t('dashboard.playersDesc', { credits: multiplayerBet, players: multiplayerMaxPlayers, others: multiplayerMaxPlayers - 1 })}
                 </p>
 
                 {Array.from({ length: multiplayerMaxPlayers - 1 }, (_, i) => i + 1).map((slot) => (
                   <div key={slot} className="mb-3">
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Player {slot} (@pseudo)
+                      {t('dashboard.playerSlot', { slot })}
                     </label>
                     <input
                       type="text"
-                      placeholder="@pseudo"
+                      placeholder={t('dashboard.pseudoPlaceholder')}
                       value={multiplayerPseudos[slot] || ''}
                       onChange={(e) => {
                         let val = e.target.value
@@ -912,7 +917,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                       }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                     />
-                    <p className="text-xs text-gray-400 mt-0.5">Leave empty to skip</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{t('dashboard.leaveEmpty')}</p>
                   </div>
                 ))}
 
@@ -927,14 +932,14 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                     onClick={() => setMultiplayerStep(1)}
                     className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
                   >
-                    Back
+                    {t('dashboard.back')}
                   </button>
                   <button
                     onClick={handleStep1Submit}
                     disabled={multiplayerCreating}
                     className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
                   >
-                    {multiplayerCreating ? 'Creating...' : 'Create & Invite'}
+                    {multiplayerCreating ? t('dashboard.creating') : t('dashboard.createAndInvite')}
                   </button>
                 </div>
               </>

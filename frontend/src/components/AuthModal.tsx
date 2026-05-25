@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../stores/useAuthStore'
 
 function RegisterForm() {
   const { register, authError, authLoading, setAuthView } = useAuthStore()
+  const { t } = useTranslation()
   const [pseudo, setPseudo] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -17,7 +19,7 @@ function RegisterForm() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-4">Create an account</h2>
+      <h2 className="text-xl font-semibold mb-4">{t('auth.createAccount')}</h2>
       {authError && (
         <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">
           {authError.error}
@@ -25,7 +27,7 @@ function RegisterForm() {
       )}
       <form onSubmit={handleSubmit} className="space-y-3">
         <div>
-          <label className="block text-sm font-medium mb-1">Pseudo</label>
+          <label className="block text-sm font-medium mb-1">{t('auth.pseudo')}</label>
           <input
             type="text"
             value={pseudo}
@@ -36,7 +38,7 @@ function RegisterForm() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Email</label>
+          <label className="block text-sm font-medium mb-1">{t('auth.email')}</label>
           <input
             type="email"
             value={email}
@@ -47,7 +49,7 @@ function RegisterForm() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Password</label>
+          <label className="block text-sm font-medium mb-1">{t('auth.password')}</label>
           <div className="relative">
             <input
               type={showPassword ? 'text' : 'password'}
@@ -80,7 +82,7 @@ function RegisterForm() {
           </div>
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Confirm Password</label>
+          <label className="block text-sm font-medium mb-1">{t('auth.confirmPassword')}</label>
           <div className="relative">
             <input
               type={showPasswordConfirm ? 'text' : 'password'}
@@ -117,16 +119,16 @@ function RegisterForm() {
           disabled={authLoading}
           className="w-full py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 disabled:opacity-50"
         >
-          {authLoading ? 'Creating account...' : 'Create account'}
+          {authLoading ? t('auth.creatingAccount') : t('auth.createAccountBtn')}
         </button>
       </form>
       <p className="mt-4 text-center text-sm text-gray-500">
-        Already have an account?{' '}
+        {t('auth.alreadyHaveAccount')}{' '}
         <button
           onClick={() => setAuthView('login')}
           className="text-blue-600 hover:underline"
         >
-          Log in
+          {t('auth.logIn')}
         </button>
       </p>
     </div>
@@ -135,6 +137,7 @@ function RegisterForm() {
 
 function LoginForm() {
   const { login, authError, authLoading, setAuthView } = useAuthStore()
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -146,7 +149,7 @@ function LoginForm() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-4">Log in</h2>
+      <h2 className="text-xl font-semibold mb-4">{t('auth.logIn')}</h2>
       {authError && (
         <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">
           {authError.error}
@@ -154,7 +157,7 @@ function LoginForm() {
       )}
       <form onSubmit={handleSubmit} className="space-y-3">
         <div>
-          <label className="block text-sm font-medium mb-1">Email</label>
+          <label className="block text-sm font-medium mb-1">{t('auth.email')}</label>
           <input
             type="email"
             value={email}
@@ -165,7 +168,7 @@ function LoginForm() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">Password</label>
+          <label className="block text-sm font-medium mb-1">{t('auth.password')}</label>
           <div className="relative">
             <input
               type={showPassword ? 'text' : 'password'}
@@ -201,7 +204,7 @@ function LoginForm() {
           disabled={authLoading}
           className="w-full py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 disabled:opacity-50"
         >
-          {authLoading ? 'Logging in...' : 'Log in'}
+          {authLoading ? t('auth.loggingIn') : t('auth.logIn')}
         </button>
       </form>
       <div className="mt-4 space-y-2 text-center text-sm">
@@ -210,16 +213,16 @@ function LoginForm() {
             onClick={() => setAuthView('forgot-password')}
             className="text-blue-600 hover:underline"
           >
-            Password forgotten? Reset
+            {t('auth.passwordForgotten')}
           </button>
         </p>
         <p className="text-gray-500">
-          Don't have an account?{' '}
+          {t('auth.noAccount')}{' '}
           <button
             onClick={() => setAuthView('register')}
             className="text-blue-600 hover:underline"
           >
-            Create one
+            {t('auth.createOne')}
           </button>
         </p>
       </div>
@@ -229,6 +232,7 @@ function LoginForm() {
 
 function ForgotPasswordForm() {
   const { forgotPassword, authError, authLoading, setAuthView } = useAuthStore()
+  const { t } = useTranslation()
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
 
@@ -241,15 +245,15 @@ function ForgotPasswordForm() {
   if (sent) {
     return (
       <div>
-        <h2 className="text-xl font-semibold mb-4">Check your email</h2>
+        <h2 className="text-xl font-semibold mb-4">{t('auth.checkYourEmail')}</h2>
         <p className="text-gray-600 mb-4">
-          {authError?.error || `If ${email} exists, you will receive an email to reset your password.`}
+          {authError?.error || t('auth.emailSentMessage', { email })}
         </p>
         <button
           onClick={() => setAuthView('login')}
           className="w-full py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700"
         >
-          Back to login
+          {t('auth.backToLogin')}
         </button>
       </div>
     )
@@ -257,9 +261,9 @@ function ForgotPasswordForm() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-4">Reset your password</h2>
+      <h2 className="text-xl font-semibold mb-4">{t('auth.resetYourPassword')}</h2>
       <p className="text-gray-600 mb-4 text-sm">
-        Enter your email address and we'll send you a link to reset your password.
+        {t('auth.resetInstructions')}
       </p>
       {authError && (
         <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">
@@ -268,13 +272,13 @@ function ForgotPasswordForm() {
       )}
       <form onSubmit={handleSubmit} className="space-y-3">
         <div>
-          <label className="block text-sm font-medium mb-1">Email</label>
+          <label className="block text-sm font-medium mb-1">{t('auth.email')}</label>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full border rounded px-3 py-2"
-            placeholder="Please write your email for password reinitialisation"
+            placeholder={t('auth.resetEmailPlaceholder')}
             required
             autoComplete="email"
           />
@@ -284,7 +288,7 @@ function ForgotPasswordForm() {
           disabled={authLoading}
           className="w-full py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 disabled:opacity-50"
         >
-          {authLoading ? 'Sending...' : 'Send reset link'}
+          {authLoading ? t('auth.sending') : t('auth.sendResetLink')}
         </button>
       </form>
       <p className="mt-4 text-center text-sm text-gray-500">
@@ -292,7 +296,7 @@ function ForgotPasswordForm() {
           onClick={() => setAuthView('login')}
           className="text-blue-600 hover:underline"
         >
-          Back to login
+          {t('auth.backToLogin')}
         </button>
       </p>
     </div>
@@ -301,6 +305,7 @@ function ForgotPasswordForm() {
 
 export default function AuthModal() {
   const { authModalOpen, authView, closeAuthModal, setAuthView, pendingInviteMessage } = useAuthStore()
+  const { t } = useTranslation()
 
   if (!authModalOpen) return null
 
@@ -326,7 +331,7 @@ export default function AuthModal() {
 
         {authView === 'choice' && (
           <div>
-            <h2 className="text-xl font-semibold mb-6 text-center">Welcome</h2>
+            <h2 className="text-xl font-semibold mb-6 text-center">{t('auth.welcome')}</h2>
             {pendingInviteMessage && (
               <p className="text-sm text-emerald-700 mb-4 text-center">
                 {pendingInviteMessage}
@@ -337,13 +342,13 @@ export default function AuthModal() {
                 onClick={() => setAuthView('register')}
                 className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700"
               >
-                Create an account
+                {t('auth.createAccount')}
               </button>
               <button
                 onClick={() => setAuthView('login')}
                 className="w-full py-3 bg-gray-100 text-gray-800 rounded-lg font-semibold hover:bg-gray-200"
               >
-                Log in
+                {t('auth.logIn')}
               </button>
             </div>
           </div>

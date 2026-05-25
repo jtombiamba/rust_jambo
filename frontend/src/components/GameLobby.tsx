@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useWebSocket, GameEvent } from '../hooks/useWebSocket'
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
+  const { t } = useTranslation()
   const { user } = useAuthStore()
   const [players, setPlayers] = useState<LobbyPlayer[]>([])
   const [status, setStatus] = useState<string>('pending')
@@ -53,7 +55,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       const res = await axios.get(`/api/me/games/${gameId}`)
       const data = res.data
       if (data.status === 'cancelled') {
-        showToast('Game has been cancelled.')
+        showToast(t('lobby.gameCancelled'))
         onBack()
         return
       }
@@ -74,7 +76,6 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       setPlayers(lobbyPlayers)
       setIsCreator(lobbyPlayers.some(p => p.position === 0 && p.isCurrentUser))
 
-      // Store current player's id and position for WebSocket identity
       const currentPlayer = rawPlayers.find((p: { is_current_user?: boolean }) => p.is_current_user)
       if (currentPlayer?.id) {
         setMyPlayerId(currentPlayer.id)
@@ -86,13 +87,13 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
     } catch (err) {
       const status = (err as { response?: { status?: number } }).response?.status
       if (status === 404 || status === 403) {
-        showToast('You do not have access to this game lobby.')
+        showToast(t('lobby.noAccess'))
         onBack()
         return
       }
       console.error('Failed to refresh lobby', err)
     }
-  }, [gameId, onBack, onGameStart])
+  }, [gameId, onBack, onGameStart, t])
 
   useEffect(() => {
     refreshLobby()
@@ -145,7 +146,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
           setStatus('ready')
           break
         case 'game_cancelled':
-          showToast(event.reason || 'Game has been cancelled.')
+          showToast(event.reason || t('lobby.gameCancelled'))
           onBack()
           break
         case 'cards_dealt':
@@ -155,7 +156,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
           handleGameStarted(event)
           break
       }
-    }, [onBack, handleGameStarted]),
+    }, [onBack, handleGameStarted, t]),
     autoReconnect: true,
   })
 
@@ -169,7 +170,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       const expiry = new Date(expiresAt).getTime()
       const diff = expiry - now
       if (diff <= 0) {
-        setTimeLeft('Expired')
+        setTimeLeft(t('lobby.expired'))
         return
       }
       const mins = Math.floor(diff / 60000)
@@ -179,7 +180,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
     updateTimer()
     const timer = setInterval(updateTimer, 1000)
     return () => clearInterval(timer)
-  }, [expiresAt])
+  }, [expiresAt, t])
 
   const handleSlotSearch = (slot: number, query: string) => {
     const val = query.startsWith('@') ? query.slice(1) : query
@@ -216,10 +217,10 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
     setSlotSearchResults(prev => ({ ...prev, [slot]: [] }))
     try {
       await axios.post(`/api/games/${gameId}/invites`, { user_ids: [userItem.id] })
-      showToast(`Invited ${userItem.pseudo}`)
+      showToast(t('lobby.invitedUser', { pseudo: userItem.pseudo }))
       setSlotPseudos(prev => ({ ...prev, [slot]: `@${userItem.pseudo}` }))
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Failed to send invite')
+      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('lobby.failedSendInvite'))
     } finally {
       setSlotInviting(prev => ({ ...prev, [slot]: false }))
     }
@@ -231,7 +232,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       const res = await axios.post(`/api/games/${gameId}/start`)
       onGameStart(res.data)
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Failed to start game')
+      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('lobby.failedStartGame'))
     } finally {
       setStarting(false)
     }
@@ -249,21 +250,21 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
         onClick={onBack}
         className="mb-4 px-3 sm:px-4 py-2 bg-gray-500 text-white text-sm sm:text-base rounded-lg hover:bg-gray-600"
       >
-        Back to Dashboard
+        {t('common.backToDashboard')}
       </button>
 
-      <h1 className="text-2xl sm:text-3xl font-bold mb-2">Game Lobby</h1>
-      <p className="text-gray-500 mb-1 text-sm sm:text-base">Bet: {bet} credits</p>
+      <h1 className="text-2xl sm:text-3xl font-bold mb-2">{t('lobby.gameLobby')}</h1>
+      <p className="text-gray-500 mb-1 text-sm sm:text-base">{t('lobby.betCredits', { bet })}</p>
       <p className="text-xs sm:text-sm text-gray-400 mb-4 sm:mb-6">
         {status === 'ready'
-          ? 'All players have joined. Start the game!'
-          : `Waiting for players... (${players.length}/${maxPlayers})`}
+          ? t('lobby.allPlayersJoined')
+          : t('lobby.waitingPlayers', { current: players.length, max: maxPlayers })}
       </p>
 
       {timeLeft && status === 'pending' && (
         <div className="mb-4 sm:mb-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
           <p className="text-yellow-700 font-mono text-sm sm:text-base">
-            Time remaining: {timeLeft}
+            {t('lobby.timeRemaining', { time: timeLeft })}
           </p>
         </div>
       )}
@@ -277,7 +278,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
                 key={idx}
                 className="p-3 sm:p-4 rounded-lg border bg-green-50 border-green-300"
               >
-                <p className="text-xs sm:text-sm text-gray-500">Position {idx}</p>
+                <p className="text-xs sm:text-sm text-gray-500">{t('lobby.position', { pos: idx })}</p>
                 <p className="font-semibold text-base sm:text-lg">{p.pseudo}</p>
               </div>
             )
@@ -289,8 +290,8 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
                 key={idx}
                 className="p-3 sm:p-4 rounded-lg border bg-gray-50 border-gray-200"
               >
-                <p className="text-xs sm:text-sm text-gray-500">Position {idx}</p>
-                <p className="text-gray-400 italic text-sm">Waiting for player...</p>
+                <p className="text-xs sm:text-sm text-gray-500">{t('lobby.position', { pos: idx })}</p>
+                <p className="text-gray-400 italic text-sm">{t('lobby.waitingPlayer')}</p>
               </div>
             )
           }
@@ -305,9 +306,9 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
               key={idx}
               className="p-3 sm:p-4 rounded-lg border bg-white border-purple-200 relative"
             >
-              <p className="text-xs sm:text-sm text-gray-500 mb-1">Position {idx}</p>
+              <p className="text-xs sm:text-sm text-gray-500 mb-1">{t('lobby.position', { pos: idx })}</p>
               {inviting ? (
-                <p className="text-purple-600 text-sm">Inviting...</p>
+                <p className="text-purple-600 text-sm">{t('lobby.inviting')}</p>
               ) : (
                 <>
                   <input
@@ -315,10 +316,10 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
                     value={slotPseudo}
                     onFocus={() => setActiveSlot(idx)}
                     onChange={(e) => handleSlotSearch(idx, e.target.value)}
-                    placeholder="@pseudo"
+                    placeholder={t('dashboard.pseudoPlaceholder')}
                     className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                   />
-                  {searching && <p className="text-xs text-gray-400 mt-1">Searching...</p>}
+                  {searching && <p className="text-xs text-gray-400 mt-1">{t('lobby.searching')}</p>}
                   {activeSlot === idx && results.length > 0 && (
                     <div className="absolute top-full left-0 right-0 z-20 bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-40 overflow-y-auto">
                       {results.map((u) => (
@@ -328,7 +329,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
                           className="w-full text-left px-3 py-2 text-sm hover:bg-purple-50 flex items-center justify-between"
                         >
                           <span className="font-medium">@{u.pseudo}</span>
-                          <span className="text-xs text-purple-600">Invite</span>
+                          <span className="text-xs text-purple-600">{t('lobby.invite')}</span>
                         </button>
                       ))}
                     </div>
@@ -347,20 +348,20 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
             disabled={starting}
             className="px-8 py-4 bg-green-600 text-white text-xl font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 shadow-lg"
           >
-            {starting ? 'Starting...' : 'Start Game'}
+            {starting ? t('lobby.starting') : t('lobby.startGame')}
           </button>
         </div>
       )}
 
       {!isCreator && status === 'pending' && (
         <div className="text-center p-6 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-blue-700">Waiting for the game creator to invite more players...</p>
+          <p className="text-blue-700">{t('lobby.waitingCreatorInvite')}</p>
         </div>
       )}
 
       {!isCreator && status === 'ready' && (
         <div className="text-center p-6 bg-yellow-50 rounded-lg border border-yellow-200">
-          <p className="text-yellow-700">Waiting for the game creator to start the game...</p>
+          <p className="text-yellow-700">{t('lobby.waitingCreatorStart')}</p>
         </div>
       )}
     </div>

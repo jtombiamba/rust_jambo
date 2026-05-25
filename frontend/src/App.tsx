@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import axios from 'axios'
+import { useTranslation } from 'react-i18next'
 import './App.css'
 import GameTable from './components/GameTable'
 import AuthModal from './components/AuthModal'
@@ -11,6 +12,8 @@ import { ToastProvider } from './components/Toast'
 import { useToast } from './components/useToast'
 import { useGameStore } from './stores/useGameStore'
 import { useAuthStore } from './stores/useAuthStore'
+import { useLanguageStore } from './stores/useLanguageStore'
+import LanguageSwitcher from './components/LanguageSwitcher'
 import { useGameWebSocket } from './hooks/useGameWebSocket'
 import { useWebSocket } from './hooks/useWebSocket'
 import { getStoredStats, saveStats, AnonymousStats } from './utils/storage'
@@ -54,9 +57,11 @@ function AppContent() {
   const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
   const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver } = useGameStore()
   const isMultiplayer = players.length > 0 && players.every(p => p.type === 'human')
-  const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite } = useAuthStore()
+  const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite, user } = useAuthStore()
   const { isConnected } = useWebSocket({ gameId: gameId || '' })
   const { showToast } = useToast()
+  const { t } = useTranslation()
+  const { init: initLanguage, syncFromUser } = useLanguageStore()
   useGameWebSocket(gameId)
 
   const processInvite = useCallback((gameId: string, action: string) => {
@@ -64,21 +69,41 @@ function AppContent() {
     axios.post(endpoint)
       .then((res) => {
         if (action === 'accept') {
-          showToast(res.data.message || 'Joined game!', 'success')
+          showToast(res.data.message || t('dashboard.multiplayerCreated'), 'success')
           setLobbyGameId(gameId)
         } else {
-          showToast('Invitation declined', 'success')
+          showToast(t('dashboard.invitationDeclined'), 'success')
         }
       })
       .catch((err) => {
-        const msg = err.response?.data?.error || 'Failed to process invitation'
+        const msg = err.response?.data?.error || t('dashboard.failedJoinGame')
         showToast(msg, 'error')
       })
-  }, [showToast])
+  }, [showToast, t])
 
   useEffect(() => {
     checkAuth()
   }, [checkAuth])
+
+  useEffect(() => {
+    initLanguage()
+  }, [initLanguage])
+
+  useEffect(() => {
+    if (isAuthenticated && user?.language) {
+      syncFromUser(user.language)
+    }
+  }, [isAuthenticated, user?.language, syncFromUser])
+
+  useEffect(() => {
+    document.documentElement.lang = useLanguageStore.getState().language
+    const unsubscribe = useLanguageStore.subscribe((state, prevState) => {
+      if (state.language !== prevState.language) {
+        document.documentElement.lang = state.language
+      }
+    })
+    return unsubscribe
+  }, [])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -94,10 +119,10 @@ function AppContent() {
         window.history.replaceState({}, '', url.toString())
       } else {
         setPendingInvite({ gameId: inviteGameId, action: inviteAction })
-        openAuthModal('Log in to respond to the game invitation.')
+        openAuthModal(t('auth.loginForInvite'))
       }
     }
-  }, [isAuthenticated, openAuthModal, processInvite, clearPendingInvite])
+  }, [isAuthenticated, openAuthModal, processInvite, clearPendingInvite, t])
 
   useEffect(() => {
     if (isAuthenticated && pendingInvite) {
@@ -131,10 +156,10 @@ function AppContent() {
       })
       .catch(err => {
         console.error('Failed to fetch stats', err)
-        showToast('Failed to load game stats', 'error')
+        showToast(t('dashboard.failedLoadGame'), 'error')
         setLoading(false)
       })
-  }, [isAuthenticated, showToast])
+  }, [isAuthenticated, showToast, t])
 
   const startGame = () => {
     setStartingGame(true)
@@ -224,7 +249,7 @@ function AppContent() {
       <div className="container mx-auto p-4 sm:p-8 flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <p className="text-gray-600">{t('common.loading')}</p>
         </div>
       </div>
     )
@@ -236,7 +261,7 @@ function AppContent() {
         <div className="flex-1">
           {!isConnected && (
             <div className="sticky top-0 z-30 bg-yellow-500 text-white text-center py-2 px-4 text-sm font-medium">
-              Reconnecting to game server...
+              {t('common.reconnecting')}
             </div>
           )}
           <GameTable
@@ -270,7 +295,7 @@ function AppContent() {
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
               onClick={() => resetGame()}
             >
-              Back to Dashboard
+              {t('common.backToDashboard')}
             </button>
           </div>
         </div>
@@ -335,24 +360,25 @@ function AppContent() {
       <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
       <div className="fixed top-4 right-4 z-40">
         <div className="hidden sm:flex gap-2 sm:gap-3">
+          <LanguageSwitcher />
           <button
             onClick={() => setRulesOpen(true)}
             className="px-3 sm:px-5 py-2 border border-gray-400 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 shadow-lg text-sm sm:text-base"
           >
-            Rules
+            {t('dashboard.rules')}
           </button>
           <button
             onClick={() => openAuthModal()}
             className="px-4 sm:px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 shadow-lg text-sm sm:text-base"
           >
-            Create account / Connect
+            {t('auth.createAccountConnect')}
           </button>
         </div>
         <div className="sm:hidden relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
             className="w-10 h-10 flex items-center justify-center bg-white border border-gray-300 rounded-lg shadow-lg text-gray-700 hover:bg-gray-100"
-            aria-label="Menu"
+            aria-label={t('common.menu')}
           >
             <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
               <circle cx="10" cy="3" r="2"/>
@@ -362,45 +388,45 @@ function AppContent() {
           </button>
           {menuOpen && (
             <div className="absolute right-0 top-12 bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[140px] z-50">
+              <LanguageSwitcher />
               <button
                 onClick={() => { setRulesOpen(true); setMenuOpen(false) }}
                 className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
               >
-                Rules
+                {t('dashboard.rules')}
               </button>
               <button
                 onClick={() => { openAuthModal(); setMenuOpen(false) }}
                 className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
               >
-                Create account / Connect
+                {t('auth.createAccountConnect')}
               </button>
             </div>
           )}
         </div>
       </div>
       <div className="container mx-auto p-4 sm:p-8 flex-1">
-        <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">FapFap Card Game</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">{t('common.title')}</h1>
         <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
-          <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">Dashboard</h2>
+          <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">{t('dashboard.title')}</h2>
           <p className="mb-2 text-sm sm:text-base">
-            You are not logged in. You are allowed {gamesAllowed} games.
-            Create an account to play more.
+            {t('dashboard.notLoggedIn', { allowed: gamesAllowed })}
           </p>
           <div className="grid grid-cols-2 gap-3 sm:gap-4">
             <div className="bg-white p-3 sm:p-4 rounded shadow">
-              <p className="text-sm sm:text-lg">Games Played</p>
+              <p className="text-sm sm:text-lg">{t('dashboard.gamesPlayed')}</p>
               <p className="text-xl sm:text-2xl font-bold">{gamesPlayed}</p>
             </div>
             <div className="bg-white p-3 sm:p-4 rounded shadow">
-              <p className="text-sm sm:text-lg">Total Wins</p>
+              <p className="text-sm sm:text-lg">{t('dashboard.totalWins')}</p>
               <p className="text-xl sm:text-2xl font-bold">{stats?.total_wins ?? 0}</p>
             </div>
             <div className="bg-white p-3 sm:p-4 rounded shadow">
-              <p className="text-sm sm:text-lg">Credits</p>
+              <p className="text-sm sm:text-lg">{t('dashboard.credit')}</p>
               <p className="text-xl sm:text-2xl font-bold">{anonymousCredits}</p>
             </div>
             <div className="bg-white p-3 sm:p-4 rounded shadow">
-              <p className="text-sm sm:text-lg">Remaining</p>
+              <p className="text-sm sm:text-lg">{t('dashboard.remaining')}</p>
               <p className="text-xl sm:text-2xl font-bold">{gamesRemaining}</p>
             </div>
           </div>
@@ -408,10 +434,10 @@ function AppContent() {
             {anonymousOutOfCredits ? (
               <div className="w-full bg-amber-50 border border-amber-300 rounded-lg p-4">
                 <p className="text-amber-800 font-semibold mb-1">
-                  Out of credits
+                  {t('dashboard.outOfCredits')}
                 </p>
                 <p className="text-amber-600 text-sm">
-                  Create an account to unlock more games and access the unfreeze system.
+                  {t('dashboard.createAccountCredits')}
                 </p>
               </div>
             ) : gamesPlayed < gamesAllowed && (
@@ -420,18 +446,18 @@ function AppContent() {
                 disabled={startingGame}
                 onClick={startGame}
               >
-                {startingGame ? 'Starting...' : 'Start a quick game'}
+                {startingGame ? t('dashboard.startingGame') : t('dashboard.startQuickGame')}
               </button>
             )}
           </div>
           {error && (
             <div className="mt-4 p-3 bg-red-100 text-red-700 rounded text-sm">
-              Failed to start game: {error}
+              {t('dashboard.failedStartGame')}: {error}
               <button
                 onClick={() => setError(null)}
                 className="ml-2 text-red-500 hover:text-red-700"
               >
-                Dismiss
+                {t('common.dismiss')}
               </button>
             </div>
           )}
