@@ -1,9 +1,11 @@
 pub mod anonymous;
 pub mod auth;
+pub mod benchmark;
 pub mod config;
 pub mod contact;
 pub mod dashboard;
 pub mod dto;
+pub mod fallback;
 pub mod game;
 pub mod leaderboard;
 pub mod middleware;

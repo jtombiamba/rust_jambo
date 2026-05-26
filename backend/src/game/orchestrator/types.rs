@@ -53,6 +53,36 @@ pub struct AcceptInviteOutcome {
     pub game_status: String,
 }
 
+/// Information about a player in a benchmark game.
+#[derive(Debug, Clone)]
+pub struct BenchmarkPlayerOutcome {
+    pub player_id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub position: i32,
+    pub cards: Vec<i32>,
+}
+
+/// Outcome of a benchmark game creation.
+#[derive(Debug, Clone)]
+pub struct BenchmarkGameOutcome {
+    pub game_id: Uuid,
+    pub players: Vec<BenchmarkPlayerOutcome>,
+    pub current_turn: i32,
+    pub bet: i32,
+}
+
+/// Counts of records deleted during benchmark cleanup.
+#[derive(Debug, Clone)]
+pub struct BenchmarkCleanupCounts {
+    pub users_deleted: u64,
+    pub games_deleted: u64,
+    pub game_cards_deleted: u64,
+    pub players_deleted: u64,
+    pub player_profiles_deleted: u64,
+    pub game_invites_deleted: u64,
+}
+
 impl From<MultiplayerCreationOutcome> for MultiplayerGameResponse {
     fn from(o: MultiplayerCreationOutcome) -> Self {
         MultiplayerGameResponse {
@@ -128,6 +158,14 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
         bet: i32,
         max_players: i16,
     ) -> Result<MultiplayerCreationOutcome, GameError>;
+
+    async fn create_benchmark_multiplayer_game(
+        &self,
+        user_ids: Vec<Uuid>,
+        bet: i32,
+    ) -> Result<BenchmarkGameOutcome, GameError>;
+
+    async fn cleanup_benchmark_data(&self) -> Result<BenchmarkCleanupCounts, GameError>;
 
     async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError>;
 

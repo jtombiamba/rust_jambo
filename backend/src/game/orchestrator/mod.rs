@@ -1,11 +1,13 @@
+mod cleanup;
 mod creation;
+mod creation_benchmark;
 #[cfg(test)]
 pub mod mock;
 mod types;
 
 pub use types::{
-    AcceptInviteOutcome, GameOrchestratorTrait, MultiplayerCreationOutcome, PlayCardOutcome,
-    QuickGameOutcome,
+    AcceptInviteOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome, BenchmarkPlayerOutcome,
+    GameOrchestratorTrait, MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
 };
 
 use async_trait::async_trait;
@@ -321,6 +323,18 @@ impl GameOrchestratorTrait for GameOrchestrator {
     ) -> Result<MultiplayerCreationOutcome, GameError> {
         self.create_multiplayer_game(user_id, pseudo, bet, max_players)
             .await
+    }
+
+    async fn create_benchmark_multiplayer_game(
+        &self,
+        user_ids: Vec<Uuid>,
+        bet: i32,
+    ) -> Result<BenchmarkGameOutcome, GameError> {
+        self.create_benchmark_multiplayer_game(user_ids, bet).await
+    }
+
+    async fn cleanup_benchmark_data(&self) -> Result<BenchmarkCleanupCounts, GameError> {
+        self.cleanup_benchmark_data().await
     }
 
     async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {

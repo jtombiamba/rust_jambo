@@ -2,6 +2,7 @@ use actix_web::{get, web, HttpResponse, Responder};
 use prometheus::Encoder;
 
 use crate::api::anonymous::get_anonymous_stats;
+use crate::api::fallback;
 use crate::api::game::play_card;
 use crate::api::quickie::create_quick_game;
 use crate::bootstrap::AppState;
@@ -169,7 +170,34 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                             "/topup/cancel",
                             web::get().to(crate::api::topup::paypal_cancel_topup),
                         ),
-                ),
-        )
-        .service(crate::websocket::scope());
+                )
+                .configure(|cfg| {
+                    if state.config.benchmark_mode {
+                        cfg.service(
+                            web::scope("/benchmark")
+                                .service(
+                                    web::resource("/create-multiplayer-game")
+                                        .route(
+                                            web::post()
+                                                .to(crate::api::benchmark::create_benchmark_game),
+                                        )
+                                        .route(web::route().to(fallback::method_not_allowed)),
+                                )
+                                .service(
+                                    web::resource("/cleanup")
+                                        .route(
+                                            web::post()
+                                                .to(crate::api::benchmark::cleanup_benchmark_data),
+                                        )
+                                        .route(web::route().to(fallback::method_not_allowed)),
+                                )
+                                .default_service(web::route().to(fallback::not_found)),
+                        );
+                    }
+                })
+                .default_service(web::route().to(fallback::not_found)),
+        );
+
+    cfg.service(crate::websocket::scope());
+    cfg.default_service(web::route().to(fallback::not_found));
 }
