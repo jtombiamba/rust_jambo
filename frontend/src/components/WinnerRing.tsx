@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import './WinnerRing.css';
 
 export interface WinnerRingProps {
@@ -22,6 +23,8 @@ const WinnerRing: React.FC<WinnerRingProps> = ({
   winType = 'normal',
   playerName,
 }) => {
+  const { t } = useTranslation();
+
   if (!isVisible) {
     return null;
   }
@@ -33,9 +36,9 @@ const WinnerRing: React.FC<WinnerRingProps> = ({
   }`;
 
   // Determine label text based on win type
-  const winLabel = winType === 'normal' ? 'Winner!' :
-                   winType === 'kora' ? 'KORA!' :
-                   'DOUBLE KORA!';
+  const winLabel = winType === 'normal' ? t('game.winnerLabel') :
+                   winType === 'kora' ? t('game.winnerKora') :
+                   t('game.winnerDoubleKora');
 
   return (
     <div className={ringClass}>

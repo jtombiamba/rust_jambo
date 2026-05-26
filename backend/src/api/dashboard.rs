@@ -13,6 +13,7 @@ use crate::api::services::dashboard_service::{DashboardService, SendInvitesParam
 use crate::auth::extractors::AuthenticatedUser;
 use crate::database::repositories::DashboardRepository;
 use crate::error::AppError;
+use crate::i18n::I18n;
 use crate::mailer::Mailer;
 use crate::observability::CorrelationId;
 
@@ -128,6 +129,7 @@ pub async fn send_invites(
     orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
     service: web::Data<Arc<DashboardServiceType>>,
     mailer: web::Data<Arc<dyn Mailer>>,
+    i18n: I18n,
 ) -> HttpResponse {
     let game_id = path.into_inner();
 
@@ -143,15 +145,16 @@ pub async fn send_invites(
     };
 
     if !duplicates.is_empty() {
-        return AppError::BadRequest(format!(
-            "Duplicate players in invite list: {}",
-            duplicates.join(", ")
+        return AppError::BadRequest(i18n.t_replace(
+            "game.duplicate_players",
+            "{duplicates}",
+            &duplicates.join(", "),
         ))
         .error_response();
     }
 
     if seen_uuid.contains(&auth_user.user_id) {
-        return AppError::BadRequest("You cannot invite yourself".into()).error_response();
+        return AppError::BadRequest(i18n.t("game.cannot_invite_self")).error_response();
     }
 
     let existing_ids = match service.check_existing_players(game_id).await {
@@ -165,14 +168,13 @@ pub async fn send_invites(
         .map(|id| id.to_string())
         .collect();
     if !already_in.is_empty() {
-        return AppError::Conflict("Some users are already players in this game".into())
-            .error_response();
+        return AppError::Conflict(i18n.t("game.already_players")).error_response();
     }
 
     if invited_user_ids.is_empty() {
         return HttpResponse::Ok().json(serde_json::json!({
             "success": true,
-            "message": "No valid users to invite"
+            "message": i18n.t("game.no_valid_users")
         }));
     }
 
@@ -189,7 +191,7 @@ pub async fn send_invites(
             for user in &users {
                 let game_id_str = game_id.to_string();
                 if let Err(e) = mailer
-                    .send_invitation(&user.email, &auth_user.pseudo, &game_id_str)
+                    .send_invitation(&user.email, &auth_user.pseudo, &game_id_str, i18n.lang)
                     .await
                 {
                     tracing::error!("Failed to send invitation email to {}: {}", user.email, e);
@@ -198,7 +200,7 @@ pub async fn send_invites(
             }
             HttpResponse::Ok().json(serde_json::json!({
                 "success": true,
-                "message": "Invites sent",
+                "message": i18n.t("game.invites_sent"),
                 "email_errors": email_errors
             }))
         }
@@ -211,6 +213,7 @@ pub async fn respond_to_invite(
     path: web::Path<Uuid>,
     query: web::Query<InviteActionQuery>,
     orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    i18n: I18n,
 ) -> HttpResponse {
     let game_id = path.into_inner();
     let action = match query.validate() {
@@ -226,8 +229,8 @@ pub async fn respond_to_invite(
             Ok(outcome) => HttpResponse::Ok().json(RespondToInviteResponse {
                 success: true,
                 message: match outcome.game_status.as_str() {
-                    "ready" => "Game is ready to start!".to_string(),
-                    _ => "Joined game successfully".to_string(),
+                    "ready" => i18n.t("game.game_ready"),
+                    _ => i18n.t("game.joined"),
                 },
                 action: "accept".to_string(),
                 player_id: Some(outcome.player_id),
@@ -244,7 +247,7 @@ pub async fn respond_to_invite(
         {
             Ok(()) => HttpResponse::Ok().json(RespondToInviteResponse {
                 success: true,
-                message: "Invitation declined".to_string(),
+                message: i18n.t("game.declined"),
                 action: "decline".to_string(),
                 player_id: None,
                 position: None,
@@ -286,6 +289,7 @@ pub async fn play_game(
     payload: web::Json<PlayCardRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
     service: web::Data<Arc<DashboardServiceType>>,
+    i18n: I18n,
 ) -> HttpResponse {
     let game_id = path.into_inner();
     let correlation_id = req.extensions().get::<CorrelationId>().copied();
@@ -302,8 +306,7 @@ pub async fn play_game(
     let player = match game.players.iter().find(|p| p.is_current_user) {
         Some(p) => p,
         None => {
-            return AppError::Forbidden("You are not a player in this game".into())
-                .error_response();
+            return AppError::Forbidden(i18n.t("game.not_player")).error_response();
         }
     };
 
@@ -342,6 +345,7 @@ mod tests {
     use crate::error::GameError;
     use crate::game::orchestrator::mock::MockGameOrchestrator;
     use crate::game::orchestrator::AcceptInviteOutcome;
+    use crate::i18n::Translator;
     use actix_web::{test, web, App};
     use std::sync::Arc;
     use uuid::Uuid;
@@ -356,6 +360,7 @@ mod tests {
         test::init_service(
             App::new()
                 .app_data(web::Data::new(mock))
+                .app_data(web::Data::new(Arc::new(Translator::new())))
                 .route("/{game_id}/respond", web::post().to(respond_to_invite)),
         )
         .await

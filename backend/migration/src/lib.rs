@@ -7,6 +7,7 @@ mod m20260509_000002_game_invites;
 mod m20260514_000001_winning_streak;
 mod m20260514_000002_unique_player_game_user;
 mod m20260518_000001_freeze_system;
+mod m20260523_000001_user_language;
 
 pub struct Migrator;
 
@@ -21,6 +22,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260514_000001_winning_streak::Migration),
             Box::new(m20260514_000002_unique_player_game_user::Migration),
             Box::new(m20260518_000001_freeze_system::Migration),
+            Box::new(m20260523_000001_user_language::Migration),
         ]
     }
 }

@@ -1,4 +1,5 @@
 use std::future::{ready, Ready};
+use std::sync::Arc;
 
 use actix_web::{
     body::{EitherBody, MessageBody},
@@ -6,6 +7,7 @@ use actix_web::{
     Error,
 };
 
+use crate::i18n::{extract_lang, Translator};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 
@@ -48,19 +50,21 @@ impl RateLimiter {
 #[derive(Clone)]
 pub struct RateLimiterMiddleware {
     limiter: RateLimiter,
+    translator: Arc<Translator>,
 }
 
 impl RateLimiterMiddleware {
-    pub fn new(redis_client: Option<RedisClient>) -> Self {
+    pub fn new(redis_client: Option<RedisClient>, translator: Arc<Translator>) -> Self {
         Self {
             limiter: RateLimiter::new(redis_client),
+            translator,
         }
     }
 }
 
 impl Default for RateLimiterMiddleware {
     fn default() -> Self {
-        Self::new(None)
+        Self::new(None, Arc::new(Translator::new()))
     }
 }
 
@@ -80,6 +84,7 @@ where
         ready(Ok(RateLimiterService {
             service,
             limiter: self.limiter.clone(),
+            translator: self.translator.clone(),
         }))
     }
 }
@@ -87,6 +92,7 @@ where
 pub struct RateLimiterService<S> {
     service: S,
     limiter: RateLimiter,
+    translator: Arc<Translator>,
 }
 
 impl<S, B> Service<ServiceRequest> for RateLimiterService<S>
@@ -109,6 +115,8 @@ where
             .unwrap_or("unknown")
             .to_string();
 
+        let lang = extract_lang(&req);
+        let translator = self.translator.clone();
         let limiter = self.limiter.clone();
         let fut = self.service.call(req);
 
@@ -117,7 +125,7 @@ where
                 metrics::RATE_LIMIT_HITS_TOTAL.inc();
                 tracing::warn!("Rate limit exceeded for IP: {}", ip);
                 return Err(actix_web::error::ErrorTooManyRequests(
-                    "Rate limit exceeded. Please try again later.",
+                    translator.t("rate_limit.exceeded", lang),
                 ));
             }
 

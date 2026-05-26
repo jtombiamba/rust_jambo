@@ -197,6 +197,7 @@ pub mod user {
         pub email: String,
         pub password_hash: String,
         pub last_ip_hash: Option<String>,
+        pub language: String,
         pub created_at: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
     }

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 
 interface ContactFormProps {
@@ -7,6 +8,7 @@ interface ContactFormProps {
 }
 
 export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [subject, setSubject] = useState('')
@@ -29,7 +31,7 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
         setError(err.response.data.error)
       } else {
-        setError('Failed to send message. Please try again.')
+        setError(t('contact.sendFailed'))
       }
     } finally {
       setSending(false)
@@ -56,19 +58,19 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
           &times;
         </button>
 
-        <h2 className="text-xl font-semibold mb-4">Contact Us</h2>
+        <h2 className="text-xl font-semibold mb-4">{t('contact.contactUs')}</h2>
 
         {sent ? (
           <div className="text-center py-4">
-            <p className="text-emerald-600 font-semibold mb-2">Message sent!</p>
+            <p className="text-emerald-600 font-semibold mb-2">{t('contact.messageSent')}</p>
             <p className="text-gray-600 text-sm mb-4">
-              Thank you for contacting us. We will get back to you as soon as possible.
+              {t('contact.thankYou')}
             </p>
             <button
               onClick={handleClose}
               className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold hover:bg-emerald-700"
             >
-              Close
+              {t('common.close')}
             </button>
           </div>
         ) : (
@@ -77,7 +79,7 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
               <div className="p-3 bg-red-100 text-red-700 rounded text-sm">{error}</div>
             )}
             <div>
-              <label className="block text-sm font-medium mb-1">Name</label>
+              <label className="block text-sm font-medium mb-1">{t('contact.name')}</label>
               <input
                 type="text"
                 value={name}
@@ -87,7 +89,7 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Email</label>
+              <label className="block text-sm font-medium mb-1">{t('contact.email')}</label>
               <input
                 type="email"
                 value={email}
@@ -97,7 +99,7 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Subject</label>
+              <label className="block text-sm font-medium mb-1">{t('contact.subject')}</label>
               <input
                 type="text"
                 value={subject}
@@ -107,7 +109,7 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Message</label>
+              <label className="block text-sm font-medium mb-1">{t('contact.message')}</label>
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -120,7 +122,7 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
               disabled={sending}
               className="w-full py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 disabled:opacity-50"
             >
-              {sending ? 'Sending...' : 'Send'}
+              {sending ? t('contact.sending') : t('contact.send')}
             </button>
           </form>
         )}

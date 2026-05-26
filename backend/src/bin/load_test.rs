@@ -323,8 +323,10 @@ async fn main() -> Result<()> {
             }
         }
 
-        metrics::update_db_pool_metrics(&db);
-        let active = metrics::DB_POOL_ACTIVE.get() as u32;
+        metrics::update_db_pool_metrics(&db, "load_test");
+        let active = metrics::DB_POOL_ACTIVE
+            .with_label_values(&["load_test"])
+            .get() as u32;
         if active > peak_db_active {
             peak_db_active = active;
         }

@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Player, GameResult } from '../stores/useGameStore';
 import './GameOverModal.css';
 
@@ -32,6 +33,8 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
   onReturnToLobby,
   showPlayAgain = true,
 }) => {
+  const { t } = useTranslation();
+
   // Close modal on Escape key press
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -66,11 +69,11 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
   const getResultTitle = () => {
     switch (gameResult.status) {
       case 'kora':
-        return 'KORA!';
+        return t('game.kora');
       case 'doubleKora':
-        return 'DOUBLE KORA!';
+        return t('game.doubleKora');
       default:
-        return 'Game Over!';
+        return t('game.gameOver');
     }
   };
 
@@ -78,11 +81,11 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
   const getResultDescription = () => {
     switch (gameResult.status) {
       case 'kora':
-        return 'A spectacular Kora victory!';
+        return t('game.koraDescription');
       case 'doubleKora':
-        return 'An incredible Double Kora achievement!';
+        return t('game.doubleKoraDescription');
       default:
-        return 'The game has concluded.';
+        return t('game.gameConcluded');
     }
   };
 
@@ -111,31 +114,31 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
             {winner ? (
               <>
                 <div className="winner-name winner-name-animate">{winner.name}</div>
-                <div className="winner-label winner-label-animate">Wins the Game!</div>
-                <div className="winner-position winner-position-animate">Position: {winner.position}</div>
+                <div className="winner-label winner-label-animate">{t('game.winsTheGame')}</div>
+                <div className="winner-position winner-position-animate">{t('game.position', { pos: winner.position })}</div>
               </>
             ) : (
-              <div className="no-winner">No winner determined</div>
+              <div className="no-winner">{t('game.noWinner')}</div>
             )}
           </div>
 
           {/* Game statistics */}
           <div className="game-stats stats-animate">
             <div className="stat-item">
-              <div className="stat-label">Rounds Played</div>
+              <div className="stat-label">{t('game.roundsPlayed')}</div>
               <div className="stat-value">{gameResult.roundsPlayed}</div>
             </div>
             {gameResult.finalScore !== undefined && (
               <div className="stat-item">
-                <div className="stat-label">Final Score</div>
+                <div className="stat-label">{t('game.finalScore')}</div>
                 <div className="stat-value">{gameResult.finalScore}</div>
               </div>
             )}
             <div className="stat-item">
-              <div className="stat-label">Game Type</div>
+              <div className="stat-label">{t('game.gameType')}</div>
               <div className="stat-value">
-                {gameResult.status === 'finished' ? 'Standard' :
-                 gameResult.status === 'kora' ? 'Kora' : 'Double Kora'}
+                {gameResult.status === 'finished' ? t('game.standard') :
+                 gameResult.status === 'kora' ? t('game.koraType') : t('game.doubleKoraType')}
               </div>
             </div>
           </div>
@@ -148,26 +151,26 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
               onClick={onPlayAgain}
               autoFocus
             >
-              Play Again
+              {t('game.playAgain')}
             </button>
             )}
             <button
               className="btn-secondary"
               onClick={onReturnToLobby}
             >
-              Return to Lobby
+              {t('game.returnToLobby')}
             </button>
             <button
               className="btn-tertiary"
               onClick={onClose}
             >
-              Close
+              {t('common.close')}
             </button>
           </div>
 
           {/* Auto-close notice */}
           <div className="auto-close-notice">
-            This modal will auto-close in 10 seconds
+            {t('game.autoCloseNotice')}
           </div>
         </div>
       </div>

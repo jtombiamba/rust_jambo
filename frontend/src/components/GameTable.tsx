@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import PlayerSlot, { PlayerSlotProps } from './PlayerSlot';
 import Card from './Card';
 import WinnerRing from './WinnerRing';
@@ -59,6 +60,8 @@ const GameTable: React.FC<GameTableProps> = ({
   onCloseGameOver,
   showPlayAgain = true,
 }) => {
+  const { t } = useTranslation();
+
   const getLayoutMode = (): LayoutMode => {
     if (typeof window === 'undefined') return 'desktop';
     const w = window.innerWidth;
@@ -168,7 +171,7 @@ const GameTable: React.FC<GameTableProps> = ({
 
   return (
     <div className="container mx-auto p-2 sm:p-4 md:p-8">
-      <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-center">Game Table</h2>
+      <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-center">{t('game.gameTable')}</h2>
 
       <div className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px]">
 
@@ -191,7 +194,7 @@ const GameTable: React.FC<GameTableProps> = ({
                     <div className="flex flex-col items-center">
                       <div className="text-xs font-semibold">{westPlayer.name} 🤖</div>
                       <div className="text-[10px] text-gray-600">
-                        {remainingCards[westPlayer.id] ?? westPlayer.cards.length} cards
+                        {remainingCards[westPlayer.id] ?? westPlayer.cards.length} {t('common.cards')}
                       </div>
                     </div>
                   );
@@ -200,7 +203,7 @@ const GameTable: React.FC<GameTableProps> = ({
               })()}
 
               <div className="flex flex-col items-center mx-2">
-                <div className="text-xs sm:text-sm font-semibold mb-1">Deck</div>
+                <div className="text-xs sm:text-sm font-semibold mb-1">{t('common.deck')}</div>
                 {renderDeckOverlapping('medium')}
               </div>
 
@@ -211,7 +214,7 @@ const GameTable: React.FC<GameTableProps> = ({
                     <div className="flex flex-col items-center">
                       <div className="text-xs font-semibold">{eastPlayer.name} 🤖</div>
                       <div className="text-[10px] text-gray-600">
-                        {remainingCards[eastPlayer.id] ?? eastPlayer.cards.length} cards
+                        {remainingCards[eastPlayer.id] ?? eastPlayer.cards.length} {t('common.cards')}
                       </div>
                     </div>
                   );
@@ -230,7 +233,7 @@ const GameTable: React.FC<GameTableProps> = ({
 
             {currentTurn !== undefined && (
               <div className="text-center text-base sm:text-lg font-semibold text-red-600">
-                Turn: Player {currentTurn}
+                {t('common.turn', { player: currentTurn })}
               </div>
             )}
           </div>
@@ -248,7 +251,7 @@ const GameTable: React.FC<GameTableProps> = ({
                   <div key={player.id} className="flex flex-col items-center relative">
                     {pos === 'south' && (
                       <div className="flex flex-col items-center mb-1">
-                        <div className="text-[10px] font-semibold">Deck</div>
+                        <div className="text-[10px] font-semibold">{t('common.deck')}</div>
                         {renderDeckOverlapping('small')}
                       </div>
                     )}
@@ -268,7 +271,7 @@ const GameTable: React.FC<GameTableProps> = ({
 
               {!findPlayerByPosition('south') && (
                 <div className="flex flex-col items-center">
-                  <div className="text-[10px] font-semibold">Deck</div>
+                  <div className="text-[10px] font-semibold">{t('common.deck')}</div>
                   {renderDeckOverlapping('small')}
                 </div>
               )}
@@ -284,7 +287,7 @@ const GameTable: React.FC<GameTableProps> = ({
 
             {currentTurn !== undefined && (
               <div className="text-center text-sm sm:text-base font-semibold text-red-600">
-                Turn: Player {currentTurn}
+                {t('common.turn', { player: currentTurn })}
               </div>
             )}
           </div>
@@ -344,7 +347,7 @@ const GameTable: React.FC<GameTableProps> = ({
             })}
 
             <div className="col-start-2 row-start-2 flex flex-col items-center justify-center">
-              <div className="text-lg font-semibold mb-4">Deck</div>
+              <div className="text-lg font-semibold mb-4">{t('common.deck')}</div>
               <div className="flex gap-4">
                 {deckSlots.map((card, idx) => (
                   <div
@@ -355,14 +358,14 @@ const GameTable: React.FC<GameTableProps> = ({
                     {card !== null ? (
                       <Card index={card} faceUp={true} />
                     ) : (
-                      <div className="text-gray-400">Slot {idx + 1}</div>
+                      <div className="text-gray-400">{t('common.slot')} {idx + 1}</div>
                     )}
                   </div>
                 ))}
               </div>
               {currentTurn !== undefined && (
                 <div className="mt-4 text-lg font-semibold text-red-600">
-                  Turn: Player {currentTurn}
+                  {t('common.turn', { player: currentTurn })}
                 </div>
               )}
             </div>

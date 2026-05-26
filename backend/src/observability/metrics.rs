@@ -143,37 +143,42 @@ pub static CIRCUIT_BREAKER_STATE: Lazy<Gauge> = Lazy::new(|| {
     .unwrap()
 });
 
-pub static DB_POOL_SIZE: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!(
+pub static DB_POOL_SIZE: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
         "db_pool_size",
-        "Total number of database connections in the pool"
+        "Total number of database connections in the pool",
+        &["process"]
     )
     .unwrap()
 });
 
-pub static DB_POOL_IDLE: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!(
+pub static DB_POOL_IDLE: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
         "db_pool_idle",
-        "Number of idle database connections in the pool"
+        "Number of idle database connections in the pool",
+        &["process"]
     )
     .unwrap()
 });
 
-pub static DB_POOL_ACTIVE: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!(
+pub static DB_POOL_ACTIVE: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
         "db_pool_active",
-        "Number of active (in-use) database connections"
+        "Number of active (in-use) database connections",
+        &["process"]
     )
     .unwrap()
 });
 
-pub fn update_db_pool_metrics(db: &sea_orm::DatabaseConnection) {
+pub fn update_db_pool_metrics(db: &sea_orm::DatabaseConnection, process: &str) {
     let pool = db.get_postgres_connection_pool();
     let total = pool.size();
     let idle = pool.num_idle();
-    DB_POOL_SIZE.set(total as f64);
-    DB_POOL_IDLE.set(idle as f64);
-    DB_POOL_ACTIVE.set(total.saturating_sub(idle as u32) as f64);
+    DB_POOL_SIZE.with_label_values(&[process]).set(total as f64);
+    DB_POOL_IDLE.with_label_values(&[process]).set(idle as f64);
+    DB_POOL_ACTIVE
+        .with_label_values(&[process])
+        .set(total.saturating_sub(idle as u32) as f64);
 }
 
 pub static AI_TASK_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
@@ -319,9 +324,12 @@ pub fn init_all() {
     BOT_CHAIN_PUBLISH_FAILURES_TOTAL.inc_by(0.0);
     GAMES_STALLED_TOTAL.inc_by(0.0);
     CIRCUIT_BREAKER_STATE.set(0.0);
-    DB_POOL_SIZE.set(0.0);
-    DB_POOL_IDLE.set(0.0);
-    DB_POOL_ACTIVE.set(0.0);
+    DB_POOL_SIZE.with_label_values(&["backend"]).set(0.0);
+    DB_POOL_SIZE.with_label_values(&["ai_worker"]).set(0.0);
+    DB_POOL_IDLE.with_label_values(&["backend"]).set(0.0);
+    DB_POOL_IDLE.with_label_values(&["ai_worker"]).set(0.0);
+    DB_POOL_ACTIVE.with_label_values(&["backend"]).set(0.0);
+    DB_POOL_ACTIVE.with_label_values(&["ai_worker"]).set(0.0);
     AI_TASK_DURATION_SECONDS.with_label_values(&["ai_task"]);
     AI_TASK_DURATION_SECONDS.with_label_values(&["fallback_db"]);
     AI_TASKS_IN_FLIGHT.set(0.0);

@@ -39,6 +39,7 @@ pub struct UserInfo {
     pub id: Uuid,
     pub pseudo: String,
     pub email: String,
+    pub language: String,
 }
 
 #[derive(Debug, Serialize)]

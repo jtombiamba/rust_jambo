@@ -37,6 +37,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         .app_data(state.mailer.clone())
         .app_data(state.payment_service.clone())
         .app_data(state.config.clone())
+        .app_data(state.translator.clone())
         .service(health_check)
         .service(metrics)
         .service(
@@ -45,6 +46,18 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                 .service(crate::api::config::client_config)
                 .service(create_quick_game)
                 .service(play_card)
+                .route(
+                    "/lang",
+                    web::post().to(crate::i18n::lang_endpoint::set_language),
+                )
+                .route(
+                    "/lang",
+                    web::get().to(crate::i18n::lang_endpoint::get_current_lang),
+                )
+                .route(
+                    "/languages",
+                    web::get().to(crate::i18n::lang_endpoint::get_languages),
+                )
                 .service(
                     web::scope("/auth")
                         .route("/register", web::post().to(crate::api::auth::register))

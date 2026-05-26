@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 
 export default function PasswordReset() {
+  const { t } = useTranslation()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const token = searchParams.get('token')
@@ -17,26 +19,26 @@ export default function PasswordReset() {
 
   useEffect(() => {
     if (!token) {
-      setError('Invalid reset link: no token provided')
+      setError(t('password.invalidToken'))
     }
-  }, [token])
+  }, [token, t])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
 
     if (!token) {
-      setError('Invalid reset link: no token provided')
+      setError(t('password.invalidToken'))
       return
     }
 
     if (password.length < 8) {
-      setError('Password must be at least 8 characters')
+      setError(t('password.passwordMinLength'))
       return
     }
 
     if (password !== passwordConfirm) {
-      setError('Passwords do not match')
+      setError(t('password.passwordsDontMatch'))
       return
     }
 
@@ -53,7 +55,7 @@ export default function PasswordReset() {
       if (axios.isAxiosError(err) && err.response?.data?.error) {
         setError(err.response.data.error)
       } else {
-        setError('Failed to reset password. Please try again.')
+        setError(t('password.failedReset'))
       }
     } finally {
       setSubmitting(false)
@@ -64,15 +66,15 @@ export default function PasswordReset() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
-          <h1 className="text-2xl font-bold mb-4 text-red-600">Invalid Link</h1>
+          <h1 className="text-2xl font-bold mb-4 text-red-600">{t('password.invalidLink')}</h1>
           <p className="text-gray-600 mb-4">
-            This password reset link is invalid or has expired.
+            {t('password.invalidLinkText')}
           </p>
           <button
             onClick={() => navigate('/')}
             className="w-full px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700"
           >
-            Go to Home
+            {t('password.goToHome')}
           </button>
         </div>
       </div>
@@ -83,15 +85,15 @@ export default function PasswordReset() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
-          <h1 className="text-2xl font-bold mb-4 text-emerald-600">Password Reset</h1>
+          <h1 className="text-2xl font-bold mb-4 text-emerald-600">{t('password.passwordReset')}</h1>
           <p className="text-gray-600 mb-4">
-            Your password has been reset successfully. You can now log in with your new password.
+            {t('password.resetSuccess')}
           </p>
           <button
             onClick={() => navigate('/')}
             className="w-full px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700"
           >
-            Go to Login
+            {t('password.goToLogin')}
           </button>
         </div>
       </div>
@@ -101,11 +103,11 @@ export default function PasswordReset() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="bg-white p-8 rounded-lg shadow-md max-w-md w-full">
-        <h1 className="text-2xl font-bold mb-6">Reset Your Password</h1>
+        <h1 className="text-2xl font-bold mb-6">{t('password.resetYourPassword')}</h1>
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              New Password
+              {t('password.newPassword')}
             </label>
             <div className="relative">
               <input
@@ -113,7 +115,7 @@ export default function PasswordReset() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="At least 8 characters"
+                placeholder={t('password.minChars')}
                 required
                 minLength={8}
               />
@@ -140,7 +142,7 @@ export default function PasswordReset() {
           </div>
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Confirm New Password
+              {t('password.confirmNewPassword')}
             </label>
             <div className="relative">
               <input
@@ -148,7 +150,7 @@ export default function PasswordReset() {
                 value={passwordConfirm}
                 onChange={(e) => setPasswordConfirm(e.target.value)}
                 className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="Repeat your password"
+                placeholder={t('password.repeatPassword')}
                 required
                 minLength={8}
               />
@@ -183,7 +185,7 @@ export default function PasswordReset() {
             disabled={submitting}
             className="w-full px-4 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-50"
           >
-            {submitting ? 'Resetting...' : 'Reset Password'}
+            {submitting ? t('password.resetting') : t('password.resetPassword')}
           </button>
         </form>
       </div>

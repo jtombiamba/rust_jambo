@@ -9,6 +9,7 @@ mod config;
 mod database;
 mod error;
 mod game;
+mod i18n;
 mod mailer;
 mod messaging;
 mod observability;
@@ -47,6 +48,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         info!("Registering routes");
         App::new()
+            .wrap(crate::i18n::middleware::I18nMiddleware)
             .wrap(cors_config.cors_middleware())
             .wrap(crate::observability::middleware::CorrelationIdMiddleware)
             .wrap(crate::api::middleware::ip_forward::ForwardedIpMiddleware)

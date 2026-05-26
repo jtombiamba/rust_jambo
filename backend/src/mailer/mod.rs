@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::i18n::Lang;
+
 pub mod noop;
 pub mod smtp;
 pub use noop::NoopMailer;
@@ -110,16 +112,27 @@ pub struct ContactFormEmail {
 
 #[async_trait]
 pub trait Mailer: Send + Sync {
-    async fn send_password_reset(&self, to_email: &str, reset_link: &str) -> Result<(), String>;
+    async fn send_password_reset(
+        &self,
+        to_email: &str,
+        reset_link: &str,
+        lang: Lang,
+    ) -> Result<(), String>;
 
     async fn send_invitation(
         &self,
         to_email: &str,
         inviter_name: &str,
         game_id: &str,
+        lang: Lang,
     ) -> Result<(), String>;
 
-    async fn send_freeze_expired(&self, to_email: &str, credit: i32) -> Result<(), String>;
+    async fn send_freeze_expired(
+        &self,
+        to_email: &str,
+        credit: i32,
+        lang: Lang,
+    ) -> Result<(), String>;
 
     async fn send_contact_form(
         &self,
@@ -127,6 +140,7 @@ pub trait Mailer: Send + Sync {
         email: &str,
         subject: &str,
         message: &str,
+        lang: Lang,
     ) -> Result<(), String>;
 }
 
@@ -170,7 +184,11 @@ mod tests {
         };
         let mailer = NoopMailer::new(config).unwrap();
         let result = mailer
-            .send_password_reset("user@example.com", "http://localhost:3000/reset?token=abc")
+            .send_password_reset(
+                "user@example.com",
+                "http://localhost:3000/reset?token=abc",
+                Lang::En,
+            )
             .await;
         assert!(result.is_ok());
     }
@@ -195,6 +213,7 @@ mod tests {
                 "user@example.com",
                 "PlayerOne",
                 "550e8400-e29b-41d4-a716-446655440000",
+                Lang::En,
             )
             .await;
         assert!(result.is_ok());
@@ -242,7 +261,7 @@ mod tests {
         let mailer = create_mailer(config).unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         assert!(rt
-            .block_on(mailer.send_password_reset("test@test.com", "http://link"))
+            .block_on(mailer.send_password_reset("test@test.com", "http://link", Lang::En))
             .is_ok());
     }
 
@@ -266,7 +285,10 @@ mod tests {
             frontend_url: "http://localhost:3000".to_string(),
             app_name: "Test Game".to_string(),
         };
-        let html = mailer.handlebars.render("password_reset", &data).unwrap();
+        let html = mailer
+            .handlebars
+            .render("en_password_reset", &data)
+            .unwrap();
         assert!(html.contains("Reset your password"));
         assert!(html.contains("abc123"));
     }
@@ -296,7 +318,7 @@ mod tests {
             decline_link: "http://localhost:3000?invite_game_id=game-id-123&invite_action=decline"
                 .to_string(),
         };
-        let html = mailer.handlebars.render("invitation", &data).unwrap();
+        let html = mailer.handlebars.render("en_invitation", &data).unwrap();
         assert!(html.contains("PlayerOne"));
         assert!(html.contains("invited you"));
         assert!(html.contains("Accept"));
