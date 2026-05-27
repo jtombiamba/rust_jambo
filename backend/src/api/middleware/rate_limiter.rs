@@ -1,49 +1,208 @@
+use std::collections::HashMap;
 use std::future::{ready, Ready};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use actix_web::{
     body::{EitherBody, MessageBody},
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    Error,
+    Error, HttpMessage, HttpResponse,
 };
+use redis::RedisError;
 
 use crate::i18n::{extract_lang, Translator};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 
-static HOURLY_LIMIT: u64 = 120;
+#[derive(Clone, Debug)]
+pub struct RateLimitConfig {
+    pub max_requests: u64,
+    pub window_seconds: u64,
+    pub key_prefix: &'static str,
+}
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
+pub struct RateLimitConfigs {
+    pub default: RateLimitConfig,
+    pub contact: RateLimitConfig,
+    pub register: RateLimitConfig,
+    pub login: RateLimitConfig,
+    pub forgot_password: RateLimitConfig,
+    pub reset_password: RateLimitConfig,
+}
+
+impl RateLimitConfigs {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            default: RateLimitConfig {
+                max_requests: config.rate_limit_default_max_requests,
+                window_seconds: config.rate_limit_default_window_seconds,
+                key_prefix: "default",
+            },
+            contact: RateLimitConfig {
+                max_requests: config.rate_limit_contact_max_requests,
+                window_seconds: config.rate_limit_contact_window_seconds,
+                key_prefix: "contact",
+            },
+            register: RateLimitConfig {
+                max_requests: config.rate_limit_register_max_requests,
+                window_seconds: config.rate_limit_register_window_seconds,
+                key_prefix: "register",
+            },
+            login: RateLimitConfig {
+                max_requests: config.rate_limit_login_max_requests,
+                window_seconds: config.rate_limit_login_window_seconds,
+                key_prefix: "login",
+            },
+            forgot_password: RateLimitConfig {
+                max_requests: config.rate_limit_forgot_password_max_requests,
+                window_seconds: config.rate_limit_forgot_password_window_seconds,
+                key_prefix: "forgot_password",
+            },
+            reset_password: RateLimitConfig {
+                max_requests: config.rate_limit_reset_password_max_requests,
+                window_seconds: config.rate_limit_reset_password_window_seconds,
+                key_prefix: "reset_password",
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RateLimitCheckResult {
+    pub allowed: bool,
+    pub retry_after_secs: u64,
+}
+
+impl RateLimitCheckResult {
+    fn blocked(retry_after_secs: u64) -> Self {
+        Self {
+            allowed: false,
+            retry_after_secs,
+        }
+    }
+
+    fn allowed() -> Self {
+        Self {
+            allowed: true,
+            retry_after_secs: 0,
+        }
+    }
+
+    fn fail_closed() -> Self {
+        Self {
+            allowed: false,
+            retry_after_secs: 60,
+        }
+    }
+}
+
+#[derive(Default)]
+struct InMemoryRateLimiter {
+    records: Mutex<HashMap<String, Vec<Instant>>>,
+}
+
+impl InMemoryRateLimiter {
+    fn check(&self, ip: &str, config: &RateLimitConfig) -> RateLimitCheckResult {
+        let key = format!("{}:{}", config.key_prefix, ip);
+        let mut records = match self.records.lock() {
+            Ok(r) => r,
+            Err(_) => {
+                tracing::error!("Rate limiter in-memory store mutex poisoned");
+                return RateLimitCheckResult::fail_closed();
+            }
+        };
+
+        let now = Instant::now();
+        let window = Duration::from_secs(config.window_seconds);
+        let timestamps = records.entry(key).or_default();
+
+        timestamps.retain(|t| now.duration_since(*t) < window);
+
+        if timestamps.len() >= config.max_requests as usize {
+            let retry_after = timestamps
+                .first()
+                .map(|oldest| {
+                    window
+                        .saturating_sub(now.duration_since(*oldest))
+                        .as_secs()
+                        .max(1)
+                })
+                .unwrap_or(config.window_seconds);
+            return RateLimitCheckResult::blocked(retry_after);
+        }
+
+        timestamps.push(now);
+        RateLimitCheckResult::allowed()
+    }
+}
+
+#[derive(Clone)]
 pub struct RateLimiter {
     redis_client: Option<RedisClient>,
+    in_memory: Arc<InMemoryRateLimiter>,
+    config: RateLimitConfig,
+    fallback_warned: Arc<AtomicBool>,
 }
 
 impl RateLimiter {
-    pub fn new(redis_client: Option<RedisClient>) -> Self {
-        Self { redis_client }
+    pub fn new(redis_client: Option<RedisClient>, config: RateLimitConfig) -> Self {
+        Self {
+            redis_client,
+            in_memory: Arc::new(InMemoryRateLimiter::default()),
+            config,
+            fallback_warned: Arc::new(AtomicBool::new(false)),
+        }
     }
 
-    async fn check(&self, ip: &str) -> Result<(), ()> {
-        let mut redis = match self.redis_client.clone() {
-            Some(r) => r,
-            None => return Ok(()),
-        };
+    pub fn config(&self) -> &RateLimitConfig {
+        &self.config
+    }
 
-        let key = format!("ratelimit:hourly:{ip}");
-        let count: u64 = redis.incr(&key).await.unwrap_or_else(|e| {
-            tracing::error!("Rate limiter Redis error: {}", e);
-            0
-        });
+    async fn check(&self, ip: &str) -> RateLimitCheckResult {
+        let key = format!("ratelimit:{}:{}", self.config.key_prefix, ip);
 
-        if count == 1 {
-            let _ = redis.expire(&key, 3600).await;
+        if let Some(mut redis) = self.redis_client.clone() {
+            match check_redis(&mut redis, &key, &self.config).await {
+                Ok(result) => return result,
+                Err(e) => {
+                    tracing::warn!(
+                        "Rate limiter Redis error for prefix '{}', falling back to in-memory: {}",
+                        self.config.key_prefix,
+                        e
+                    );
+                }
+            }
         }
 
-        if count > HOURLY_LIMIT {
-            return Err(());
+        if !self.fallback_warned.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "Rate limiter using in-memory store for prefix '{}'",
+                self.config.key_prefix
+            );
         }
+        tracing::debug!(
+            "Rate limiter in-memory check for prefix '{}', IP: {}",
+            self.config.key_prefix,
+            ip
+        );
 
-        Ok(())
+        self.in_memory.check(ip, &self.config)
+    }
+}
+
+async fn check_redis(
+    redis: &mut RedisClient,
+    key: &str,
+    config: &RateLimitConfig,
+) -> Result<RateLimitCheckResult, RedisError> {
+    let count = redis.incr_with_expire(key, config.window_seconds).await?;
+
+    if count <= config.max_requests {
+        Ok(RateLimitCheckResult::allowed())
+    } else {
+        Ok(RateLimitCheckResult::blocked(config.window_seconds))
     }
 }
 
@@ -54,17 +213,15 @@ pub struct RateLimiterMiddleware {
 }
 
 impl RateLimiterMiddleware {
-    pub fn new(redis_client: Option<RedisClient>, translator: Arc<Translator>) -> Self {
+    pub fn new(
+        redis_client: Option<RedisClient>,
+        config: RateLimitConfig,
+        translator: Arc<Translator>,
+    ) -> Self {
         Self {
-            limiter: RateLimiter::new(redis_client),
+            limiter: RateLimiter::new(redis_client, config),
             translator,
         }
-    }
-}
-
-impl Default for RateLimiterMiddleware {
-    fn default() -> Self {
-        Self::new(None, Arc::new(Translator::new()))
     }
 }
 
@@ -110,10 +267,14 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let ip = req
-            .connection_info()
-            .realip_remote_addr()
-            .unwrap_or("unknown")
-            .to_string();
+            .extensions()
+            .get::<crate::auth::extractors::ClientIp>()
+            .map(|c| c.hash.clone())
+            .unwrap_or_else(|| {
+                req.peer_addr()
+                    .map(|addr| addr.ip().to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
 
         let lang = extract_lang(&req);
         let translator = self.translator.clone();
@@ -121,15 +282,31 @@ where
         let fut = self.service.call(req);
 
         Box::pin(async move {
-            if limiter.check(&ip).await.is_err() {
+            let result = limiter.check(&ip).await;
+
+            if !result.allowed {
                 metrics::RATE_LIMIT_HITS_TOTAL.inc();
-                tracing::warn!("Rate limit exceeded for IP: {}", ip);
-                return Err(actix_web::error::ErrorTooManyRequests(
-                    translator.t("rate_limit.exceeded", lang),
-                ));
+                tracing::warn!(
+                    "Rate limit exceeded for prefix '{}', IP: {}",
+                    limiter.config().key_prefix,
+                    ip
+                );
+
+                let response = HttpResponse::TooManyRequests()
+                    .insert_header(("Retry-After", result.retry_after_secs.to_string()))
+                    .body(translator.t("rate_limit.exceeded", lang));
+
+                return Err(actix_web::error::InternalError::from_response(
+                    "rate limit exceeded",
+                    response,
+                )
+                .into());
             }
 
             fut.await.map(|res| res.map_into_left_body())
         })
     }
 }
+#[cfg(test)]
+#[path = "rate_limiter_tests.rs"]
+mod tests;

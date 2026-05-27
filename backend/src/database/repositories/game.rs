@@ -52,6 +52,87 @@ impl GameRepository {
         Ok(game)
     }
 
+    #[allow(dead_code)]
+    pub async fn create_with_mode(
+        &self,
+        bet: i32,
+        game_mode: GameMode,
+        initial_status: GameStatus,
+    ) -> Result<Game, DbErr> {
+        let id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+
+        let game_active = game::ActiveModel {
+            id: Set(id),
+            status: Set(initial_status),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(json!({})),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: ActiveValue::NotSet,
+            game_mode: Set(game_mode),
+            max_players: Set(4),
+            invite_expires_at: ActiveValue::NotSet,
+        };
+        let insert_result = game::Entity::insert(game_active)
+            .exec(&self.connection)
+            .await?;
+        let inserted_id = insert_result.last_insert_id;
+        let game = game::Entity::find_by_id(inserted_id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found after insertion".to_string()))?;
+        Ok(game)
+    }
+
+    #[allow(dead_code)]
+    pub async fn create_with_mode_and_creator(
+        &self,
+        bet: i32,
+        game_mode: GameMode,
+        initial_status: GameStatus,
+        creator_id: Option<Uuid>,
+    ) -> Result<Game, DbErr> {
+        let id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+
+        let game_active = game::ActiveModel {
+            id: Set(id),
+            status: Set(initial_status),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(json!({})),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: Set(creator_id),
+            game_mode: Set(game_mode),
+            max_players: Set(4),
+            invite_expires_at: ActiveValue::NotSet,
+        };
+        let insert_result = game::Entity::insert(game_active)
+            .exec(&self.connection)
+            .await?;
+        let inserted_id = insert_result.last_insert_id;
+        let game = game::Entity::find_by_id(inserted_id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found after insertion".to_string()))?;
+        Ok(game)
+    }
+
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
         game::Entity::find_by_id(id).one(&self.connection).await
     }

@@ -55,8 +55,24 @@ impl RedisClient {
     }
 
     /// Atomically increment a counter and return the new value.
+    #[allow(dead_code)]
     pub async fn incr(&mut self, key: &str) -> RedisResult<u64> {
         self.connection_manager.incr(key, 1).await
+    }
+
+    /// Atomically increment a counter and set TTL if the key was newly created.
+    /// Uses a Lua script to avoid the race between SET NX EX + INCR.
+    pub async fn incr_with_expire(&mut self, key: &str, ttl_secs: u64) -> RedisResult<u64> {
+        let script = redis::Script::new(
+            "local current = redis.call('INCR', KEYS[1])\n\
+             if current == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end\n\
+             return current",
+        );
+        script
+            .key(key)
+            .arg(ttl_secs)
+            .invoke_async(&mut self.connection_manager)
+            .await
     }
 
     /// Delete one or more keys.
@@ -70,6 +86,7 @@ impl RedisClient {
     }
 
     /// Set expiry on an existing key.
+    #[allow(dead_code)]
     pub async fn expire(&mut self, key: &str, ttl_secs: u64) -> RedisResult<()> {
         self.connection_manager.expire(key, ttl_secs as i64).await
     }

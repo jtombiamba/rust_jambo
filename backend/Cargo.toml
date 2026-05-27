@@ -46,7 +46,9 @@ lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
 handlebars = "6"
 clap = { version = "4", features = ["derive"] }
 sysinfo = "0.31"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+http = "1"
 
 [[bin]]
 name = "ai-worker"
@@ -55,6 +57,14 @@ path = "src/bin/ai_worker.rs"
 [[bin]]
 name = "load-test"
 path = "src/bin/load_test.rs"
+
+[[bin]]
+name = "http-load-test"
+path = "src/bin/http_load_test.rs"
+
+[[bin]]
+name = "ws-load-test"
+path = "src/bin/ws_load_test.rs"
 
 [dev-dependencies]
 actix-rt = "2.9"
@@ -68,3 +78,9 @@ opt-level = 0
 opt-level = 3
 lto = true
 codegen-units = 1
+
+[profile.fast-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+opt-level = 2

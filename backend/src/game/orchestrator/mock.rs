@@ -17,6 +17,8 @@ pub struct MockGameOrchestrator {
     accept_invite_result: Mutex<Option<Result<AcceptInviteOutcome, GameError>>>,
     cancel_game_result: Mutex<Option<Result<(), GameError>>>,
     start_game_result: Mutex<Option<Result<(), GameError>>>,
+    create_benchmark_game_result: Mutex<Option<Result<BenchmarkGameOutcome, GameError>>>,
+    cleanup_benchmark_result: Mutex<Option<Result<BenchmarkCleanupCounts, GameError>>>,
 }
 
 impl MockGameOrchestrator {
@@ -32,6 +34,8 @@ impl MockGameOrchestrator {
             accept_invite_result: Mutex::new(None),
             cancel_game_result: Mutex::new(None),
             start_game_result: Mutex::new(None),
+            create_benchmark_game_result: Mutex::new(None),
+            cleanup_benchmark_result: Mutex::new(None),
         }
     }
 
@@ -121,6 +125,26 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .unwrap()
             .take()
             .expect("mock orchestrator create_multiplayer_game called more than once")
+    }
+
+    async fn create_benchmark_multiplayer_game(
+        &self,
+        _user_ids: Vec<Uuid>,
+        _bet: i32,
+    ) -> Result<BenchmarkGameOutcome, GameError> {
+        self.create_benchmark_game_result
+            .lock()
+            .unwrap()
+            .take()
+            .expect("mock orchestrator create_benchmark_multiplayer_game called more than once")
+    }
+
+    async fn cleanup_benchmark_data(&self) -> Result<BenchmarkCleanupCounts, GameError> {
+        self.cleanup_benchmark_result
+            .lock()
+            .unwrap()
+            .take()
+            .expect("mock orchestrator cleanup_benchmark_data called more than once")
     }
 
     async fn start_game(&self, _game_id: Uuid, _user_id: Uuid) -> Result<(), GameError> {
