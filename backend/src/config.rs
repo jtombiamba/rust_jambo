@@ -50,6 +50,18 @@ pub struct Config {
     pub topup_credit_threshold: i32,
     pub topup_credit_amount: i32,
     pub benchmark_api_token: String,
+    pub rate_limit_default_max_requests: u64,
+    pub rate_limit_default_window_seconds: u64,
+    pub rate_limit_contact_max_requests: u64,
+    pub rate_limit_contact_window_seconds: u64,
+    pub rate_limit_register_max_requests: u64,
+    pub rate_limit_register_window_seconds: u64,
+    pub rate_limit_login_max_requests: u64,
+    pub rate_limit_login_window_seconds: u64,
+    pub rate_limit_forgot_password_max_requests: u64,
+    pub rate_limit_forgot_password_window_seconds: u64,
+    pub rate_limit_reset_password_max_requests: u64,
+    pub rate_limit_reset_password_window_seconds: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -140,6 +152,54 @@ impl std::fmt::Debug for Config {
             .field("topup_credit_threshold", &self.topup_credit_threshold)
             .field("topup_credit_amount", &self.topup_credit_amount)
             .field("benchmark_api_token", &"***")
+            .field(
+                "rate_limit_default_max_requests",
+                &self.rate_limit_default_max_requests,
+            )
+            .field(
+                "rate_limit_default_window_seconds",
+                &self.rate_limit_default_window_seconds,
+            )
+            .field(
+                "rate_limit_contact_max_requests",
+                &self.rate_limit_contact_max_requests,
+            )
+            .field(
+                "rate_limit_contact_window_seconds",
+                &self.rate_limit_contact_window_seconds,
+            )
+            .field(
+                "rate_limit_register_max_requests",
+                &self.rate_limit_register_max_requests,
+            )
+            .field(
+                "rate_limit_register_window_seconds",
+                &self.rate_limit_register_window_seconds,
+            )
+            .field(
+                "rate_limit_login_max_requests",
+                &self.rate_limit_login_max_requests,
+            )
+            .field(
+                "rate_limit_login_window_seconds",
+                &self.rate_limit_login_window_seconds,
+            )
+            .field(
+                "rate_limit_forgot_password_max_requests",
+                &self.rate_limit_forgot_password_max_requests,
+            )
+            .field(
+                "rate_limit_forgot_password_window_seconds",
+                &self.rate_limit_forgot_password_window_seconds,
+            )
+            .field(
+                "rate_limit_reset_password_max_requests",
+                &self.rate_limit_reset_password_max_requests,
+            )
+            .field(
+                "rate_limit_reset_password_window_seconds",
+                &self.rate_limit_reset_password_window_seconds,
+            )
             .finish()
     }
 }
@@ -169,6 +229,18 @@ impl Config {
             .set_default("benchmark_api_token", "")?
             .set_default("cors_allowed_origins", "http://localhost:5173")?
             .set_default("cors_max_age", "3600")?
+            .set_default("rate_limit_default_max_requests", "120")?
+            .set_default("rate_limit_default_window_seconds", "3600")?
+            .set_default("rate_limit_contact_max_requests", "5")?
+            .set_default("rate_limit_contact_window_seconds", "60")?
+            .set_default("rate_limit_register_max_requests", "3")?
+            .set_default("rate_limit_register_window_seconds", "3600")?
+            .set_default("rate_limit_login_max_requests", "10")?
+            .set_default("rate_limit_login_window_seconds", "60")?
+            .set_default("rate_limit_forgot_password_max_requests", "3")?
+            .set_default("rate_limit_forgot_password_window_seconds", "3600")?
+            .set_default("rate_limit_reset_password_max_requests", "10")?
+            .set_default("rate_limit_reset_password_window_seconds", "60")?
             .add_source(Environment::default())
             .build()?;
 
@@ -343,6 +415,62 @@ impl Config {
                 .unwrap_or_else(|_| "3600".to_string())
                 .parse()
                 .unwrap_or(3600),
+            rate_limit_default_max_requests: env::var("RATE_LIMIT_DEFAULT_MAX_REQUESTS")
+                .unwrap_or_else(|_| "120".to_string())
+                .parse()
+                .unwrap_or(120),
+            rate_limit_default_window_seconds: env::var("RATE_LIMIT_DEFAULT_WINDOW_SECONDS")
+                .unwrap_or_else(|_| "3600".to_string())
+                .parse()
+                .unwrap_or(3600),
+            rate_limit_contact_max_requests: env::var("RATE_LIMIT_CONTACT_MAX_REQUESTS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()
+                .unwrap_or(5),
+            rate_limit_contact_window_seconds: env::var("RATE_LIMIT_CONTACT_WINDOW_SECONDS")
+                .unwrap_or_else(|_| "60".to_string())
+                .parse()
+                .unwrap_or(60),
+            rate_limit_register_max_requests: env::var("RATE_LIMIT_REGISTER_MAX_REQUESTS")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .unwrap_or(3),
+            rate_limit_register_window_seconds: env::var("RATE_LIMIT_REGISTER_WINDOW_SECONDS")
+                .unwrap_or_else(|_| "3600".to_string())
+                .parse()
+                .unwrap_or(3600),
+            rate_limit_login_max_requests: env::var("RATE_LIMIT_LOGIN_MAX_REQUESTS")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .unwrap_or(10),
+            rate_limit_login_window_seconds: env::var("RATE_LIMIT_LOGIN_WINDOW_SECONDS")
+                .unwrap_or_else(|_| "60".to_string())
+                .parse()
+                .unwrap_or(60),
+            rate_limit_forgot_password_max_requests: env::var(
+                "RATE_LIMIT_FORGOT_PASSWORD_MAX_REQUESTS",
+            )
+            .unwrap_or_else(|_| "3".to_string())
+            .parse()
+            .unwrap_or(3),
+            rate_limit_forgot_password_window_seconds: env::var(
+                "RATE_LIMIT_FORGOT_PASSWORD_WINDOW_SECONDS",
+            )
+            .unwrap_or_else(|_| "3600".to_string())
+            .parse()
+            .unwrap_or(3600),
+            rate_limit_reset_password_max_requests: env::var(
+                "RATE_LIMIT_RESET_PASSWORD_MAX_REQUESTS",
+            )
+            .unwrap_or_else(|_| "10".to_string())
+            .parse()
+            .unwrap_or(10),
+            rate_limit_reset_password_window_seconds: env::var(
+                "RATE_LIMIT_RESET_PASSWORD_WINDOW_SECONDS",
+            )
+            .unwrap_or_else(|_| "60".to_string())
+            .parse()
+            .unwrap_or(60),
         }
     }
 }

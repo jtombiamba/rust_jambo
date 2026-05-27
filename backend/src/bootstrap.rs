@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::api::auth::AuthServiceType;
 use crate::api::dashboard::DashboardServiceType;
-use crate::api::middleware::rate_limiter::RateLimiterMiddleware;
+use crate::api::middleware::rate_limiter::RateLimitConfigs;
 use crate::auth::config::AuthConfig;
 use crate::auth::middleware::AuthMiddleware;
 use crate::cache::UserCache;
@@ -34,7 +34,7 @@ pub struct AppState {
     pub payment_service: web::Data<Arc<PaymentService>>,
     pub config: web::Data<Config>,
     pub auth_middleware: AuthMiddleware,
-    pub _rate_limiter_middleware: RateLimiterMiddleware,
+    pub rate_limit_configs: RateLimitConfigs,
     pub translator: web::Data<Arc<Translator>>,
 }
 
@@ -269,8 +269,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     }
 
     let auth_middleware = AuthMiddleware::new(redis_client.clone(), translator.clone());
-    let rate_limiter_middleware =
-        RateLimiterMiddleware::new(redis_client.clone(), translator.clone());
+    let rate_limit_configs = RateLimitConfigs::from_config(config);
 
     let payment_service = Arc::new(PaymentService::new(
         config.paypal_client_id.clone(),
@@ -312,7 +311,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         payment_service: payment_service_data,
         config: config_data,
         auth_middleware,
-        _rate_limiter_middleware: rate_limiter_middleware,
+        rate_limit_configs,
         translator: translator_data,
     })
 }

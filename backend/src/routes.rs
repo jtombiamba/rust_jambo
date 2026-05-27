@@ -4,6 +4,7 @@ use prometheus::Encoder;
 use crate::api::anonymous::get_anonymous_stats;
 use crate::api::fallback;
 use crate::api::game::play_card;
+use crate::api::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::api::quickie::create_quick_game;
 use crate::bootstrap::AppState;
 
@@ -25,6 +26,28 @@ pub async fn metrics() -> HttpResponse {
 
 pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     let auth_mw = state.auth_middleware.clone();
+    let redis = state.redis.get_ref().clone();
+    let translator = state.translator.get_ref().clone();
+    let configs = &state.rate_limit_configs;
+
+    let contact_limiter =
+        RateLimiterMiddleware::new(redis.clone(), configs.contact.clone(), translator.clone());
+    let register_limiter =
+        RateLimiterMiddleware::new(redis.clone(), configs.register.clone(), translator.clone());
+    let login_limiter =
+        RateLimiterMiddleware::new(redis.clone(), configs.login.clone(), translator.clone());
+    let forgot_pw_limiter = RateLimiterMiddleware::new(
+        redis.clone(),
+        configs.forgot_password.clone(),
+        translator.clone(),
+    );
+    let reset_pw_limiter = RateLimiterMiddleware::new(
+        redis.clone(),
+        configs.reset_password.clone(),
+        translator.clone(),
+    );
+    let default_limiter =
+        RateLimiterMiddleware::new(redis.clone(), configs.default.clone(), translator.clone());
 
     cfg.app_data(state.db.clone())
         .app_data(state.redis.clone())
@@ -61,15 +84,25 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                 )
                 .service(
                     web::scope("/auth")
-                        .route("/register", web::post().to(crate::api::auth::register))
-                        .route("/login", web::post().to(crate::api::auth::login))
-                        .route(
-                            "/forgot-password",
-                            web::post().to(crate::api::auth::forgot_password),
+                        .service(
+                            web::resource("/register")
+                                .wrap(register_limiter.clone())
+                                .route(web::post().to(crate::api::auth::register)),
                         )
-                        .route(
-                            "/reset-password",
-                            web::post().to(crate::api::auth::reset_password),
+                        .service(
+                            web::resource("/login")
+                                .wrap(login_limiter.clone())
+                                .route(web::post().to(crate::api::auth::login)),
+                        )
+                        .service(
+                            web::resource("/forgot-password")
+                                .wrap(forgot_pw_limiter.clone())
+                                .route(web::post().to(crate::api::auth::forgot_password)),
+                        )
+                        .service(
+                            web::resource("/reset-password")
+                                .wrap(reset_pw_limiter.clone())
+                                .route(web::post().to(crate::api::auth::reset_password)),
                         )
                         .route("/logout", web::post().to(crate::api::auth::logout))
                         .service(
@@ -78,9 +111,10 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                                 .route(web::get().to(crate::api::auth::me)),
                         ),
                 )
-                .route(
-                    "/contact",
-                    web::post().to(crate::api::contact::send_contact),
+                .service(
+                    web::resource("/contact")
+                        .wrap(contact_limiter.clone())
+                        .route(web::post().to(crate::api::contact::send_contact)),
                 )
                 .service(
                     web::scope("/me")
@@ -195,7 +229,8 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         );
                     }
                 })
-                .default_service(web::route().to(fallback::not_found)),
+                .default_service(web::route().to(fallback::not_found))
+                .wrap(default_limiter),
         );
 
     cfg.service(crate::websocket::scope());
