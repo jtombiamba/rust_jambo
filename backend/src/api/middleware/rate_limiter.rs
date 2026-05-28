@@ -24,6 +24,7 @@ pub struct RateLimitConfig {
 
 #[derive(Clone)]
 pub struct RateLimitConfigs {
+    #[allow(dead_code)]
     pub default: RateLimitConfig,
     pub contact: RateLimitConfig,
     pub register: RateLimitConfig,

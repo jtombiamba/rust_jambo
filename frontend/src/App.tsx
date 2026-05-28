@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import axios from 'axios'
 import { useTranslation } from 'react-i18next'
 import './App.css'
@@ -13,8 +13,15 @@ import { useToast } from './components/useToast'
 import { useGameStore } from './stores/useGameStore'
 import { useAuthStore } from './stores/useAuthStore'
 import { useLanguageStore } from './stores/useLanguageStore'
+import { useRoomStore } from './stores/useRoomStore'
 import LanguageSwitcher from './components/LanguageSwitcher'
+import RoomList from './components/RoomList'
+import RoomDashboard from './components/RoomDashboard'
+import CreateRoomModal from './components/CreateRoomModal'
+import JoinRoomForm from './components/JoinRoomForm'
+import CreateRunModal from './components/CreateRunModal'
 import { useGameWebSocket } from './hooks/useGameWebSocket'
+import { useRoomWebSocket } from './hooks/useRoomWebSocket'
 import { useWebSocket } from './hooks/useWebSocket'
 import { getStoredStats, saveStats, AnonymousStats } from './utils/storage'
 
@@ -62,7 +69,32 @@ function AppContent() {
   const { showToast } = useToast()
   const { t } = useTranslation()
   const { init: initLanguage, syncFromUser } = useLanguageStore()
+  const { setActiveRoomId, showCreateRoom, setShowCreateRoom, showJoinRoom, setShowJoinRoom, clear: clearRoomStore } = useRoomStore()
+  const [roomId, setRoomId] = useState<string | null>(null)
+  const [showCreateRun, setShowCreateRun] = useState(false)
+  const [createRunRoomId, setCreateRunRoomId] = useState<string | null>(null)
+  const [runGameIndex, setRunGameIndex] = useState(0)
+  const [runTotalGames, setRunTotalGames] = useState(0)
+  const [runId, setRunId] = useState<string | null>(null)
+  const [autoStartCountdown, setAutoStartCountdown] = useState(0)
+  const autoStartRef = useRef(false)
+  const [roomRefreshKey, setRoomRefreshKey] = useState(0)
   useGameWebSocket(gameId)
+  useRoomWebSocket({
+    roomId: isAuthenticated && roomId ? roomId : null,
+    onEvent: (event) => {
+      if (event.type === 'game_started' && event.game_id && event.run_id) {
+        setRunId(event.run_id)
+        setRoomRefreshKey(k => k + 1)
+        if (event.total_games) setRunTotalGames(event.total_games)
+        if (event.game_index !== undefined) setRunGameIndex(event.game_index + 1)
+        useRoomStore.getState().setCurrentRunGameId(event.game_id)
+      }
+      if (event.type === 'run_completed' || event.type === 'run_created' || event.type === 'member_joined' || event.type === 'member_left') {
+        setRoomRefreshKey(k => k + 1)
+      }
+    },
+  })
 
   const processInvite = useCallback((gameId: string, action: string) => {
     const endpoint = `/api/games/${gameId}/respond?action=${encodeURIComponent(action)}`
@@ -244,6 +276,82 @@ function AppContent() {
     }
   }
 
+  const handleOpenRoom = (rid: string) => {
+    setRoomId(rid)
+    setActiveRoomId(rid)
+  }
+
+  const handleRoomBack = () => {
+    setRoomId(null)
+    setActiveRoomId(null)
+    setRunId(null)
+    setRunGameIndex(0)
+    setRunTotalGames(0)
+    clearRoomStore()
+  }
+
+  const handleOpenCreateRun = (rid: string) => {
+    setCreateRunRoomId(rid)
+    setShowCreateRun(true)
+  }
+
+  const handlePlayNextInRun = useCallback(async () => {
+    if (!runId) return
+    autoStartRef.current = false
+    setAutoStartCountdown(0)
+    setStartingGame(true)
+    try {
+      const res = await axios.post<{ game_id: string; game_index: number; total_games: number; current_game_index: number }>(`/api/me/runs/${runId}/next-game`)
+      if (res.data.game_id) {
+        const newIndex = res.data.current_game_index ?? res.data.game_index + 1
+        setRunGameIndex(newIndex)
+        setRunTotalGames(res.data.total_games)
+        useRoomStore.getState().setCurrentRunGameId(res.data.game_id)
+        const gameRes = await axios.get<QuickGameResponse>(`/api/me/games/${res.data.game_id}`)
+        if (gameRes.data.game_id && gameRes.data.players) {
+          setGameStore(
+            gameRes.data.game_id,
+            gameRes.data.players,
+            gameRes.data.status,
+            gameRes.data.current_turn,
+            gameRes.data.bet,
+            gameRes.data.deck_slots || null
+          )
+          clearGameOver()
+        }
+      }
+    } catch {
+      showToast('Failed to start next game', 'error')
+    } finally {
+      setStartingGame(false)
+    }
+  }, [runId, clearGameOver, setGameStore, showToast])
+
+  useEffect(() => {
+    if (!gameOver?.isGameOver || !runId || runGameIndex >= runTotalGames) return
+    autoStartRef.current = true
+    setAutoStartCountdown(10)
+    const interval = setInterval(() => {
+      setAutoStartCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    const timeout = setTimeout(() => {
+      if (autoStartRef.current) {
+        handlePlayNextInRun()
+      }
+    }, 10000)
+    return () => {
+      autoStartRef.current = false
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [gameOver?.isGameOver, runId, runGameIndex, runTotalGames, handlePlayNextInRun])
+
   if (loading) {
     return (
       <div className="container mx-auto p-4 sm:p-8 flex items-center justify-center min-h-screen">
@@ -272,11 +380,62 @@ function AppContent() {
             roundWinner={roundWinner}
             gameOver={gameOver}
             onCardClick={handleCardClick}
-            showPlayAgain={!isMultiplayer}
-            onPlayAgain={startGame}
-            onReturnToLobby={resetGame}
+            showPlayAgain={!isMultiplayer && !runId}
+            onPlayAgain={runId ? handlePlayNextInRun : startGame}
+            onReturnToLobby={() => {
+              resetGame()
+              setRunId(null)
+              setAutoStartCountdown(0)
+            }}
             onCloseGameOver={clearGameOver}
           />
+          {gameOver?.isGameOver && runId && (
+            <div className="container mx-auto px-4 sm:px-8">
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-center">
+                <p className="text-sm text-blue-700 mb-2">
+                  Game {runGameIndex} of {runTotalGames}
+                </p>
+                {runGameIndex >= runTotalGames ? (
+                  <button
+                    className="px-4 py-2 bg-gray-400 text-white text-sm font-semibold rounded-lg cursor-not-allowed"
+                    disabled
+                  >
+                    Run Complete
+                  </button>
+                ) : autoStartCountdown > 0 ? (
+                  <div>
+                    <p className="text-sm text-blue-600 mb-2">
+                      Next game starting in {autoStartCountdown}s...
+                    </p>
+                    <button
+                      className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 mr-2"
+                      onClick={handlePlayNextInRun}
+                    >
+                      Play Now
+                    </button>
+                    <button
+                      className="px-4 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-100"
+                      onClick={() => {
+                        setAutoStartCountdown(0)
+                        resetGame()
+                        setRunId(null)
+                      }}
+                    >
+                      Back to Room
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700"
+                    onClick={handlePlayNextInRun}
+                    disabled={startingGame}
+                  >
+                    {startingGame ? 'Starting...' : 'Play Next Game'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           {cardError && (
             <div className="container mx-auto px-4 sm:px-8">
               <div className="p-3 bg-red-100 text-red-700 rounded flex items-center justify-between">
@@ -293,7 +452,11 @@ function AppContent() {
           <div className="container mx-auto px-4 sm:px-8 pb-8">
             <button
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-              onClick={() => resetGame()}
+              onClick={() => {
+                resetGame()
+                setRunId(null)
+                setAutoStartCountdown(0)
+              }}
             >
               {t('common.backToDashboard')}
             </button>
@@ -320,6 +483,74 @@ function AppContent() {
     )
   }
 
+  const handleRoomCreated = (rid: string) => {
+    handleOpenRoom(rid)
+  }
+
+  const handleRunCreated = () => {
+    setShowCreateRun(false)
+    setCreateRunRoomId(null)
+    if (roomId) {
+      handleOpenRoom(roomId)
+    }
+  }
+
+  if (isAuthenticated && roomId) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <AuthModal />
+        <CreateRoomModal
+          isOpen={showCreateRoom}
+          onClose={() => setShowCreateRoom(false)}
+          onCreated={handleRoomCreated}
+        />
+        <JoinRoomForm
+          isOpen={showJoinRoom}
+          onClose={() => setShowJoinRoom(false)}
+          onJoined={(rid) => handleOpenRoom(rid)}
+        />
+        {createRunRoomId && (
+          <CreateRunModal
+            isOpen={showCreateRun}
+            roomId={createRunRoomId}
+            onClose={() => { setShowCreateRun(false); setCreateRunRoomId(null) }}
+            onCreated={handleRunCreated}
+          />
+        )}
+        <div className="flex-1">
+          <RoomDashboard
+            roomId={roomId}
+            onBack={handleRoomBack}
+              onStartGame={async (gameIdVal: string, runIdVal: string, gameIdx: number, total: number) => {
+              setRunId(runIdVal)
+              setRunGameIndex(gameIdx)
+              setRunTotalGames(total)
+              useRoomStore.getState().setCurrentRunGameId(gameIdVal)
+              try {
+                const gameRes = await axios.get<QuickGameResponse>(`/api/me/games/${gameIdVal}`)
+                if (gameRes.data.game_id && gameRes.data.players) {
+                  setGameStore(
+                    gameRes.data.game_id,
+                    gameRes.data.players,
+                    gameRes.data.status,
+                    gameRes.data.current_turn,
+                    gameRes.data.bet,
+                    gameRes.data.deck_slots || null
+                  )
+                }
+              } catch {
+                showToast('Failed to load game', 'error')
+              }
+            }}
+            onCreateRun={handleOpenCreateRun}
+            refreshKey={roomRefreshKey}
+          />
+        </div>
+        <Footer />
+      </div>
+    )
+  }
+
   const handleResumeGame = (data: QuickGameResponse) => {
     if (data.status === 'pending' || data.status === 'ready') {
       setLobbyGameId(data.game_id)
@@ -333,6 +564,24 @@ function AppContent() {
       <div className="min-h-screen flex flex-col">
         <AuthModal />
         <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
+        <CreateRoomModal
+          isOpen={showCreateRoom}
+          onClose={() => setShowCreateRoom(false)}
+          onCreated={handleRoomCreated}
+        />
+        <JoinRoomForm
+          isOpen={showJoinRoom}
+          onClose={() => setShowJoinRoom(false)}
+          onJoined={(rid) => handleOpenRoom(rid)}
+        />
+        {createRunRoomId && (
+          <CreateRunModal
+            isOpen={showCreateRun}
+            roomId={createRunRoomId}
+            onClose={() => { setShowCreateRun(false); setCreateRunRoomId(null) }}
+            onCreated={handleRunCreated}
+          />
+        )}
         <div className="flex-1">
           <UserDashboard
             onStartGame={startGame}
@@ -342,6 +591,13 @@ function AppContent() {
             starting={startingGame}
             error={error}
           />
+          <div className="container mx-auto px-4 sm:px-8">
+            <RoomList
+              onSelectRoom={handleOpenRoom}
+              onCreateRoom={() => setShowCreateRoom(true)}
+              onJoinRoom={() => setShowJoinRoom(true)}
+            />
+          </div>
         </div>
         <Footer />
       </div>

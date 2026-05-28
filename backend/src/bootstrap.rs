@@ -7,6 +7,7 @@ use tracing::info;
 use crate::api::auth::AuthServiceType;
 use crate::api::dashboard::DashboardServiceType;
 use crate::api::middleware::rate_limiter::RateLimitConfigs;
+use crate::api::services::room_service::RoomService;
 use crate::auth::config::AuthConfig;
 use crate::auth::middleware::AuthMiddleware;
 use crate::cache::UserCache;
@@ -32,6 +33,7 @@ pub struct AppState {
     pub user_cache: web::Data<Arc<UserCache>>,
     pub mailer: web::Data<Arc<dyn Mailer>>,
     pub payment_service: web::Data<Arc<PaymentService>>,
+    pub room_service: web::Data<Arc<RoomService>>,
     pub config: web::Data<Config>,
     pub auth_middleware: AuthMiddleware,
     pub rate_limit_configs: RateLimitConfigs,
@@ -179,11 +181,17 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     {
         let db_for_staleness = db_connection.clone();
         let redis_for_staleness = redis_client.clone();
+        let config_for_staleness = config.clone();
         let staleness_secs = config.game_staleness_threshold_secs;
         let staleness_threshold = chrono::Duration::seconds(staleness_secs as i64);
+        let human_alert_threshold =
+            chrono::Duration::seconds(config.game_human_staleness_alert_secs as i64);
+        let human_kick_threshold =
+            chrono::Duration::seconds(config.game_human_staleness_kick_secs as i64);
+        let mailer_for_staleness = mailer.clone();
         tokio::spawn(async move {
             let check_interval =
-                std::cmp::max(Duration::from_secs(staleness_secs), Duration::from_secs(60));
+                std::cmp::max(Duration::from_secs(60), Duration::from_secs(staleness_secs));
             let mut interval = tokio::time::interval(check_interval);
             loop {
                 interval.tick().await;
@@ -193,6 +201,19 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
                     staleness_threshold,
                 )
                 .await;
+
+                let game_service = crate::game::service::GameService::new_with_redis(
+                    db_for_staleness.clone(),
+                    redis_for_staleness.clone(),
+                )
+                .with_config(&config_for_staleness, mailer_for_staleness.clone());
+                game_service
+                    .check_human_staleness(
+                        redis_for_staleness.clone(),
+                        human_alert_threshold,
+                        human_kick_threshold,
+                    )
+                    .await;
             }
         });
     }
@@ -281,6 +302,31 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         config.paypal_live_url.clone(),
     ));
 
+    let room_service = Arc::new(RoomService::new(
+        db_connection.clone(),
+        mailer.clone(),
+        config.clone(),
+        redis_client.clone(),
+    ));
+
+    {
+        let db_for_stalled_runs = db_connection.clone();
+        let mailer_for_stalled_runs = mailer.clone();
+        let timeout_secs = config.run_staleness_timeout_secs;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(120));
+            loop {
+                interval.tick().await;
+                RoomService::check_stalled_runs(
+                    db_for_stalled_runs.clone(),
+                    mailer_for_stalled_runs.clone(),
+                    timeout_secs,
+                )
+                .await;
+            }
+        });
+    }
+
     let db_data = web::Data::new(db_connection.clone());
     let redis_data = web::Data::new(redis_client);
     let rabbitmq_data = web::Data::new(rabbitmq_client);
@@ -292,6 +338,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let user_cache_data = web::Data::new(user_cache);
     let mailer_data = web::Data::new(mailer);
     let payment_service_data = web::Data::new(payment_service);
+    let room_service_data = web::Data::new(room_service);
     let config_data = web::Data::new(config.clone());
     let translator_data = web::Data::new(translator);
 
@@ -309,6 +356,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         user_cache: user_cache_data,
         mailer: mailer_data,
         payment_service: payment_service_data,
+        room_service: room_service_data,
         config: config_data,
         auth_middleware,
         rate_limit_configs,

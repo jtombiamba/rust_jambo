@@ -110,6 +110,9 @@ impl GameOrchestrator {
             game_mode: Set(GameMode::Multiplayer),
             max_players: Set(4),
             invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            kicked_players: Set(serde_json::json!([])),
         };
         game::Entity::insert(game_active)
             .exec(&txn)
@@ -129,6 +132,8 @@ impl GameOrchestrator {
                 credits: Set(10),
                 created_at: Set(now),
                 user_id: Set(Some(uid)),
+                kicked: Set(false),
+                kicked_at: ActiveValue::NotSet,
             };
             player::Entity::insert(player_active)
                 .exec(&txn)

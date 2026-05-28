@@ -8,6 +8,10 @@ mod m20260514_000001_winning_streak;
 mod m20260514_000002_unique_player_game_user;
 mod m20260518_000001_freeze_system;
 mod m20260523_000001_user_language;
+mod m20260527_000001_game_staleness;
+mod m20260527_000002_rooms;
+mod m20260528_000001_fix_unique_index;
+mod m20260528_000002_run_stall_tracking;
 
 pub struct Migrator;
 
@@ -23,6 +27,10 @@ impl MigratorTrait for Migrator {
             Box::new(m20260514_000002_unique_player_game_user::Migration),
             Box::new(m20260518_000001_freeze_system::Migration),
             Box::new(m20260523_000001_user_language::Migration),
+            Box::new(m20260527_000001_game_staleness::Migration),
+            Box::new(m20260527_000002_rooms::Migration),
+            Box::new(m20260528_000001_fix_unique_index::Migration),
+            Box::new(m20260528_000002_run_stall_tracking::Migration),
         ]
     }
 }

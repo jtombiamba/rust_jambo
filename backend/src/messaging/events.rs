@@ -76,6 +76,58 @@ pub enum GameEvent {
         player_position: i32,
         reconnected_at: Option<String>,
     },
+    StalenessWarning {
+        game_id: Uuid,
+        player_id: Uuid,
+        player_name: String,
+        kicked_after_seconds: i64,
+    },
+    PlayerKicked {
+        game_id: Uuid,
+        player_id: Uuid,
+        player_name: String,
+    },
+    GameReshuffled {
+        game_id: Uuid,
+        remaining_players: u32,
+    },
+    PlayerForfeitWin {
+        game_id: Uuid,
+        winner_id: Uuid,
+        winner_name: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RoomEvent {
+    MemberJoined {
+        room_id: Uuid,
+        user_id: Uuid,
+        pseudo: String,
+    },
+    MemberLeft {
+        room_id: Uuid,
+        user_id: Uuid,
+        pseudo: String,
+    },
+    RunCreated {
+        room_id: Uuid,
+        run_id: Uuid,
+        num_games: i32,
+        bet_per_game: i32,
+    },
+    GameStarted {
+        room_id: Uuid,
+        run_id: Uuid,
+        game_id: Uuid,
+        game_index: i32,
+        total_games: i32,
+    },
+    RunCompleted {
+        room_id: Uuid,
+        run_id: Uuid,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +138,22 @@ pub struct GameStartedPlayer {
     pub display_position: i32,
     pub cards_count: i32,
     pub player_type: String, // "human" or "bot"
+}
+
+impl RoomEvent {
+    pub fn channel(&self) -> String {
+        match self {
+            RoomEvent::MemberJoined { room_id, .. }
+            | RoomEvent::MemberLeft { room_id, .. }
+            | RoomEvent::RunCreated { room_id, .. }
+            | RoomEvent::GameStarted { room_id, .. }
+            | RoomEvent::RunCompleted { room_id, .. } => format!("room:{}", room_id),
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("Failed to serialize RoomEvent")
+    }
 }
 
 impl GameEvent {
@@ -102,7 +170,11 @@ impl GameEvent {
             | GameEvent::CardsDealt { game_id, .. }
             | GameEvent::GameStarted { game_id, .. }
             | GameEvent::PlayerDisconnected { game_id, .. }
-            | GameEvent::PlayerReconnected { game_id, .. } => format!("game:{}", game_id),
+            | GameEvent::PlayerReconnected { game_id, .. }
+            | GameEvent::StalenessWarning { game_id, .. }
+            | GameEvent::PlayerKicked { game_id, .. }
+            | GameEvent::GameReshuffled { game_id, .. }
+            | GameEvent::PlayerForfeitWin { game_id, .. } => format!("game:{}", game_id),
         }
     }
 

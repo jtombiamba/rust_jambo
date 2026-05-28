@@ -18,6 +18,14 @@ export interface GameOverModalProps {
   onReturnToLobby: () => void;
   /** Whether to show the Play Again button (hidden for human-only multiplayer) */
   showPlayAgain?: boolean;
+  /** If part of a game run, the next game action */
+  onPlayNext?: () => void;
+  /** If part of a game run, whether this is the last game */
+  isLastGame?: boolean;
+  /** Current game index in run (1-based) */
+  runGameIndex?: number;
+  /** Total games in run */
+  runTotalGames?: number;
 }
 
 /**
@@ -32,6 +40,10 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
   onPlayAgain,
   onReturnToLobby,
   showPlayAgain = true,
+  onPlayNext,
+  isLastGame,
+  runGameIndex,
+  runTotalGames,
 }) => {
   const { t } = useTranslation();
 
@@ -145,7 +157,16 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
 
           {/* Action buttons */}
           <div className="action-buttons buttons-animate">
-            {showPlayAgain && (
+            {onPlayNext && (
+            <button
+              className="btn-primary"
+              onClick={onPlayNext}
+              autoFocus
+            >
+              {isLastGame ? 'Finish Run' : `Play Next (${runGameIndex ?? '?'}/${runTotalGames ?? '?'})`}
+            </button>
+            )}
+            {showPlayAgain && !onPlayNext && (
             <button
               className="btn-primary"
               onClick={onPlayAgain}

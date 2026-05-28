@@ -32,6 +32,16 @@ impl UserRepository {
         user::Entity::find_by_id(id).one(&self.connection).await
     }
 
+    pub async fn find_by_ids(&self, ids: &[Uuid]) -> Result<Vec<User>, DbErr> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        user::Entity::find()
+            .filter(user::Column::Id.is_in(ids.iter().copied()))
+            .all(&self.connection)
+            .await
+    }
+
     pub async fn find_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr> {
         user::Entity::find()
             .filter(user::Column::Pseudo.eq(pseudo))

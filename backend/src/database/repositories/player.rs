@@ -36,6 +36,8 @@ impl PlayerRepository {
             credits: Set(500),
             created_at: Set(now),
             user_id: ActiveValue::NotSet,
+            kicked: Set(false),
+            kicked_at: ActiveValue::NotSet,
         };
         let insert_result = player::Entity::insert(player_active)
             .exec(&self.connection)
@@ -86,6 +88,8 @@ impl PlayerRepository {
             credits: Set(500),
             created_at: Set(now),
             user_id: Set(Some(user_id)),
+            kicked: Set(false),
+            kicked_at: ActiveValue::NotSet,
         };
         let insert_result = player::Entity::insert(player_active)
             .exec(&self.connection)

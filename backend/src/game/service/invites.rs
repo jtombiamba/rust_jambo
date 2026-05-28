@@ -219,6 +219,8 @@ impl GameService {
             credits: ActiveValue::Set(final_credit),
             created_at: ActiveValue::Set(now),
             user_id: ActiveValue::Set(Some(user_id)),
+            kicked: ActiveValue::Set(false),
+            kicked_at: ActiveValue::NotSet,
         };
         if let Err(e) = player::Entity::insert(player_active).exec(&txn).await {
             txn.rollback().await.ok();

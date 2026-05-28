@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invitation au salon</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;padding:24px 0;">
+    <tr>
+      <td align="center">
+        <table width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+          <tr>
+            <td style="background-color:#059669;padding:28px 32px;text-align:center;">
+              <h1 style="color:#ffffff;font-size:22px;margin:0;font-weight:700;">{{ app_name }}</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;">
+              <h2 style="color:#111827;font-size:18px;font-weight:600;margin:0 0 12px;">
+                Vous avez ete invite a rejoindre "{{ room_name }}" !
+              </h2>
+              <p style="color:#4b5563;font-size:14px;line-height:1.6;margin:0 0 12px;">
+                <strong>{{ inviter_name }}</strong> vous a invite a rejoindre le salon <strong>{{ room_name }}</strong>.
+              </p>
+              <p style="color:#4b5563;font-size:14px;line-height:1.6;margin:0 0 12px;">
+                Utilisez le code <strong>{{ invitation_code }}</strong> ou visitez :
+              </p>
+              <p style="color:#4b5563;font-size:14px;line-height:1.6;margin:0 0 24px;">
+                <a href="{{ join_link }}" style="color:#059669;">{{ join_link }}</a>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#f9fafb;padding:20px 32px;text-align:center;">
+              <p style="color:#9ca3af;font-size:12px;margin:0;">
+                {{ app_name }} &middot; <a href="{{ frontend_url }}" style="color:#059669;">{{ frontend_url }}</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

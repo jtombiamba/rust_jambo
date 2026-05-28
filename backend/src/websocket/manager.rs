@@ -1,5 +1,5 @@
 use crate::game::service::compute_display_position;
-use crate::messaging::events::{GameEvent, GameStartedPlayer};
+use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
@@ -52,6 +52,8 @@ struct TrackedConnection {
 struct Inner {
     /// Map from game ID to list of active tracked connections.
     connections: HashMap<Uuid, Vec<TrackedConnection>>,
+    /// Map from room ID to list of active tracked connections.
+    room_connections: HashMap<Uuid, Vec<TrackedConnection>>,
     /// Redis client for publishing/subscribing to game events.
     redis_client: Option<RedisClient>,
 }
@@ -68,6 +70,7 @@ impl WebSocketManager {
         Self {
             inner: Arc::new(RwLock::new(Inner {
                 connections: HashMap::new(),
+                room_connections: HashMap::new(),
                 redis_client,
             })),
         }
@@ -347,6 +350,75 @@ impl WebSocketManager {
         inner.redis_client.clone()
     }
 
+    /// Add a new WebSocket connection for a given room.
+    pub async fn add_room_connection(
+        &self,
+        room_id: Uuid,
+        sender: WsSender,
+        correlation_id: CorrelationId,
+    ) -> ConnectionId {
+        let mut inner = self.inner.write().await;
+        let connection_id = ConnectionId::new();
+
+        inner
+            .room_connections
+            .entry(room_id)
+            .or_default()
+            .push(TrackedConnection {
+                sender,
+                id: connection_id,
+                correlation_id,
+                last_activity: Instant::now(),
+                player_id: None,
+                player_position: None,
+            });
+
+        metrics::WS_CONNECTIONS_ACTIVE.inc();
+        tracing::info!(
+            "Added room connection {} (correlation_id={}) for room {}",
+            connection_id.uuid(),
+            correlation_id,
+            room_id
+        );
+        connection_id
+    }
+
+    /// Remove a WebSocket connection for a room.
+    pub async fn remove_room_connection(&self, room_id: Uuid, connection_id: ConnectionId) {
+        let mut inner = self.inner.write().await;
+        if let Some(connections) = inner.room_connections.get_mut(&room_id) {
+            connections.retain(|c| c.id != connection_id);
+            if connections.is_empty() {
+                inner.room_connections.remove(&room_id);
+            }
+            metrics::WS_CONNECTIONS_ACTIVE.dec();
+            metrics::WS_DISCONNECTS_TOTAL.inc();
+            tracing::info!(
+                "Removed room connection {} for room {}",
+                connection_id.uuid(),
+                room_id
+            );
+        }
+    }
+
+    /// Broadcast a message to all connections of a specific room.
+    pub async fn broadcast_to_room(&self, room_id: Uuid, message: &str) {
+        let inner = self.inner.read().await;
+        if let Some(connections) = inner.room_connections.get(&room_id) {
+            let count = connections.len();
+            metrics::WS_MESSAGES_SENT_TOTAL.inc_by(count as f64);
+            for connection in connections {
+                if let Err(e) = connection.sender.send(message.to_string()) {
+                    tracing::debug!(
+                        "Failed to send message to room connection {}: {}",
+                        connection.id.uuid(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+
     /// Start a background task that subscribes to Redis channels and forwards messages.
     /// Uses N sharded subscriber tasks (N = min(num_cpus, 8)) to distribute load.
     /// This should be called once when the server starts.
@@ -371,7 +443,7 @@ impl WebSocketManager {
             let manager = self.clone();
 
             tokio::spawn(async move {
-                let mut pubsub = match redis.psubscribe(&["game:*"]).await {
+                let mut pubsub = match redis.psubscribe(&["game:*", "room:*"]).await {
                     Ok(ps) => ps,
                     Err(e) => {
                         tracing::error!(
@@ -403,6 +475,22 @@ impl WebSocketManager {
                                         e
                                     );
                                     manager.broadcast_to_game(game_id, &payload).await;
+                                }
+                            }
+                        }
+                    } else if let Some(room_id) = Self::extract_room_id_from_channel(&channel) {
+                        if Self::shard_for_game(room_id, shard_count) == shard {
+                            match serde_json::from_str::<RoomEvent>(&payload) {
+                                Ok(event) => {
+                                    manager.route_room_event(room_id, event).await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to parse room event for room {}: {}",
+                                        room_id,
+                                        e
+                                    );
+                                    manager.broadcast_to_room(room_id, &payload).await;
                                 }
                             }
                         }
@@ -486,75 +574,25 @@ impl WebSocketManager {
         (hash as usize) % shard_count
     }
 
+    /// Route a parsed room event to broadcast to room connections.
+    async fn route_room_event(&self, room_id: Uuid, event: RoomEvent) {
+        self.broadcast_to_room(room_id, &event.to_json()).await;
+    }
+
     /// Extract game ID from a Redis channel name of the form "game:{uuid}".
     fn extract_game_id_from_channel(channel: &str) -> Option<Uuid> {
         const PREFIX: &str = "game:";
         channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
     }
 
-    /// Clean up stale connections that haven't had activity for more than `max_idle_duration`.
-    /// Returns the number of connections removed.
-    pub async fn cleanup_stale_connections(&self, max_idle_duration: Duration) -> usize {
-        let mut inner = self.inner.write().await;
-        let mut total_removed = 0;
-        let now = Instant::now();
-
-        // Iterate over games
-        inner.connections.retain(|game_id, connections| {
-            // Remove stale connections for this game
-            let before = connections.len();
-            connections.retain(|conn| {
-                let idle_duration = now.duration_since(conn.last_activity);
-                idle_duration <= max_idle_duration
-            });
-            let after = connections.len();
-            let removed = before - after;
-            total_removed += removed;
-
-            if removed > 0 {
-                tracing::info!(
-                    "Cleaned up {} stale connections for game {}",
-                    removed,
-                    game_id
-                );
-            }
-
-            // Keep the game entry only if there are still connections
-            !connections.is_empty()
-        });
-
-        if total_removed > 0 {
-            tracing::info!("Total stale connections cleaned up: {}", total_removed);
-        }
-        metrics::WS_CONNECTIONS_ACTIVE.sub(total_removed as f64);
-        total_removed
-    }
-
-    /// Start a background task that periodically cleans up stale connections.
-    /// This should be called once when the server starts.
-    pub async fn start_connection_cleanup_task(
-        &self,
-        cleanup_interval: Duration,
-        max_idle_duration: Duration,
-    ) {
-        let manager = self.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(cleanup_interval);
-            loop {
-                interval.tick().await;
-                let removed = manager.cleanup_stale_connections(max_idle_duration).await;
-                if removed > 0 {
-                    tracing::debug!("Cleanup task removed {} stale connections", removed);
-                }
-            }
-        });
-        tracing::info!(
-            "Started connection cleanup task with interval {:?} and max idle {:?}",
-            cleanup_interval,
-            max_idle_duration
-        );
+    /// Extract room ID from a Redis channel name of the form "room:{uuid}".
+    fn extract_room_id_from_channel(channel: &str) -> Option<Uuid> {
+        const PREFIX: &str = "room:";
+        channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
     }
 }
+
+include!("manager_cleanup.rs");
 
 #[cfg(test)]
 #[path = "manager_tests.rs"]

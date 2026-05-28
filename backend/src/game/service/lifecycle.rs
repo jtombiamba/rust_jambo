@@ -6,7 +6,8 @@ use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::database::models::{
-    game, game_card, player, player_profile, GameMode, GameStatus, PlayerType,
+    game, game_card, game_invite, player, player_profile, GameMode, GameStatus, InviteStatus,
+    PlayerType,
 };
 use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
 use crate::game::service::types::{GameCreationTimer, GameServiceError};
@@ -70,6 +71,22 @@ impl GameService {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
 
+        let pending_invites = game_invite::Entity::find()
+            .filter(game_invite::Column::GameId.eq(game_id))
+            .filter(game_invite::Column::Status.eq(InviteStatus::Pending))
+            .all(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        for inv in pending_invites {
+            let mut inv_active: game_invite::ActiveModel = inv.into();
+            inv_active.status = ActiveValue::Set(InviteStatus::Declined);
+            inv_active.update(&txn).await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        }
+
         txn.commit().await.map_err(|e| {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
@@ -89,6 +106,234 @@ impl GameService {
         let user_ids: Vec<Uuid> = players.iter().filter_map(|p| p.user_id).collect();
         if !user_ids.is_empty() {
             self.invalidate_dashboard_caches(&user_ids).await;
+        }
+
+        Ok(())
+    }
+
+    pub async fn kick_player_from_game(
+        &self,
+        game_id: Uuid,
+        kicked_player_id: Uuid,
+        all_players: &[player::Model],
+    ) -> Result<(), GameServiceError> {
+        let txn = self.db.begin().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        let game_model = game::Entity::find_by_id(game_id)
+            .one(&txn)
+            .await
+            .map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?
+            .ok_or(GameServiceError::GameNotFound)?;
+
+        if game_model.status != GameStatus::Active {
+            txn.rollback().await.ok();
+            return Err(GameServiceError::GameFinished);
+        }
+
+        let kicked_player = all_players
+            .iter()
+            .find(|p| p.id == kicked_player_id)
+            .ok_or(GameServiceError::PlayerNotFound)?;
+
+        // Mark player as kicked
+        let mut kicked_active: player::ActiveModel = kicked_player.clone().into();
+        kicked_active.kicked = ActiveValue::Set(true);
+        kicked_active.kicked_at = ActiveValue::Set(Some(chrono::Utc::now()));
+        kicked_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        // Rebuild player_positions: keep only non-kicked players
+        let active_players: Vec<&player::Model> =
+            all_players.iter().filter(|p| !p.kicked).collect();
+
+        let old_rank = game_model.rank.unwrap_or(0) as usize;
+
+        if active_players.len() <= 1 {
+            // Only 1 player remains: game ends, remaining player wins immediately
+            let winner = active_players
+                .first()
+                .ok_or_else(|| GameServiceError::Internal("No remaining players".to_string()))?;
+
+            let mut game_active: game::ActiveModel = game_model.clone().into();
+            game_active.status = ActiveValue::Set(GameStatus::Finished);
+            game_active.winner_id = ActiveValue::Set(Some(winner.id));
+            game_active.finished_at = ActiveValue::Set(Some(chrono::Utc::now()));
+            game_active.updated_at = ActiveValue::Set(chrono::Utc::now());
+            game_active.player_positions = ActiveValue::Set(
+                serde_json::to_value(std::collections::HashMap::<i32, Uuid>::from([(
+                    0,
+                    winner.user_id.unwrap_or(Uuid::nil()),
+                )]))
+                .map_err(|e| {
+                    GameServiceError::Internal(format!("Failed to serialize positions: {}", e))
+                })?,
+            );
+            game_active.stall_warning_sent_at = ActiveValue::Set(None);
+            game_active.update(&txn).await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+            // Process payment: remaining player gets kicked player's bet
+            let bet = game_model.bet;
+            let mut winner_active: player::ActiveModel = (**winner).clone().into();
+            winner_active.credits = ActiveValue::Set(winner.credits + bet);
+            winner_active.update(&txn).await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+            txn.commit().await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+
+            info!(
+                "Player {} kicked from game {}, {} remaining -> {} wins by forfeit",
+                kicked_player.id,
+                game_id,
+                active_players.len(),
+                winner.id
+            );
+
+            self.send_kicked_email(kicked_player.user_id, game_id, game_model.bet)
+                .await;
+
+            if let Some(ref redis) = self.redis_client {
+                let pk_event = GameEvent::PlayerKicked {
+                    game_id,
+                    player_id: kicked_player.id,
+                    player_name: kicked_player.name.clone(),
+                };
+                let _ = redis.clone().publish_game_event(&pk_event).await;
+
+                let fw_event = GameEvent::PlayerForfeitWin {
+                    game_id,
+                    winner_id: winner.id,
+                    winner_name: winner.name.clone(),
+                };
+                let _ = redis.clone().publish_game_event(&fw_event).await;
+
+                let gf_event = GameEvent::GameFinished {
+                    game_id,
+                    winner_id: Some(winner.id),
+                    winner_name: Some(winner.name.clone()),
+                    winner_position: Some(winner.position),
+                    status: "finished".to_string(),
+                    final_score: Some(winner.credits + bet),
+                    rounds_played: game_model.roll,
+                    correlation_id: None,
+                };
+                let _ = redis.clone().publish_game_event(&gf_event).await;
+            }
+
+            self.invalidate_game_state_cache(game_id).await;
+
+            let user_ids: Vec<Uuid> = all_players.iter().filter_map(|p| p.user_id).collect();
+            if !user_ids.is_empty() {
+                self.invalidate_dashboard_caches(&user_ids).await;
+            }
+
+            return Ok(());
+        }
+
+        // 2+ players remain: reseat positions
+        let new_positions: std::collections::HashMap<i32, Uuid> = active_players
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| p.user_id.map(|uid| (i as i32, uid)))
+            .collect();
+
+        let old_position_to_new: std::collections::HashMap<usize, usize> = active_players
+            .iter()
+            .enumerate()
+            .map(|(new_pos, p)| {
+                let old_pos = p.position as usize;
+                (old_pos, new_pos)
+            })
+            .collect();
+
+        // Update positions of remaining players
+        for (new_pos, &active) in active_players.iter().enumerate() {
+            let mut p_active: player::ActiveModel = (*active).clone().into();
+            p_active.position = ActiveValue::Set(new_pos as i32);
+            p_active.update(&txn).await.map_err(|e| {
+                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+            })?;
+        }
+
+        // Advance turn if the kicked player was the current player
+        let new_rank = if old_rank == kicked_player.position as usize {
+            let current_player_new_pos = old_position_to_new.get(&old_rank).copied().unwrap_or(0);
+            current_player_new_pos as i32
+        } else {
+            let old_kicked_pos = kicked_player.position as usize;
+            old_position_to_new
+                .get(&old_rank)
+                .copied()
+                .unwrap_or(if old_rank > old_kicked_pos {
+                    old_rank - 1
+                } else {
+                    old_rank
+                }) as i32
+        };
+
+        let mut game_active: game::ActiveModel = game_model.into();
+        game_active.player_positions =
+            ActiveValue::Set(serde_json::to_value(&new_positions).map_err(|e| {
+                GameServiceError::Internal(format!("Failed to serialize positions: {}", e))
+            })?);
+        game_active.rank = ActiveValue::Set(Some(new_rank));
+        game_active.updated_at = ActiveValue::Set(chrono::Utc::now());
+        game_active.stall_warning_sent_at = ActiveValue::Set(None);
+        game_active.update(&txn).await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        txn.commit().await.map_err(|e| {
+            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+
+        info!(
+            "Player {} kicked from game {}, {} players remaining, new rank {}",
+            kicked_player.id,
+            game_id,
+            active_players.len(),
+            new_rank
+        );
+
+        if let Some(ref redis) = self.redis_client {
+            let pk_event = GameEvent::PlayerKicked {
+                game_id,
+                player_id: kicked_player.id,
+                player_name: kicked_player.name.clone(),
+            };
+            let _ = redis.clone().publish_game_event(&pk_event).await;
+
+            let rs_event = GameEvent::GameReshuffled {
+                game_id,
+                remaining_players: active_players.len() as u32,
+            };
+            let _ = redis.clone().publish_game_event(&rs_event).await;
+        }
+
+        self.invalidate_game_state_cache(game_id).await;
+
+        // Schedule bot move if new current player is a bot
+        let new_rank_usize = new_rank as usize;
+        if new_rank_usize < active_players.len() {
+            let next = active_players[new_rank_usize];
+            if matches!(next.player_type, PlayerType::Bot) {
+                crate::game::bot_scheduler::BotScheduler::run_sync_chain(
+                    self.db.clone(),
+                    self.redis_client.clone(),
+                    game_id,
+                    next.id,
+                )
+                .await;
+            }
         }
 
         Ok(())
