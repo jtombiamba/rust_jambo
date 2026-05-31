@@ -167,6 +167,7 @@ impl RedisClient {
         Ok(pubsub)
     }
 
+    #[allow(dead_code)]
     pub async fn zadd(&mut self, key: &str, member: String, score: f64) -> RedisResult<()> {
         self.connection_manager.zadd(key, member, score).await
     }

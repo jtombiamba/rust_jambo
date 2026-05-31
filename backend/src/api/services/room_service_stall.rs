@@ -1,4 +1,5 @@
 impl RoomService {
+    #[allow(dead_code)]
     pub async fn check_stalled_runs(
         db: sea_orm::DatabaseConnection,
         mailer: Arc<dyn Mailer>,

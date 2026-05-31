@@ -69,16 +69,13 @@ impl RoomService {
                 .collect()
         };
 
+        let room_members = self.member_repo.list_by_room(room_id).await.map_err(|e| {
+            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
+        })?;
+        let member_ids: std::collections::HashSet<Uuid> =
+            room_members.iter().map(|m| m.user_id).collect();
         for p_id in &player_ids {
-            if self
-                .member_repo
-                .find_membership(room_id, *p_id)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
-                .is_none()
-            {
+            if !member_ids.contains(p_id) {
                 return Err(RoomServiceError::NotMember);
             }
         }

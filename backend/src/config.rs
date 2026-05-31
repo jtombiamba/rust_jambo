@@ -226,6 +226,35 @@ impl Config {
         dotenv::dotenv().ok();
 
         let cfg = ConfigBuilder::builder()
+            .set_default("host", "127.0.0.1")?
+            .set_default("port", "8080")?
+            .set_default(
+                "database_url",
+                "postgres://postgres:postgres@localhost:5432/jambo",
+            )?
+            .set_default("rabbitmq_url", "amqp://guest:guest@localhost:5672/%2f")?
+            .set_default("log_level", "info")?
+            .set_default("max_rabbitmq_connection_retries", "10")?
+            .set_default(
+                "jwt_secret",
+                "super-secret-key-change-me-in-production-please-do-it-now",
+            )?
+            .set_default("jwt_expiry_hours", "24")?
+            .set_default("ip_hash_pepper", "ip-pepper-change-me-1234567890abcdef")?
+            .set_default("frontend_url", "http://localhost:5173")?
+            .set_default("rabbitmq_publish_max_retries", "3")?
+            .set_default("rabbitmq_publish_initial_retry_delay_ms", "100")?
+            .set_default("rabbitmq_publish_max_retry_delay_ms", "5000")?
+            .set_default("circuit_breaker_failure_threshold", "5")?
+            .set_default("circuit_breaker_cooldown_secs", "30")?
+            .set_default("game_staleness_threshold_secs", "60")?
+            .set_default("db_pool_max_connections", "100")?
+            .set_default("db_pool_min_connections", "5")?
+            .set_default("db_pool_connect_timeout_secs", "8")?
+            .set_default("db_pool_acquire_timeout_secs", "8")?
+            .set_default("db_pool_idle_timeout_secs", "300")?
+            .set_default("db_pool_max_lifetime_secs", "1800")?
+            .set_default("db_pool_metrics_interval_secs", "30")?
             .set_default("benchmark_mode", "false")?
             .set_default("benchmark_bot_delay_ms", "100")?
             .set_default("benchmark_skip_credit_check", "true")?

@@ -12,9 +12,20 @@ use crate::database::repositories::{
     UserRepository,
 };
 use crate::game::constants::KORA_CREDIT_MULTIPLIER;
+use crate::i18n::Lang;
 use crate::mailer::Mailer;
 use crate::messaging::events::RoomEvent;
 use crate::messaging::RedisClient;
+
+const EMAIL_CHANNEL_CAPACITY: usize = 256;
+
+struct EmailTask {
+    email: String,
+    pseudo: String,
+    room_name: String,
+    code: String,
+    lang: Lang,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RoomServiceError {
@@ -108,6 +119,8 @@ pub struct RoomService {
     config: Config,
     redis_client: Option<RedisClient>,
     start_game_locks: tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
+    email_tx: tokio::sync::mpsc::Sender<EmailTask>,
+    email_rx: tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<EmailTask>>>,
 }
 
 impl RoomService {
@@ -117,6 +130,7 @@ impl RoomService {
         config: Config,
         redis_client: Option<RedisClient>,
     ) -> Self {
+        let (email_tx, email_rx) = tokio::sync::mpsc::channel(EMAIL_CHANNEL_CAPACITY);
         Self {
             db: db.clone(),
             room_repo: RoomRepository::new(db.clone()),
@@ -132,7 +146,34 @@ impl RoomService {
             config,
             redis_client,
             start_game_locks: tokio::sync::Mutex::new(HashMap::new()),
+            email_tx,
+            email_rx: tokio::sync::Mutex::new(Some(email_rx)),
         }
+    }
+
+    pub async fn start_email_consumer(self: &Arc<Self>) {
+        let Some(mut rx) = self.email_rx.lock().await.take() else {
+            tracing::warn!("Email consumer already started");
+            return;
+        };
+        let mailer = self.mailer.clone();
+        tokio::spawn(async move {
+            while let Some(task) = rx.recv().await {
+                if let Err(e) = mailer
+                    .send_room_invitation(
+                        &task.email,
+                        &task.pseudo,
+                        &task.room_name,
+                        &task.code,
+                        task.lang,
+                    )
+                    .await
+                {
+                    tracing::error!("Failed to send room invitation to {}: {}", task.email, e);
+                }
+            }
+            tracing::info!("Email consumer shutting down");
+        });
     }
 
     fn generate_invitation_code() -> String {
@@ -431,12 +472,31 @@ impl RoomService {
 
         let lang = crate::i18n::Lang::parse(&user.language).unwrap_or_default();
 
-        if let Err(e) = self
-            .mailer
-            .send_room_invitation(email, &user.pseudo, &room.name, &room.invitation_code, lang)
+        let task = EmailTask {
+            email: email.to_string(),
+            pseudo: user.pseudo.clone(),
+            room_name: room.name.clone(),
+            code: room.invitation_code.clone(),
+            lang,
+        };
+
+        match tokio::time::timeout(std::time::Duration::from_secs(5), self.email_tx.send(task))
             .await
         {
-            tracing::error!("Failed to send room invitation to {}: {}", email, e);
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::error!(
+                    "Email consumer channel closed, cannot send invitation to {}: {}",
+                    email,
+                    e
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "Email channel full (timed out after 5s), dropping invitation for {}",
+                    email
+                );
+            }
         }
 
         Ok(())

@@ -11,6 +11,7 @@ COPY migration ./migration
 RUN cargo build --profile fast-release \
     --bin jambo-backend \
     --bin ai-worker \
+    --bin scheduler-worker \
     --bin load-test \
     --bin http-load-test \
     --bin ws-load-test
@@ -22,6 +23,7 @@ WORKDIR /app
 # Copy binaries
 COPY --from=builder /usr/src/app/target/fast-release/jambo-backend /usr/local/bin/jambo-backend
 COPY --from=builder /usr/src/app/target/fast-release/ai-worker /usr/local/bin/ai-worker
+COPY --from=builder /usr/src/app/target/fast-release/scheduler-worker /usr/local/bin/scheduler-worker
 COPY --from=builder /usr/src/app/target/fast-release/load-test /usr/local/bin/load-test
 COPY --from=builder /usr/src/app/target/fast-release/http-load-test /usr/local/bin/http-load-test
 COPY --from=builder /usr/src/app/target/fast-release/ws-load-test /usr/local/bin/ws-load-test
