@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { extractApiError } from '../utils/errors'
 import { useTranslation } from 'react-i18next'
 
 interface Props {
@@ -29,7 +30,7 @@ const JoinRoomForm: React.FC<Props> = ({ isOpen, onClose, onJoined }) => {
       setCode('')
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('rooms.failedJoin')
+      const msg = extractApiError(err).message || t('rooms.failedJoin')
       setError(msg)
     } finally {
       setJoining(false)

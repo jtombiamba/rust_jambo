@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
 
+use crate::api::dto::responses::ApiErrorResponse;
 use crate::config::Config;
 use crate::database::models::{game, player, GameMode, GameStatus};
 use crate::database::repositories::{
@@ -48,7 +49,7 @@ pub enum RoomServiceError {
     #[error("User not found")]
     UserNotFound,
     #[error("Database error: {0}")]
-    Database(Box<dyn std::error::Error + Send>),
+    Database(#[from] sea_orm::DbErr),
     #[error("Internal error: {0}")]
     Internal(String),
     #[error("Account frozen")]
@@ -69,18 +70,58 @@ pub enum RoomServiceError {
     LeaveBlockedByRun,
     #[error("Name is required")]
     NameRequired,
+    #[error("Player profile not found")]
+    ProfileNotFound,
+    #[error("Cannot leave run while a game is in progress")]
+    GameInProgress,
+    #[error("Game is already being started in this run")]
+    StartAlreadyInProgress,
+}
+
+impl RoomServiceError {
+    pub fn source(&self) -> &'static str {
+        match self {
+            RoomServiceError::RoomNotFound => "room:room_not_found",
+            RoomServiceError::NotMember => "room:not_member",
+            RoomServiceError::AlreadyMember => "room:already_member",
+            RoomServiceError::InvalidCode => "room:invalid_code",
+            RoomServiceError::RunAlreadyActive => "room:run_already_active",
+            RoomServiceError::RunNotFound => "room:run_not_found",
+            RoomServiceError::NotRunPlayer => "room:not_run_player",
+            RoomServiceError::InsufficientCredits { .. } => "room:insufficient_credits",
+            RoomServiceError::UserNotFound => "room:user_not_found",
+            RoomServiceError::Database(_) => "room:database",
+            RoomServiceError::Internal(_) => "room:internal",
+            RoomServiceError::AccountFrozen => "room:account_frozen",
+            RoomServiceError::GameNotFound => "room:game_not_found",
+            RoomServiceError::NotEnoughPlayers => "room:not_enough_players",
+            RoomServiceError::RunCompleted => "room:run_completed",
+            RoomServiceError::RunNotActive { .. } => "room:run_not_active",
+            RoomServiceError::RoomFull { .. } => "room:room_full",
+            RoomServiceError::TooManyPlayers { .. } => "room:too_many_players",
+            RoomServiceError::LeaveBlockedByRun => "room:leave_blocked_by_run",
+            RoomServiceError::NameRequired => "room:name_required",
+            RoomServiceError::ProfileNotFound => "room:profile_not_found",
+            RoomServiceError::GameInProgress => "room:game_in_progress",
+            RoomServiceError::StartAlreadyInProgress => "room:start_already_in_progress",
+        }
+    }
 }
 
 impl actix_web::ResponseError for RoomServiceError {
     fn status_code(&self) -> actix_web::http::StatusCode {
         use actix_web::http::StatusCode;
         match self {
-            RoomServiceError::RoomNotFound | RoomServiceError::RunNotFound => StatusCode::NOT_FOUND,
+            RoomServiceError::RoomNotFound
+            | RoomServiceError::RunNotFound
+            | RoomServiceError::ProfileNotFound => StatusCode::NOT_FOUND,
             RoomServiceError::NotMember | RoomServiceError::NotRunPlayer => StatusCode::FORBIDDEN,
             RoomServiceError::AlreadyMember
             | RoomServiceError::RunAlreadyActive
             | RoomServiceError::LeaveBlockedByRun
-            | RoomServiceError::RoomFull { .. } => StatusCode::CONFLICT,
+            | RoomServiceError::RoomFull { .. }
+            | RoomServiceError::GameInProgress
+            | RoomServiceError::StartAlreadyInProgress => StatusCode::CONFLICT,
             RoomServiceError::InsufficientCredits { .. } => StatusCode::PAYMENT_REQUIRED,
             RoomServiceError::InvalidCode
             | RoomServiceError::NameRequired
@@ -95,11 +136,26 @@ impl actix_web::ResponseError for RoomServiceError {
     }
 
     fn error_response(&self) -> actix_web::HttpResponse {
-        let msg = self.to_string();
-        actix_web::HttpResponse::build(self.status_code()).json(serde_json::json!({
-            "success": false,
-            "error": msg,
-        }))
+        let status = self.status_code();
+        let is_server_error = status.is_server_error();
+        let msg = if is_server_error {
+            "Internal server error".to_string()
+        } else {
+            self.to_string()
+        };
+        let request_id = crate::observability::CORRELATION_ID
+            .try_with(|id| id.to_string())
+            .ok();
+        if is_server_error {
+            tracing::error!(error = ?self, request_id = ?request_id, "Room service error occurred");
+        }
+        actix_web::HttpResponse::build(status).json(ApiErrorResponse {
+            success: false,
+            error: msg,
+            field: None,
+            source: self.source().to_string(),
+            request_id,
+        })
     }
 }
 
@@ -202,9 +258,7 @@ impl RoomService {
                 .await
                 .map_err(|e| RoomServiceError::Internal(format!("Redis lock error: {}", e)))?;
             if !acquired {
-                return Err(RoomServiceError::Internal(
-                    "Game is already being started in this run".to_string(),
-                ));
+                return Err(RoomServiceError::StartAlreadyInProgress);
             }
             return Ok(());
         }
@@ -228,20 +282,9 @@ impl RoomService {
         }
 
         let code = Self::generate_invitation_code();
-        let room = self
-            .room_repo
-            .create(user_id, name.trim(), &code)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let room = self.room_repo.create(user_id, name.trim(), &code).await?;
 
-        self.member_repo
-            .create(room.id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        self.member_repo.create(room.id, user_id).await?;
 
         Ok(room)
     }
@@ -250,22 +293,14 @@ impl RoomService {
         &self,
         user_id: Uuid,
     ) -> Result<Vec<serde_json::Value>, RoomServiceError> {
-        let rooms = self.room_repo.list_by_user(user_id).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let rooms = self.room_repo.list_by_user(user_id).await?;
 
         if rooms.is_empty() {
             return Ok(vec![]);
         }
 
         let room_ids: Vec<Uuid> = rooms.iter().map(|r| r.id).collect();
-        let counts = self
-            .member_repo
-            .count_by_rooms(&room_ids)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let counts = self.member_repo.count_by_rooms(&room_ids).await?;
 
         let result = rooms
             .iter()
@@ -293,26 +328,15 @@ impl RoomService {
         let room = self
             .room_repo
             .find_by_id(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RoomNotFound)?;
 
-        let member = self
-            .member_repo
-            .find_membership(room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let member = self.member_repo.find_membership(room_id, user_id).await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
         }
 
-        let members = self.member_repo.list_by_room(room_id).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let members = self.member_repo.list_by_room(room_id).await?;
 
         let member_user_ids: Vec<Uuid> = members.iter().map(|m| m.user_id).collect();
         let users = if member_user_ids.is_empty() {
@@ -334,22 +358,13 @@ impl RoomService {
             }));
         }
 
-        let active_run = self
-            .run_repo
-            .find_active_by_room(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let active_run = self.run_repo.find_active_by_room(room_id).await?;
 
         let current_game_info = if let Some(ref run) = active_run {
             if run.current_game_index > 0 {
                 self.run_game_repo
                     .find_by_run_and_index(run.id, run.current_game_index - 1)
-                    .await
-                    .map_err(|e| {
-                        RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?
+                    .await?
                     .map(|rg| {
                         serde_json::json!({
                             "game_id": rg.game_id,
@@ -392,38 +407,22 @@ impl RoomService {
         let room = self
             .room_repo
             .find_by_invitation_code(invitation_code)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::InvalidCode)?;
 
-        let existing = self
-            .member_repo
-            .find_membership(room.id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let existing = self.member_repo.find_membership(room.id, user_id).await?;
         if existing.is_some() {
             return Err(RoomServiceError::AlreadyMember);
         }
 
-        let member_count = self.member_repo.count_by_room(room.id).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let member_count = self.member_repo.count_by_room(room.id).await?;
         if member_count >= self.config.room_max_players as usize {
             return Err(RoomServiceError::RoomFull {
                 max: self.config.room_max_players,
             });
         }
 
-        self.member_repo
-            .create(room.id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        self.member_repo.create(room.id, user_id).await?;
 
         if let Ok(Some(u)) = self.user_repo.find_by_id(user_id).await {
             self.publish_event(&RoomEvent::MemberJoined {
@@ -446,19 +445,10 @@ impl RoomService {
         let room = self
             .room_repo
             .find_by_id(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RoomNotFound)?;
 
-        let member = self
-            .member_repo
-            .find_membership(room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let member = self.member_repo.find_membership(room_id, user_id).await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
         }
@@ -506,67 +496,37 @@ impl RoomService {
         let room = self
             .room_repo
             .find_by_id(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RoomNotFound)?;
 
-        let member = self
-            .member_repo
-            .find_membership(room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let member = self.member_repo.find_membership(room_id, user_id).await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
         }
 
-        let active_run = self
-            .run_repo
-            .find_active_by_room(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let active_run = self.run_repo.find_active_by_room(room_id).await?;
         if let Some(ref run) = active_run {
             let run_player = self
                 .run_player_repo
                 .find_by_run_and_user(run.id, user_id)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
             if run_player.is_some() {
                 return Err(RoomServiceError::LeaveBlockedByRun);
             }
         }
 
-        self.member_repo
-            .remove(room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        self.member_repo.remove(room_id, user_id).await?;
 
-        let remaining = self.member_repo.list_by_room(room_id).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let remaining = self.member_repo.list_by_room(room_id).await?;
 
         if remaining.is_empty() {
-            self.room_repo.delete(room_id).await.map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            self.room_repo.delete(room_id).await?;
         } else if user_id == room.creator_id {
             let oldest = remaining.iter().min_by_key(|m| m.joined_at);
             if let Some(new_creator) = oldest {
                 self.room_repo
                     .update_creator(room_id, new_creator.user_id)
-                    .await
-                    .map_err(|e| {
-                        RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    .await?;
             }
         }
 

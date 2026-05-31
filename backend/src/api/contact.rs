@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse};
 use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::api::dto::responses::ApiErrorResponse;
 use crate::i18n::I18n;
 use crate::mailer::Mailer;
 
@@ -25,9 +26,15 @@ pub async fn send_contact(
         || body.subject.trim().is_empty()
         || body.message.trim().is_empty()
     {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": i18n.t("contact.all_fields_required")
-        }));
+        return HttpResponse::BadRequest().json(ApiErrorResponse {
+            success: false,
+            error: i18n.t("contact.all_fields_required"),
+            field: None,
+            source: "contact:validation".to_string(),
+            request_id: crate::observability::CORRELATION_ID
+                .try_with(|id| id.to_string())
+                .ok(),
+        });
     }
 
     match mailer
@@ -45,9 +52,16 @@ pub async fn send_contact(
         })),
         Err(e) => {
             tracing::error!("Failed to send contact form: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": i18n.t("contact.send_failed")
-            }))
+            let request_id = crate::observability::CORRELATION_ID
+                .try_with(|id| id.to_string())
+                .ok();
+            HttpResponse::InternalServerError().json(ApiErrorResponse {
+                success: false,
+                error: i18n.t("contact.send_failed"),
+                field: None,
+                source: "contact:email".to_string(),
+                request_id,
+            })
         }
     }
 }

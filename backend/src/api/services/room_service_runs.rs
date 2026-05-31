@@ -10,32 +10,15 @@ impl RoomService {
         let _room = self
             .room_repo
             .find_by_id(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RoomNotFound)?;
 
-        let member = self
-            .member_repo
-            .find_membership(room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let member = self.member_repo.find_membership(room_id, user_id).await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
         }
 
-        if self
-            .run_repo
-            .find_active_by_room(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
-            .is_some()
-        {
+        if self.run_repo.find_active_by_room(room_id).await?.is_some() {
             return Err(RoomServiceError::RunAlreadyActive);
         }
 
@@ -69,9 +52,7 @@ impl RoomService {
                 .collect()
         };
 
-        let room_members = self.member_repo.list_by_room(room_id).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let room_members = self.member_repo.list_by_room(room_id).await?;
         let member_ids: std::collections::HashSet<Uuid> =
             room_members.iter().map(|m| m.user_id).collect();
         for p_id in &player_ids {
@@ -83,13 +64,7 @@ impl RoomService {
         let total_cost = num_games * bet;
         let required_credit = total_cost * KORA_CREDIT_MULTIPLIER;
 
-        let profiles = self
-            .profile_repo
-            .find_by_user_ids(&player_ids)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let profiles = self.profile_repo.find_by_user_ids(&player_ids).await?;
 
         let profile_map: HashMap<Uuid, crate::database::models::PlayerProfile> =
             profiles.into_iter().map(|p| (p.user_id, p)).collect();
@@ -97,7 +72,7 @@ impl RoomService {
         for &p_id in &player_ids {
             let profile = profile_map
                 .get(&p_id)
-                .ok_or_else(|| RoomServiceError::Internal("Profile not found".to_string()))?;
+                .ok_or_else(|| RoomServiceError::ProfileNotFound)?;
 
             if let Some(frozen_until) = profile.frozen_until {
                 if frozen_until > chrono::Utc::now() {
@@ -113,9 +88,7 @@ impl RoomService {
             }
         }
 
-        let txn = self.db.begin().await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let run_id = Uuid::new_v4();
         let now = chrono::Utc::now();
@@ -135,12 +108,7 @@ impl RoomService {
             created_at: Set(now),
             updated_at: Set(now),
         };
-        game_run::Entity::insert(run_active)
-            .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        game_run::Entity::insert(run_active).exec(&txn).await?;
 
         for (i, &p_id) in player_ids.iter().enumerate() {
             let current_credit = profile_map.get(&p_id).unwrap().credit;
@@ -158,10 +126,7 @@ impl RoomService {
                 )
                 .filter(player_profile::Column::UserId.eq(p_id))
                 .exec(&txn)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
 
             use crate::database::models::game_run_player;
             let rp_id = Uuid::new_v4();
@@ -175,10 +140,7 @@ impl RoomService {
                 joined_at: Set(now),
             })
             .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         }
 
         let num_players = player_ids.len() as i32;
@@ -193,21 +155,13 @@ impl RoomService {
             )
             .filter(game_run::Column::Id.eq(run_id))
             .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
-        txn.commit().await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         self.run_event_repo
             .log(run_id, Some(user_id), "run_created", None)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         self.publish_event(&RoomEvent::RunCreated {
             room_id,
@@ -235,10 +189,7 @@ impl RoomService {
         let run = self
             .run_repo
             .find_by_id(run_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RunNotFound)?;
 
         if run.status != "active" {
@@ -248,10 +199,7 @@ impl RoomService {
         let member = self
             .member_repo
             .find_membership(run.room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
         }
@@ -259,21 +207,12 @@ impl RoomService {
         let existing = self
             .run_player_repo
             .find_by_run_and_user(run_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         if existing.is_some() {
             return Err(RoomServiceError::AlreadyMember);
         }
 
-        let existing_players = self
-            .run_player_repo
-            .list_all_by_run(run_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let existing_players = self.run_player_repo.list_all_by_run(run_id).await?;
         if existing_players.len() as i32 >= self.config.room_max_players {
             return Err(RoomServiceError::TooManyPlayers {
                 max: self.config.room_max_players,
@@ -286,11 +225,8 @@ impl RoomService {
         let profile = self
             .profile_repo
             .find_by_user_id(user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
-            .ok_or_else(|| RoomServiceError::Internal("Profile not found".to_string()))?;
+            .await?
+            .ok_or(RoomServiceError::ProfileNotFound)?;
 
         if let Some(frozen_until) = profile.frozen_until {
             if frozen_until > chrono::Utc::now() {
@@ -305,9 +241,7 @@ impl RoomService {
             });
         }
 
-        let txn = self.db.begin().await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let current_credit = profile.credit;
         let new_credit = current_credit - total_cost;
@@ -325,10 +259,7 @@ impl RoomService {
             )
             .filter(player_profile::Column::UserId.eq(user_id))
             .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         let position = existing_players.len() as i32 + 1;
 
@@ -343,21 +274,13 @@ impl RoomService {
             joined_at: Set(now),
         })
         .exec(&txn)
-        .await
-        .map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        .await?;
 
-        txn.commit().await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         self.run_event_repo
             .log(run_id, Some(user_id), "player_joined_run", None)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         Ok(serde_json::json!({
             "run_id": run_id,
@@ -370,19 +293,13 @@ impl RoomService {
         let run = self
             .run_repo
             .find_by_id(run_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RunNotFound)?;
 
         let run_player = self
             .run_player_repo
             .find_by_run_and_user(run_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::NotRunPlayer)?;
 
         // Check if player is in an active game within this run
@@ -390,63 +307,42 @@ impl RoomService {
             if let Some(run_game) = self
                 .run_game_repo
                 .find_by_run_and_index(run_id, run.current_game_index - 1)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
+                .await?
             {
                 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
                 let active_game = game::Entity::find_by_id(run_game.game_id)
                     .filter(game::Column::Status.eq(GameStatus::Active))
                     .one(&self.db)
-                    .await
-                    .map_err(|e| {
-                        RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    .await?;
                 if active_game.is_some() {
                     let has_player = player::Entity::find()
                         .filter(player::Column::GameId.eq(run_game.game_id))
                         .filter(player::Column::UserId.eq(user_id))
                         .filter(player::Column::Kicked.eq(false))
                         .one(&self.db)
-                        .await
-                        .map_err(|e| {
-                            RoomServiceError::Database(
-                                Box::new(e) as Box<dyn std::error::Error + Send>
-                            )
-                        })?;
+                        .await?;
                     if has_player.is_some() {
-                        return Err(RoomServiceError::Internal(
-                            "Cannot leave run while a game is in progress".to_string(),
-                        ));
+                        return Err(RoomServiceError::GameInProgress);
                     }
                 }
             }
         }
 
         if run_player.provisioned_credits > 0 {
-            let txn = self.db.begin().await.map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            let txn = self.db.begin().await?;
 
             use crate::database::models::{game_run_player, player_profile};
             game_run_player::Entity::delete_many()
                 .filter(game_run_player::Column::GameRunId.eq(run_id))
                 .filter(game_run_player::Column::UserId.eq(user_id))
                 .exec(&txn)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
 
             let profile = self
                 .profile_repo
                 .find_by_user_id(user_id)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
-                .ok_or_else(|| RoomServiceError::Internal("Profile not found".to_string()))?;
+                .await?
+                .ok_or_else(|| RoomServiceError::ProfileNotFound)?;
 
             let current_credit = profile.credit;
             let now = chrono::Utc::now();
@@ -463,44 +359,20 @@ impl RoomService {
                 )
                 .filter(player_profile::Column::UserId.eq(user_id))
                 .exec(&txn)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
 
-            txn.commit().await.map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            txn.commit().await?;
         } else {
-            self.run_player_repo
-                .remove(run_id, user_id)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+            self.run_player_repo.remove(run_id, user_id).await?;
         }
 
         self.run_event_repo
             .log(run_id, Some(user_id), "player_left_run", None)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
-        let remaining = self
-            .run_player_repo
-            .list_all_by_run(run_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let remaining = self.run_player_repo.list_all_by_run(run_id).await?;
         if remaining.len() < 2 {
-            self.run_repo
-                .update_status(run_id, "cancelled")
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+            self.run_repo.update_status(run_id, "cancelled").await?;
         }
 
         Ok(())
@@ -511,13 +383,7 @@ impl RoomService {
         room_id: Uuid,
         user_id: Uuid,
     ) -> Result<serde_json::Value, RoomServiceError> {
-        let member = self
-            .member_repo
-            .find_membership(room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let member = self.member_repo.find_membership(room_id, user_id).await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
         }
@@ -525,19 +391,10 @@ impl RoomService {
         let run = self
             .run_repo
             .find_active_by_room(room_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RunNotFound)?;
 
-        let players = self
-            .run_player_repo
-            .list_by_run(run.id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let players = self.run_player_repo.list_by_run(run.id).await?;
 
         let player_user_ids: Vec<Uuid> = players.iter().map(|p| p.user_id).collect();
         let users = if player_user_ids.is_empty() {
@@ -551,9 +408,7 @@ impl RoomService {
         };
         let user_map: HashMap<Uuid, String> = users.into_iter().map(|u| (u.id, u.pseudo)).collect();
 
-        let games = self.run_game_repo.list_by_run(run.id).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let games = self.run_game_repo.list_by_run(run.id).await?;
 
         let mut player_infos = Vec::new();
         for rp in &players {

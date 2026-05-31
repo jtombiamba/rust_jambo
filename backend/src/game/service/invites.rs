@@ -164,7 +164,7 @@ impl GameService {
             .map_err(|e| {
                 GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
             })?
-            .ok_or_else(|| GameServiceError::Internal("Player profile not found".to_string()))?;
+            .ok_or_else(|| GameServiceError::ProfileNotFound)?;
 
         if let Some(frozen_until) = profile.frozen_until {
             if frozen_until > chrono::Utc::now() {

@@ -5,9 +5,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const nextId = useRef(0)
 
-  const showToast = useCallback((message: string, type: Toast['type'] = 'info') => {
+  const showToast = useCallback((message: string, type: Toast['type'] = 'info', requestId?: string) => {
     const id = nextId.current++
-    setToasts(prev => [...prev.slice(-4), { id, message, type }])
+    setToasts(prev => [...prev.slice(-4), { id, message, type, requestId }])
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id))
     }, 4000)
@@ -33,7 +33,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={toast.id}
             className={`${bgColor[toast.type]} text-white px-4 py-3 rounded-lg shadow-lg text-sm flex items-center justify-between gap-2 animate-fade-in-out`}
           >
-            <span>{toast.message}</span>
+            <span>
+              {toast.message}
+              {toast.requestId && (
+                <span
+                  className="block text-xs opacity-60 mt-1 font-mono cursor-pointer"
+                  title="Click to copy request ID"
+                  onClick={() => navigator.clipboard.writeText(toast.requestId!)}
+                >
+                  ID: {toast.requestId.slice(0, 8)}...
+                </span>
+              )}
+            </span>
             <button
               onClick={() => removeToast(toast.id)}
               className="text-white/80 hover:text-white ml-2 text-lg leading-none"

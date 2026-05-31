@@ -74,63 +74,73 @@ where
         let fut = self.service.call(req);
 
         Box::pin(async move {
-            // Enter the span manually so that record() calls happen while the span is active.
-            // Using .instrument() on the future would exit the span before we can record fields.
-            let _guard = span.enter();
-            let result = fut.await;
-            let duration = start.elapsed();
+            let correlation_id_uuid = correlation_id.0;
 
-            let status_code = match &result {
-                Ok(resp) => resp.status().as_u16(),
-                Err(_) => 500u16,
-            };
+            super::CORRELATION_ID
+                .scope(correlation_id_uuid, async move {
+                    // Enter the span manually so that record() calls happen while the span is active.
+                    // Using .instrument() on the future would exit the span before we can record fields.
+                    let _guard = span.enter();
+                    let result = fut.await;
+                    let duration = start.elapsed();
 
-            span.record("http.duration_ms", duration.as_millis() as u64);
-            span.record("http.status_code", status_code);
+                    let status_code = match &result {
+                        Ok(resp) => resp.status().as_u16(),
+                        Err(_) => 500u16,
+                    };
 
-            tracing::info!("request completed");
+                    span.record("http.duration_ms", duration.as_millis() as u64);
+                    span.record("http.status_code", status_code);
 
-            let method_str = method.as_str();
-            let path_segments: Vec<&str> = path.split('/').collect();
-            let normalized_path = if path_segments.len() >= 4 && path_segments[1] == "api" {
-                let parts: Vec<&str> = path_segments
-                    .iter()
-                    .map(|seg| {
-                        if Uuid::parse_str(seg).is_ok() {
-                            "{id}"
-                        } else {
-                            seg
+                    tracing::info!("request completed");
+
+                    let method_str = method.as_str();
+                    let path_segments: Vec<&str> = path.split('/').collect();
+                    let normalized_path = if path_segments.len() >= 4 && path_segments[1] == "api" {
+                        let parts: Vec<&str> = path_segments
+                            .iter()
+                            .map(|seg| {
+                                if Uuid::parse_str(seg).is_ok() {
+                                    "{id}"
+                                } else {
+                                    seg
+                                }
+                            })
+                            .collect();
+                        parts.join("/").to_string()
+                    } else {
+                        path.clone()
+                    };
+
+                    metrics::HTTP_REQUESTS_TOTAL
+                        .with_label_values(&[
+                            method_str,
+                            &normalized_path,
+                            &status_code.to_string(),
+                        ])
+                        .inc();
+                    metrics::HTTP_REQUEST_DURATION_SECONDS
+                        .with_label_values(&[method_str, &normalized_path])
+                        .observe(duration.as_secs_f64());
+
+                    match result {
+                        Ok(response) => {
+                            let correlation_id_str = correlation_id_uuid.to_string();
+                            let mut response = response;
+                            let headers = response.headers_mut();
+                            headers.insert(
+                                actix_web::http::header::HeaderName::from_static("x-request-id"),
+                                actix_web::http::header::HeaderValue::from_str(&correlation_id_str)
+                                    .unwrap_or(actix_web::http::header::HeaderValue::from_static(
+                                        "invalid",
+                                    )),
+                            );
+                            Ok(response)
                         }
-                    })
-                    .collect();
-                parts.join("/").to_string()
-            } else {
-                path.clone()
-            };
-
-            metrics::HTTP_REQUESTS_TOTAL
-                .with_label_values(&[method_str, &normalized_path, &status_code.to_string()])
-                .inc();
-            metrics::HTTP_REQUEST_DURATION_SECONDS
-                .with_label_values(&[method_str, &normalized_path])
-                .observe(duration.as_secs_f64());
-
-            match result {
-                Ok(response) => {
-                    let correlation_id_str = correlation_id.to_string();
-                    let mut response = response;
-                    let headers = response.headers_mut();
-                    headers.insert(
-                        actix_web::http::header::HeaderName::from_static("x-request-id"),
-                        actix_web::http::header::HeaderValue::from_str(&correlation_id_str)
-                            .unwrap_or(actix_web::http::header::HeaderValue::from_static(
-                                "invalid",
-                            )),
-                    );
-                    Ok(response)
-                }
-                Err(e) => Err(e),
-            }
+                        Err(e) => Err(e),
+                    }
+                })
+                .await
         })
     }
 }

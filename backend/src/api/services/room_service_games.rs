@@ -7,28 +7,19 @@ impl RoomService {
         let run = self
             .run_repo
             .find_by_id(run_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RunNotFound)?;
 
         let _run_player = self
             .run_player_repo
             .find_by_run_and_user(run_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::NotRunPlayer)?;
 
         let current = self
             .run_game_repo
             .find_by_run_and_index(run_id, run.current_game_index)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         match current {
             Some(rg) => Ok(serde_json::json!({
@@ -60,10 +51,7 @@ impl RoomService {
         let run = self
             .run_repo
             .find_by_id(run_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::RunNotFound)?;
 
         if run.status != "active" {
@@ -75,10 +63,7 @@ impl RoomService {
         let _run_player = self
             .run_player_repo
             .find_by_run_and_user(run_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(RoomServiceError::NotRunPlayer)?;
 
         let game_index = run.current_game_index;
@@ -89,10 +74,7 @@ impl RoomService {
         let existing = self
             .run_game_repo
             .find_by_run_and_index(run_id, game_index)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         if let Some(rg) = existing {
             return Ok(serde_json::json!({
                 "game_id": rg.game_id,
@@ -107,20 +89,12 @@ impl RoomService {
             if let Some(prev_run_game) = self
                 .run_game_repo
                 .find_by_run_and_index(run_id, game_index - 1)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
+                .await?
             {
                 let prev_game =
                     crate::database::models::game::Entity::find_by_id(prev_run_game.game_id)
                         .one(&self.db)
-                        .await
-                        .map_err(|e| {
-                            RoomServiceError::Database(
-                                Box::new(e) as Box<dyn std::error::Error + Send>
-                            )
-                        })?;
+                        .await?;
                 if let Some(pg) = prev_game {
                     let is_finished = matches!(
                         pg.status,
@@ -138,13 +112,7 @@ impl RoomService {
             }
         }
 
-        let run_players = self
-            .run_player_repo
-            .list_by_run(run_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let run_players = self.run_player_repo.list_by_run(run_id).await?;
 
         if run_players.len() < 2 {
             return Err(RoomServiceError::NotEnoughPlayers);
@@ -152,9 +120,7 @@ impl RoomService {
 
         let player_ids: Vec<Uuid> = run_players.iter().map(|p| p.user_id).collect();
 
-        let users = self.user_repo.find_by_ids(&player_ids).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let users = self.user_repo.find_by_ids(&player_ids).await?;
         let user_map: HashMap<Uuid, String> = users.into_iter().map(|u| (u.id, u.pseudo)).collect();
 
         let bet = run.bet_per_game;
@@ -175,9 +141,7 @@ impl RoomService {
             .map(|(new_pos, &orig_idx)| (new_pos as i32, player_ids[orig_idx]))
             .collect();
 
-        let txn = self.db.begin().await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let game_active = game::ActiveModel {
             id: Set(game_id),
@@ -202,20 +166,9 @@ impl RoomService {
             game_run_id: Set(Some(run_id)),
             kicked_players: Set(json!([])),
         };
-        game::Entity::insert(game_active)
-            .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        game::Entity::insert(game_active).exec(&txn).await?;
 
-        let profiles = self
-            .profile_repo
-            .find_by_user_ids(&player_ids)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let profiles = self.profile_repo.find_by_user_ids(&player_ids).await?;
         let profile_map: HashMap<Uuid, crate::database::models::PlayerProfile> =
             profiles.into_iter().map(|p| (p.user_id, p)).collect();
 
@@ -232,7 +185,7 @@ impl RoomService {
 
             let profile_credit = profile_map
                 .get(&loop_user_id)
-                .ok_or_else(|| RoomServiceError::Internal("Profile not found".to_string()))?
+                .ok_or_else(|| RoomServiceError::ProfileNotFound)?
                 .credit;
 
             player::Entity::insert(player::ActiveModel {
@@ -248,10 +201,7 @@ impl RoomService {
                 kicked_at: ActiveValue::NotSet,
             })
             .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
             if let Some(rp) = run_player_map.get(&loop_user_id) {
                 let new_provisioned = (rp.provisioned_credits - bet).max(0);
@@ -264,10 +214,7 @@ impl RoomService {
                     .filter(game_run_player::Column::Id.eq(rp.id))
                     .filter(game_run_player::Column::ProvisionedCredits.gte(bet))
                     .exec(&txn)
-                    .await
-                    .map_err(|e| {
-                        RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    .await?;
             }
         }
 
@@ -282,10 +229,7 @@ impl RoomService {
             player::Entity::find()
                 .filter(player::Column::GameId.eq(game_id))
                 .all(&txn)
-                .await
-                .map_err(|e| {
-                    RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
+                .await?
         };
 
         let card_models: Vec<crate::database::models::game_card::ActiveModel> = created_players
@@ -311,10 +255,7 @@ impl RoomService {
 
         crate::database::models::game_card::Entity::insert_many(card_models)
             .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         use crate::database::models::game_run_game;
         game_run_game::Entity::insert(game_run_game::ActiveModel {
@@ -326,10 +267,7 @@ impl RoomService {
             created_at: Set(now),
         })
         .exec(&txn)
-        .await
-        .map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        .await?;
 
         let new_index = game_index + 1;
         use crate::database::models::game_run;
@@ -344,14 +282,9 @@ impl RoomService {
             )
             .filter(game_run::Column::Id.eq(run_id))
             .exec(&txn)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
-        txn.commit().await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         let all_games_created = new_index >= run.num_games;
 
@@ -369,10 +302,7 @@ impl RoomService {
                 "game_started",
                 Some(&format!("game_index={}", game_index)),
             )
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         self.publish_event(&RoomEvent::GameStarted {
             room_id: run.room_id,
@@ -397,20 +327,12 @@ impl RoomService {
         room_id: Uuid,
         user_id: Uuid,
     ) -> Result<Vec<serde_json::Value>, RoomServiceError> {
-        let member = self
-            .member_repo
-            .find_membership(room_id, user_id)
-            .await
-            .map_err(|e| {
-                RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let member = self.member_repo.find_membership(room_id, user_id).await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
         }
 
-        let runs = self.run_repo.list_by_room(room_id).await.map_err(|e| {
-            RoomServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let runs = self.run_repo.list_by_room(room_id).await?;
 
         let result = runs
             .iter()

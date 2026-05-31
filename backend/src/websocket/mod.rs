@@ -284,6 +284,7 @@ async fn handle_message(
                     trace!("Fallback parsing: unknown command");
                     let response = OutgoingMessage::Error {
                         message: "unknown command".to_string(),
+                        source: "ws:unknown_command".to_string(),
                     };
                     session.text(serde_json::to_string(&response)?).await?;
                 }

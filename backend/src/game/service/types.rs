@@ -128,6 +128,38 @@ pub enum GameServiceError {
     VersionConflict,
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("Player profile not found")]
+    ProfileNotFound,
+}
+
+impl GameServiceError {
+    #[allow(dead_code)]
+    pub fn source(&self) -> &'static str {
+        match self {
+            GameServiceError::Database(_) => "game_service:database",
+            GameServiceError::GameNotFound => "game_service:game_not_found",
+            GameServiceError::PlayerNotFound => "game_service:player_not_found",
+            GameServiceError::CardNotFound => "game_service:card_not_found",
+            GameServiceError::NotYourTurn => "game_service:not_your_turn",
+            GameServiceError::InvalidCard => "game_service:invalid_card",
+            GameServiceError::RoundNotComplete => "game_service:round_not_complete",
+            GameServiceError::GameFinished => "game_service:game_finished",
+            GameServiceError::InsufficientCredits { .. } => "game_service:insufficient_credits",
+            GameServiceError::GameNotPending => "game_service:game_not_pending",
+            GameServiceError::NotCreator => "game_service:not_creator",
+            GameServiceError::NotInvited => "game_service:not_invited",
+            GameServiceError::AlreadyJoined => "game_service:already_joined",
+            GameServiceError::GameFull => "game_service:game_full",
+            GameServiceError::InviteExpired => "game_service:invite_expired",
+            GameServiceError::CreatorCannotJoin => "game_service:creator_cannot_join",
+            GameServiceError::GameNotReady => "game_service:game_not_ready",
+            GameServiceError::AccountFrozen { .. } => "game_service:account_frozen",
+            GameServiceError::DuplicatePlayer => "game_service:duplicate_player",
+            GameServiceError::VersionConflict => "game_service:version_conflict",
+            GameServiceError::Internal(_) => "game_service:internal",
+            GameServiceError::ProfileNotFound => "game_service:profile_not_found",
+        }
+    }
 }
 
 /// Rich result returned by `update_card_play` after a successful card play.

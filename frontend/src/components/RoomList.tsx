@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import axios from 'axios'
 import { useTranslation } from 'react-i18next'
 import { useRoomStore } from '../stores/useRoomStore'
+import { extractApiError } from '../utils/errors'
 
 interface Props {
   onSelectRoom: (roomId: string) => void
@@ -19,7 +20,7 @@ const RoomList: React.FC<Props> = ({ onSelectRoom, onCreateRoom, onJoinRoom }) =
     axios.get('/api/me/rooms')
       .then((res) => setRooms(res.data))
       .catch((err) => {
-        const msg = err.response?.data?.error || t('rooms.failedLoad')
+        const msg = extractApiError(err).message || t('rooms.failedLoad')
         setRoomError(msg)
       })
       .finally(() => setLoadingRooms(false))

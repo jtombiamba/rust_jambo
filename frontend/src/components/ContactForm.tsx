@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import axios from 'axios'
+import { extractApiError } from '../utils/errors'
 
 interface ContactFormProps {
   isOpen: boolean
@@ -28,11 +29,7 @@ export default function ContactForm({ isOpen, onClose }: ContactFormProps) {
       await axios.post('/api/contact', { name, email, subject, message })
       setSent(true)
     } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response?.data?.error) {
-        setError(err.response.data.error)
-      } else {
-        setError(t('contact.sendFailed'))
-      }
+      setError(extractApiError(err).message || t('contact.sendFailed'))
     } finally {
       setSending(false)
     }
