@@ -104,6 +104,7 @@ impl GameService {
                 .iter()
                 .find(|p| p.id == player_id)
                 .ok_or(GameServiceError::PlayerNotFound)?;
+            let active_player_count = players.iter().filter(|p| !p.kicked).count();
             let current_rank = game.rank.unwrap_or(0) as usize;
             if current_player.position as usize != current_rank {
                 txn.rollback().await.ok();
@@ -190,7 +191,7 @@ impl GameService {
                         game::Column::Rank,
                         sea_orm::sea_query::Expr::value(sea_orm::Value::Int(Some(next_player(
                             current_rank,
-                            players.len(),
+                            active_player_count,
                         )
                             as i32))),
                     )
@@ -254,7 +255,7 @@ impl GameService {
                         GameServiceError::Internal("Winner not in player list".to_string())
                     })?
             } else {
-                let rank_after = next_player(current_rank, players.len());
+                let rank_after = next_player(current_rank, active_player_count);
                 players.get(rank_after).map(|p| p.id).ok_or_else(|| {
                     GameServiceError::Internal("No player at computed rank".to_string())
                 })?
@@ -337,9 +338,10 @@ impl GameService {
         let players = player_repo.list_by_game(game_id).await.map_err(|e| {
             GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
         })?;
+        let active_players: Vec<_> = players.iter().filter(|p| !p.kicked).collect();
         let current_rank = game.rank.unwrap_or(0) as usize;
         let player_id =
-            players
+            active_players
                 .get(current_rank)
                 .map(|p| p.id)
                 .ok_or(GameServiceError::Internal(

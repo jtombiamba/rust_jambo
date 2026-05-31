@@ -7,13 +7,11 @@ use uuid::Uuid;
 use crate::database::models::{player_profile, PlayerProfile};
 use crate::database::traits::PlayerProfileRepoTrait;
 
-#[allow(dead_code)]
 pub struct PlayerProfileRepository {
     connection: DatabaseConnection,
 }
 
 impl PlayerProfileRepository {
-    #[allow(dead_code)]
     pub fn new(connection: DatabaseConnection) -> Self {
         Self { connection }
     }
@@ -26,6 +24,16 @@ impl PlayerProfileRepository {
         player_profile::Entity::find()
             .filter(player_profile::Column::UserId.eq(user_id))
             .one(&self.connection)
+            .await
+    }
+
+    pub async fn find_by_user_ids(&self, user_ids: &[Uuid]) -> Result<Vec<PlayerProfile>, DbErr> {
+        if user_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        player_profile::Entity::find()
+            .filter(player_profile::Column::UserId.is_in(user_ids.iter().copied()))
+            .all(&self.connection)
             .await
     }
 

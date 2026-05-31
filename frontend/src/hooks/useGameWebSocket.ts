@@ -129,6 +129,22 @@ export function useGameWebSocket(gameId: string | null) {
           }
           break;
         }
+        case 'staleness_warning': {
+          showToast(`${event.player_name} is inactive and will be kicked in ${Math.round(event.kicked_after_seconds / 60)} minutes`, 'warning');
+          break;
+        }
+        case 'player_kicked': {
+          showToast(`${event.player_name} was kicked from the game due to inactivity`, 'warning');
+          break;
+        }
+        case 'game_reshuffled': {
+          showToast(`Game restructured: ${event.remaining_players} players remaining`, 'info');
+          break;
+        }
+        case 'player_forfeit_win': {
+          showToast(`${event.winner_name} wins by forfeit!`, 'success');
+          break;
+        }
         default:
           console.warn('Unhandled game event type:', (event as { type: string }).type);
       }

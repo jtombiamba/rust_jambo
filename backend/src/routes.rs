@@ -6,6 +6,7 @@ use crate::api::fallback;
 use crate::api::game::play_card;
 use crate::api::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::api::quickie::create_quick_game;
+use crate::api::room;
 use crate::bootstrap::AppState;
 
 #[get("/health")]
@@ -46,8 +47,8 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         configs.reset_password.clone(),
         translator.clone(),
     );
-    let default_limiter =
-        RateLimiterMiddleware::new(redis.clone(), configs.default.clone(), translator.clone());
+    // let default_limiter =
+    //     RateLimiterMiddleware::new(redis.clone(), configs.default.clone(), translator.clone());
 
     cfg.app_data(state.db.clone())
         .app_data(state.redis.clone())
@@ -60,6 +61,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         .app_data(state.user_cache.clone())
         .app_data(state.mailer.clone())
         .app_data(state.payment_service.clone())
+        .app_data(state.room_service.clone())
         .app_data(state.config.clone())
         .app_data(state.translator.clone())
         .service(health_check)
@@ -156,6 +158,31 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         .route(
                             "/topup/capture",
                             web::post().to(crate::api::topup::capture_topup_order),
+                        )
+                        .route("/rooms", web::post().to(room::create_room))
+                        .route("/rooms", web::get().to(room::list_rooms))
+                        .route("/rooms/join", web::post().to(room::join_room))
+                        .route("/rooms/{room_id}", web::get().to(room::get_room))
+                        .route(
+                            "/rooms/{room_id}/invite",
+                            web::post().to(room::invite_to_room),
+                        )
+                        .route("/rooms/{room_id}/leave", web::post().to(room::leave_room))
+                        .route("/rooms/{room_id}/runs", web::post().to(room::create_run))
+                        .route("/rooms/{room_id}/runs", web::get().to(room::list_runs))
+                        .route(
+                            "/rooms/{room_id}/runs/active",
+                            web::get().to(room::get_active_run),
+                        )
+                        .route("/runs/{run_id}/join", web::post().to(room::join_run))
+                        .route("/runs/{run_id}/leave", web::post().to(room::leave_run))
+                        .route(
+                            "/runs/{run_id}/next-game",
+                            web::post().to(room::start_next_game),
+                        )
+                        .route(
+                            "/runs/{run_id}/current-game",
+                            web::get().to(room::get_current_game),
                         ),
                 )
                 .service(
@@ -229,8 +256,8 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         );
                     }
                 })
-                .default_service(web::route().to(fallback::not_found))
-                .wrap(default_limiter),
+                .default_service(web::route().to(fallback::not_found)),
+            // .wrap(default_limiter),
         );
 
     cfg.service(crate::websocket::scope());

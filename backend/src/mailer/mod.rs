@@ -110,6 +110,33 @@ pub struct ContactFormEmail {
     pub message: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StallWarningEmail {
+    pub game_id: String,
+    pub inactive_minutes: i64,
+    pub remaining_minutes: i64,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StallKickedEmail {
+    pub game_id: String,
+    pub bet: i32,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoomInvitationEmail {
+    pub inviter_name: String,
+    pub room_name: String,
+    pub invitation_code: String,
+    pub join_link: String,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
 #[async_trait]
 pub trait Mailer: Send + Sync {
     async fn send_password_reset(
@@ -140,6 +167,32 @@ pub trait Mailer: Send + Sync {
         email: &str,
         subject: &str,
         message: &str,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_stall_warning(
+        &self,
+        to_email: &str,
+        game_id: &str,
+        inactive_minutes: i64,
+        remaining_minutes: i64,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_stall_kicked(
+        &self,
+        to_email: &str,
+        game_id: &str,
+        bet: i32,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_room_invitation(
+        &self,
+        to_email: &str,
+        inviter_name: &str,
+        room_name: &str,
+        invitation_code: &str,
         lang: Lang,
     ) -> Result<(), String>;
 }

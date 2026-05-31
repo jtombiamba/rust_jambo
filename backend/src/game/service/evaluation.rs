@@ -34,7 +34,10 @@ impl GameService {
                 GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
             })?;
 
-        for player_model in players {
+        for player_model in &players {
+            if player_model.kicked {
+                continue;
+            }
             let cards = game_card::Entity::find()
                 .filter(game_card::Column::PlayerId.eq(player_model.id))
                 .all(txn)
@@ -96,7 +99,8 @@ impl GameService {
             .map_err(|e| {
                 GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
             })?;
-        let player_positions: Vec<Uuid> = players.iter().map(|p| p.id).collect();
+        let active_players: Vec<&player::Model> = players.iter().filter(|p| !p.kicked).collect();
+        let player_positions: Vec<Uuid> = active_players.iter().map(|p| p.id).collect();
 
         // Convert to PlayedCard structures
         let mut plays = Vec::new();
@@ -253,7 +257,7 @@ impl GameService {
             winner_position: winner_pos,
             game_ended: game_ends,
             final_status,
-            players,
+            players: active_players.into_iter().cloned().collect(),
         })
     }
 

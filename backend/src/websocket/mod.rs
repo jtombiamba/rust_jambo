@@ -8,6 +8,9 @@ use serde_json::Value;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
+use crate::auth::config::AuthConfig;
+use crate::auth::jwt;
+use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 use manager::WebSocketManager;
 use messages::{IncomingMessage, OutgoingMessage};
@@ -23,7 +26,23 @@ pub async fn ws_handler(
 ) -> Result<HttpResponse, actix_web::Error> {
     let game_id = game_id.into_inner();
 
-    // Extract correlation ID from the HTTP request (set by CorrelationIdMiddleware)
+    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let redis_client = req
+        .app_data::<web::Data<Option<RedisClient>>>()
+        .cloned()
+        .and_then(|r| r.get_ref().clone());
+    let user_id = validate_ws_token(token, auth_config, redis_client).await;
+    if user_id.is_none() {
+        tracing::warn!(
+            "Unauthenticated WebSocket connection attempt for game {}",
+            game_id
+        );
+        return Err(actix_web::error::ErrorUnauthorized(
+            "Authentication required",
+        ));
+    }
+
     let correlation_id = req
         .extensions()
         .get::<CorrelationId>()
@@ -34,6 +53,7 @@ pub async fn ws_handler(
         "ws_connection",
         correlation_id = %correlation_id,
         game_id = %game_id,
+        user_id = %user_id.unwrap_or_default(),
     );
     let _span_guard = ws_span.enter();
 
@@ -275,5 +295,115 @@ async fn handle_message(
 }
 
 pub fn scope() -> actix_web::Scope {
-    web::scope("/ws").service(web::resource("/{game_id}").route(web::get().to(ws_handler)))
+    web::scope("/ws")
+        .service(web::resource("/{game_id}").route(web::get().to(ws_handler)))
+        .service(web::resource("/room/{room_id}").route(web::get().to(ws_room_handler)))
+}
+
+pub async fn ws_room_handler(
+    req: HttpRequest,
+    stream: web::Payload,
+    room_id: web::Path<Uuid>,
+    manager: web::Data<WebSocketManager>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let room_id = room_id.into_inner();
+
+    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let redis_client = req
+        .app_data::<web::Data<Option<RedisClient>>>()
+        .cloned()
+        .and_then(|r| r.get_ref().clone());
+    let user_id = validate_ws_token(token, auth_config, redis_client).await;
+    if user_id.is_none() {
+        tracing::warn!(
+            "Unauthenticated WebSocket connection attempt for room {}",
+            room_id
+        );
+        return Err(actix_web::error::ErrorUnauthorized(
+            "Authentication required",
+        ));
+    }
+
+    let correlation_id = req
+        .extensions()
+        .get::<CorrelationId>()
+        .copied()
+        .unwrap_or_else(CorrelationId::new);
+
+    let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let connection_id = manager
+        .add_room_connection(room_id, tx, correlation_id)
+        .await;
+
+    if let Err(e) = session
+        .text(serde_json::json!({"type": "room_joined", "room_id": room_id}).to_string())
+        .await
+    {
+        tracing::error!("Failed to send room welcome: {}", e);
+    }
+
+    let mut session_clone = session.clone();
+    let manager_clone = manager.clone();
+    actix_rt::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if let Err(e) = session_clone.text(msg).await {
+                tracing::error!(
+                    "Failed to forward to room connection {}: {}",
+                    connection_id.uuid(),
+                    e
+                );
+                manager_clone
+                    .remove_room_connection(room_id, connection_id)
+                    .await;
+                break;
+            }
+        }
+    });
+
+    actix_rt::spawn(async move {
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(actix_ws::Message::Ping(bytes)) => {
+                    let _ = session.pong(&bytes).await;
+                }
+                Ok(actix_ws::Message::Close(reason)) => {
+                    tracing::info!("Room WS closed for room {}: {:?}", room_id, reason);
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("Room WS stream error: {}", e);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        manager.remove_room_connection(room_id, connection_id).await;
+    });
+
+    Ok(res)
+}
+
+async fn validate_ws_token(
+    token: Option<String>,
+    auth_config: Option<web::Data<AuthConfig>>,
+    mut redis_client: Option<RedisClient>,
+) -> Option<Uuid> {
+    let config = auth_config?;
+    let t = token?;
+    let claims = jwt::validate_token(&t, &config).ok()?;
+
+    if let Some(ref mut r) = redis_client {
+        if r.exists(&format!("token:blacklist:{}", claims.jti))
+            .await
+            .unwrap_or(false)
+        {
+            return None;
+        }
+    }
+
+    Some(claims.sub)
 }

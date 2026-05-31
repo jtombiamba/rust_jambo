@@ -1,4 +1,4 @@
-use crate::messaging::events::GameEvent;
+use crate::messaging::events::{GameEvent, RoomEvent};
 use crate::observability::metrics::REDIS_PUBLISH_DURATION_SECONDS;
 use redis::{aio::ConnectionManager, AsyncCommands, Client, RedisResult};
 use std::time::Instant;
@@ -104,6 +104,13 @@ impl RedisClient {
 
     /// Publish a game event to its appropriate Redis channel.
     pub async fn publish_game_event(&mut self, event: &GameEvent) -> RedisResult<()> {
+        let channel = event.channel();
+        let message = event.to_json();
+        self.publish(&channel, &message).await
+    }
+
+    /// Publish a room event to its appropriate Redis channel.
+    pub async fn publish_room_event(&mut self, event: &RoomEvent) -> RedisResult<()> {
         let channel = event.channel();
         let message = event.to_json();
         self.publish(&channel, &message).await

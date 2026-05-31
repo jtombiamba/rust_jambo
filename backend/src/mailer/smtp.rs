@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::{
     ContactFormEmail, FreezeExpiredEmail, InvitationEmail, MailerConfig, PasswordResetEmail,
+    StallKickedEmail, StallWarningEmail,
 };
 use crate::i18n::{Lang, Translator};
 use crate::mailer::Mailer;
@@ -102,6 +103,48 @@ impl SmtpMailer {
                 include_str!("../../templates/fr/contact_form.hbs"),
             )
             .map_err(|e| format!("Failed to register fr/contact_form template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "en_stall_warning",
+                include_str!("../../templates/en/stall_warning.hbs"),
+            )
+            .map_err(|e| format!("Failed to register en/stall_warning template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "fr_stall_warning",
+                include_str!("../../templates/fr/stall_warning.hbs"),
+            )
+            .map_err(|e| format!("Failed to register fr/stall_warning template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "en_stall_kicked",
+                include_str!("../../templates/en/stall_kicked.hbs"),
+            )
+            .map_err(|e| format!("Failed to register en/stall_kicked template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "fr_stall_kicked",
+                include_str!("../../templates/fr/stall_kicked.hbs"),
+            )
+            .map_err(|e| format!("Failed to register fr/stall_kicked template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "en_room_invitation",
+                include_str!("../../templates/en/room_invitation.hbs"),
+            )
+            .map_err(|e| format!("Failed to register en/room_invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string(
+                "fr_room_invitation",
+                include_str!("../../templates/fr/room_invitation.hbs"),
+            )
+            .map_err(|e| format!("Failed to register fr/room_invitation template: {e}"))?;
 
         let translator = Arc::new(Translator::new());
 
@@ -302,6 +345,146 @@ impl Mailer for SmtpMailer {
             .map_err(|e| format!("Failed to send email: {e}"))?;
 
         tracing::info!("Contact form email sent from {email}");
+        Ok(())
+    }
+
+    async fn send_stall_warning(
+        &self,
+        to_email: &str,
+        game_id: &str,
+        inactive_minutes: i64,
+        remaining_minutes: i64,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = StallWarningEmail {
+            game_id: game_id.to_string(),
+            inactive_minutes,
+            remaining_minutes,
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("stall_warning", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        let subject = self.translator.t("email.subject_stall_warning", lang);
+
+        let email = Message::builder()
+            .from(self.from.clone())
+            .to(to)
+            .subject(subject)
+            .header(lettre::message::header::ContentType::TEXT_HTML)
+            .body(html)
+            .map_err(|e| format!("Failed to build email: {e}"))?;
+
+        self.mailer
+            .send(email)
+            .await
+            .map_err(|e| format!("Failed to send email: {e}"))?;
+
+        tracing::info!("Stall warning email sent to {to_email} for game {game_id}");
+        Ok(())
+    }
+
+    async fn send_stall_kicked(
+        &self,
+        to_email: &str,
+        game_id: &str,
+        bet: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = StallKickedEmail {
+            game_id: game_id.to_string(),
+            bet,
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("stall_kicked", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        let subject = self.translator.t("email.subject_stall_kicked", lang);
+
+        let email = Message::builder()
+            .from(self.from.clone())
+            .to(to)
+            .subject(subject)
+            .header(lettre::message::header::ContentType::TEXT_HTML)
+            .body(html)
+            .map_err(|e| format!("Failed to build email: {e}"))?;
+
+        self.mailer
+            .send(email)
+            .await
+            .map_err(|e| format!("Failed to send email: {e}"))?;
+
+        tracing::info!("Stall kicked email sent to {to_email} for game {game_id}");
+        Ok(())
+    }
+
+    async fn send_room_invitation(
+        &self,
+        to_email: &str,
+        inviter_name: &str,
+        room_name: &str,
+        invitation_code: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let join_link = format!(
+            "{}/rooms/join?code={invitation_code}",
+            self.config.frontend_url
+        );
+
+        let data = super::RoomInvitationEmail {
+            inviter_name: inviter_name.to_string(),
+            room_name: room_name.to_string(),
+            invitation_code: invitation_code.to_string(),
+            join_link: join_link.clone(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("room_invitation", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        let subject = self
+            .translator
+            .t("email.subject_room_invite", lang)
+            .replace("{sender}", inviter_name)
+            .replace("{room_name}", room_name);
+
+        let email = Message::builder()
+            .from(self.from.clone())
+            .to(to)
+            .subject(subject)
+            .header(lettre::message::header::ContentType::TEXT_HTML)
+            .body(html)
+            .map_err(|e| format!("Failed to build email: {e}"))?;
+
+        self.mailer
+            .send(email)
+            .await
+            .map_err(|e| format!("Failed to send email: {e}"))?;
+
+        tracing::info!("Room invitation email sent to {to_email} for room {room_name}");
         Ok(())
     }
 }

@@ -24,7 +24,11 @@ export type GameEvent =
   | { type: 'cards_dealt'; game_id: string; player_id: string; cards: number[] }
   | { type: 'game_started'; game_id: string; players: GameStartedPlayer[]; current_turn: string }
   | { type: 'player_disconnected'; game_id: string; player_id: string; player_position: number; disconnected_at?: string }
-  | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string };
+  | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string }
+  | { type: 'staleness_warning'; game_id: string; player_id: string; player_name: string; kicked_after_seconds: number }
+  | { type: 'player_kicked'; game_id: string; player_id: string; player_name: string }
+  | { type: 'game_reshuffled'; game_id: string; remaining_players: number }
+  | { type: 'player_forfeit_win'; game_id: string; winner_id: string; winner_name: string };
 
 export type OutgoingMessage =
   | { type: 'ping' }

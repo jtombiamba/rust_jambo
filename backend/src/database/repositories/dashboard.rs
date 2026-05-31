@@ -256,7 +256,9 @@ impl DashboardRepoTrait for DashboardRepository {
                 .one(&self.connection)
                 .await?
             {
-                results.push((invite, game));
+                if game.status == GameStatus::Pending || game.status == GameStatus::Ready {
+                    results.push((invite, game));
+                }
             }
         }
         Ok(results)

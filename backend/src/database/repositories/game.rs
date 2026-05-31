@@ -40,6 +40,9 @@ impl GameRepository {
             game_mode: Set(GameMode::Solo),
             max_players: Set(4),
             invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            kicked_players: Set(json!([])),
         };
         let insert_result = game::Entity::insert(game_active)
             .exec(&self.connection)
@@ -80,6 +83,9 @@ impl GameRepository {
             game_mode: Set(game_mode),
             max_players: Set(4),
             invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            kicked_players: Set(json!([])),
         };
         let insert_result = game::Entity::insert(game_active)
             .exec(&self.connection)
@@ -121,6 +127,9 @@ impl GameRepository {
             game_mode: Set(game_mode),
             max_players: Set(4),
             invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            kicked_players: Set(json!([])),
         };
         let insert_result = game::Entity::insert(game_active)
             .exec(&self.connection)

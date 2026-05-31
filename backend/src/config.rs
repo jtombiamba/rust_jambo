@@ -25,6 +25,8 @@ pub struct Config {
     pub circuit_breaker_failure_threshold: u32,
     pub circuit_breaker_cooldown_secs: u64,
     pub game_staleness_threshold_secs: u64,
+    pub game_human_staleness_alert_secs: u64,
+    pub game_human_staleness_kick_secs: u64,
     pub db_pool_max_connections: u32,
     pub db_pool_min_connections: u32,
     pub db_pool_connect_timeout_secs: u64,
@@ -62,6 +64,8 @@ pub struct Config {
     pub rate_limit_forgot_password_window_seconds: u64,
     pub rate_limit_reset_password_max_requests: u64,
     pub rate_limit_reset_password_window_seconds: u64,
+    pub room_max_players: i32,
+    pub run_staleness_timeout_secs: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -106,6 +110,14 @@ impl std::fmt::Debug for Config {
             .field(
                 "game_staleness_threshold_secs",
                 &self.game_staleness_threshold_secs,
+            )
+            .field(
+                "game_human_staleness_alert_secs",
+                &self.game_human_staleness_alert_secs,
+            )
+            .field(
+                "game_human_staleness_kick_secs",
+                &self.game_human_staleness_kick_secs,
             )
             .field("db_pool_max_connections", &self.db_pool_max_connections)
             .field("db_pool_min_connections", &self.db_pool_min_connections)
@@ -200,6 +212,11 @@ impl std::fmt::Debug for Config {
                 "rate_limit_reset_password_window_seconds",
                 &self.rate_limit_reset_password_window_seconds,
             )
+            .field("room_max_players", &self.room_max_players)
+            .field(
+                "run_staleness_timeout_secs",
+                &self.run_staleness_timeout_secs,
+            )
             .finish()
     }
 }
@@ -237,10 +254,14 @@ impl Config {
             .set_default("rate_limit_register_window_seconds", "3600")?
             .set_default("rate_limit_login_max_requests", "10")?
             .set_default("rate_limit_login_window_seconds", "60")?
+            .set_default("game_human_staleness_alert_secs", "900")?
+            .set_default("game_human_staleness_kick_secs", "1800")?
             .set_default("rate_limit_forgot_password_max_requests", "3")?
             .set_default("rate_limit_forgot_password_window_seconds", "3600")?
             .set_default("rate_limit_reset_password_max_requests", "10")?
             .set_default("rate_limit_reset_password_window_seconds", "60")?
+            .set_default("room_max_players", "4")?
+            .set_default("run_staleness_timeout_secs", "1800")?
             .add_source(Environment::default())
             .build()?;
 
@@ -331,6 +352,14 @@ impl Config {
                 .unwrap_or_else(|_| "60".to_string())
                 .parse()
                 .unwrap_or(60),
+            game_human_staleness_alert_secs: env::var("GAME_HUMAN_STALENESS_ALERT_SECS")
+                .unwrap_or_else(|_| "900".to_string())
+                .parse()
+                .unwrap_or(900),
+            game_human_staleness_kick_secs: env::var("GAME_HUMAN_STALENESS_KICK_SECS")
+                .unwrap_or_else(|_| "1800".to_string())
+                .parse()
+                .unwrap_or(1800),
             db_pool_max_connections: env::var("DB_POOL_MAX_CONNECTIONS")
                 .unwrap_or_else(|_| "100".to_string())
                 .parse()
@@ -471,6 +500,14 @@ impl Config {
             .unwrap_or_else(|_| "60".to_string())
             .parse()
             .unwrap_or(60),
+            room_max_players: env::var("ROOM_MAX_PLAYERS")
+                .unwrap_or_else(|_| "4".to_string())
+                .parse()
+                .unwrap_or(4),
+            run_staleness_timeout_secs: env::var("RUN_STALENESS_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "1800".to_string())
+                .parse()
+                .unwrap_or(1800),
         }
     }
 }

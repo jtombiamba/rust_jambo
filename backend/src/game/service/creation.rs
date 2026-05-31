@@ -99,6 +99,9 @@ impl GameService {
             game_mode: ActiveValue::Set(GameMode::Multiplayer),
             max_players: ActiveValue::Set(max_players),
             invite_expires_at: ActiveValue::Set(Some(expires_at)),
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            kicked_players: ActiveValue::Set(serde_json::json!([])),
         };
         let insert_result = game::Entity::insert(game_active)
             .exec(&txn)
@@ -118,6 +121,8 @@ impl GameService {
             credits: ActiveValue::Set(final_credit),
             created_at: ActiveValue::Set(now),
             user_id: ActiveValue::Set(Some(creator_user_id)),
+            kicked: ActiveValue::Set(false),
+            kicked_at: ActiveValue::NotSet,
         };
         player::Entity::insert(player_active)
             .exec(&txn)
