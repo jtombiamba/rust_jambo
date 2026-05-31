@@ -12,6 +12,7 @@ use crate::observability::metrics;
 use super::GameService;
 
 impl GameService {
+    #[allow(dead_code)]
     pub async fn detect_and_recover_stalled_games(
         db: sea_orm::DatabaseConnection,
         redis_client: Option<RedisClient>,
@@ -82,6 +83,7 @@ impl GameService {
         recovered
     }
 
+    #[allow(dead_code)]
     pub async fn check_human_staleness(
         &self,
         redis_client: Option<RedisClient>,

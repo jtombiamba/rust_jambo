@@ -16,6 +16,7 @@ impl PlayerProfileRepository {
         Self { connection }
     }
 
+    #[allow(dead_code)]
     pub async fn list_all(&self) -> Result<Vec<PlayerProfile>, DbErr> {
         player_profile::Entity::find().all(&self.connection).await
     }

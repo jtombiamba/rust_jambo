@@ -195,6 +195,50 @@ services:
       timeout: 5s
       retries: 3
 
+  scheduler-worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: ["scheduler-worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      REDIS_URL: redis://redis:6379
+      RUST_LOG: info
+      GAME_STALENESS_THRESHOLD_SECS: 60
+      GAME_HUMAN_STALENESS_ALERT_SECS: 120
+      GAME_HUMAN_STALENESS_KICK_SECS: 300
+      DB_POOL_MAX_CONNECTIONS: 5
+      DB_POOL_MIN_CONNECTIONS: 1
+      DB_POOL_CONNECT_TIMEOUT_SECS: 8
+      DB_POOL_ACQUIRE_TIMEOUT_SECS: 8
+      DB_POOL_IDLE_TIMEOUT_SECS: 300
+      DB_POOL_MAX_LIFETIME_SECS: 1800
+      DB_POOL_METRICS_INTERVAL_SECS: 30
+      RUN_STALENESS_TIMEOUT_SECS: 300
+      FRONTEND_URL: http://localhost:3000
+      MAILER_MODE: smtp
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_TLS: "false"
+      SMTP_FROM_EMAIL: noreply@fapfap.local
+      SMTP_FROM_NAME: "FapFap Game"
+      FREEZE_DURATION_SECS: 1800
+      UNFREEZE_CREDIT_NO_PAYMENT: 250
+      DEFAULT_CREDIT: 500
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9080/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   dozzle:
     image: amir20/dozzle:latest
     volumes:

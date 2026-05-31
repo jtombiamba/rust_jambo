@@ -170,6 +170,7 @@ pub static DB_POOL_ACTIVE: Lazy<GaugeVec> = Lazy::new(|| {
     .unwrap()
 });
 
+#[allow(dead_code)]
 pub fn update_db_pool_metrics(db: &sea_orm::DatabaseConnection, process: &str) {
     let pool = db.get_postgres_connection_pool();
     let total = pool.size();
@@ -296,6 +297,43 @@ pub static BOT_ERRORS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     .unwrap()
 });
 
+pub static SCHEDULER_TASK_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "scheduler_task_duration_seconds",
+        "Duration of scheduler background tasks in seconds",
+        &["task"],
+        vec![0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]
+    )
+    .unwrap()
+});
+
+pub static SCHEDULER_TASK_TIMEOUTS: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "scheduler_task_timeouts_total",
+        "Total number of scheduler task timeouts",
+        &["task"]
+    )
+    .unwrap()
+});
+
+pub static SCHEDULER_TASK_ERRORS: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "scheduler_task_errors_total",
+        "Total number of scheduler task errors",
+        &["task"]
+    )
+    .unwrap()
+});
+
+pub static SCHEDULER_LAST_RUN: Lazy<GaugeVec> = Lazy::new(|| {
+    register_gauge_vec!(
+        "scheduler_last_run_timestamp_seconds",
+        "Unix timestamp of the last successful scheduler task run",
+        &["task"]
+    )
+    .unwrap()
+});
+
 pub static MEMORY_USAGE_BYTES: Lazy<GaugeVec> = Lazy::new(|| {
     register_gauge_vec!("memory_usage_bytes", "Memory usage in bytes", &["process"]).unwrap()
 });
@@ -326,10 +364,19 @@ pub fn init_all() {
     CIRCUIT_BREAKER_STATE.set(0.0);
     DB_POOL_SIZE.with_label_values(&["backend"]).set(0.0);
     DB_POOL_SIZE.with_label_values(&["ai_worker"]).set(0.0);
+    DB_POOL_SIZE
+        .with_label_values(&["scheduler_worker"])
+        .set(0.0);
     DB_POOL_IDLE.with_label_values(&["backend"]).set(0.0);
     DB_POOL_IDLE.with_label_values(&["ai_worker"]).set(0.0);
+    DB_POOL_IDLE
+        .with_label_values(&["scheduler_worker"])
+        .set(0.0);
     DB_POOL_ACTIVE.with_label_values(&["backend"]).set(0.0);
     DB_POOL_ACTIVE.with_label_values(&["ai_worker"]).set(0.0);
+    DB_POOL_ACTIVE
+        .with_label_values(&["scheduler_worker"])
+        .set(0.0);
     AI_TASK_DURATION_SECONDS.with_label_values(&["ai_task"]);
     AI_TASK_DURATION_SECONDS.with_label_values(&["fallback_db"]);
     AI_TASKS_IN_FLIGHT.set(0.0);
@@ -347,8 +394,38 @@ pub fn init_all() {
     BOT_MOVE_DURATION_SECONDS.with_label_values(&["ai_task"]);
     BOT_ERRORS_TOTAL.with_label_values(&["strategy"]);
     BOT_ERRORS_TOTAL.with_label_values(&["execution"]);
+    SCHEDULER_TASK_DURATION.with_label_values(&["cancel_expired_games"]);
+    SCHEDULER_TASK_DURATION.with_label_values(&["detect_stalled_games"]);
+    SCHEDULER_TASK_DURATION.with_label_values(&["check_human_staleness"]);
+    SCHEDULER_TASK_DURATION.with_label_values(&["check_expired_freezes"]);
+    SCHEDULER_TASK_DURATION.with_label_values(&["refresh_leaderboard"]);
+    SCHEDULER_TASK_DURATION.with_label_values(&["check_stalled_runs"]);
+    SCHEDULER_TASK_DURATION.with_label_values(&["db_pool_metrics"]);
+    SCHEDULER_TASK_TIMEOUTS.with_label_values(&["cancel_expired_games"]);
+    SCHEDULER_TASK_TIMEOUTS.with_label_values(&["detect_stalled_games"]);
+    SCHEDULER_TASK_TIMEOUTS.with_label_values(&["check_human_staleness"]);
+    SCHEDULER_TASK_TIMEOUTS.with_label_values(&["check_expired_freezes"]);
+    SCHEDULER_TASK_TIMEOUTS.with_label_values(&["refresh_leaderboard"]);
+    SCHEDULER_TASK_TIMEOUTS.with_label_values(&["check_stalled_runs"]);
+    SCHEDULER_TASK_TIMEOUTS.with_label_values(&["db_pool_metrics"]);
+    SCHEDULER_TASK_ERRORS.with_label_values(&["cancel_expired_games"]);
+    SCHEDULER_TASK_ERRORS.with_label_values(&["detect_stalled_games"]);
+    SCHEDULER_TASK_ERRORS.with_label_values(&["check_human_staleness"]);
+    SCHEDULER_TASK_ERRORS.with_label_values(&["check_expired_freezes"]);
+    SCHEDULER_TASK_ERRORS.with_label_values(&["refresh_leaderboard"]);
+    SCHEDULER_TASK_ERRORS.with_label_values(&["check_stalled_runs"]);
+    SCHEDULER_TASK_ERRORS.with_label_values(&["db_pool_metrics"]);
+    SCHEDULER_LAST_RUN.with_label_values(&["cancel_expired_games"]);
+    SCHEDULER_LAST_RUN.with_label_values(&["detect_stalled_games"]);
+    SCHEDULER_LAST_RUN.with_label_values(&["check_human_staleness"]);
+    SCHEDULER_LAST_RUN.with_label_values(&["check_expired_freezes"]);
+    SCHEDULER_LAST_RUN.with_label_values(&["refresh_leaderboard"]);
+    SCHEDULER_LAST_RUN.with_label_values(&["check_stalled_runs"]);
+    SCHEDULER_LAST_RUN.with_label_values(&["db_pool_metrics"]);
     MEMORY_USAGE_BYTES.with_label_values(&["backend"]);
     MEMORY_USAGE_BYTES.with_label_values(&["ai_worker"]);
+    MEMORY_USAGE_BYTES.with_label_values(&["scheduler_worker"]);
     CPU_USAGE_PERCENT.with_label_values(&["backend"]);
     CPU_USAGE_PERCENT.with_label_values(&["ai_worker"]);
+    CPU_USAGE_PERCENT.with_label_values(&["scheduler_worker"]);
 }

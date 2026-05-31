@@ -28,6 +28,7 @@ pub struct LeaderboardResponse {
     pub current_user_streak_rank: Option<u64>,
 }
 
+#[allow(dead_code)]
 pub async fn refresh_leaderboard(mut redis: RedisClient, profiles: &[PlayerProfile]) {
     if let Err(e) = redis.del(LEADERBOARD_WINS_KEY).await {
         error!("Failed to clear leaderboard wins: {}", e);

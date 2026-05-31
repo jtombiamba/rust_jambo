@@ -339,6 +339,7 @@ impl GameService {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn cancel_expired_games(&self) -> Result<u64, GameServiceError> {
         let now = chrono::Utc::now();
 

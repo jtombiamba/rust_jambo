@@ -3,12 +3,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use actix_web::{web, App, HttpServer};
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use lapin::{
     options::{BasicAckOptions, BasicNackOptions},
     Consumer,
 };
+use prometheus::TextEncoder;
 use sea_orm::DatabaseConnection;
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{error, info, warn};
@@ -20,6 +22,17 @@ use jambo_backend::game::constants::BOT_THINKING_DELAY_MS;
 use jambo_backend::game::worker_core::process_bot_move;
 use jambo_backend::messaging::{self, AITask, RabbitMQPublishConfig, RedisClient};
 use jambo_backend::observability::metrics;
+
+async fn metrics_handler() -> actix_web::HttpResponse {
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let body = encoder
+        .encode_to_string(&metric_families)
+        .unwrap_or_default();
+    actix_web::HttpResponse::Ok()
+        .content_type("text/plain; version=0.0.4")
+        .body(body)
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -38,6 +51,18 @@ async fn main() -> Result<()> {
         cpu_count,
         std::env::var("TOKIO_WORKER_THREADS").unwrap_or_else(|_| "default (num_cpus)".to_string())
     );
+
+    let metrics_port = (config.port as u32 + 2000).min(65535) as u16;
+    let bind_addr = format!("{}:{}", config.host, metrics_port);
+    let metrics_server =
+        HttpServer::new(move || App::new().route("/metrics", web::get().to(metrics_handler)))
+            .bind(&bind_addr)
+            .context("Failed to bind metrics HTTP server")?
+            .workers(2)
+            .run();
+    let metrics_handle = metrics_server.handle();
+    tokio::spawn(metrics_server);
+    info!("Metrics server listening on http://{}/metrics", bind_addr);
 
     let pool_size = std::env::var("AI_WORKER_DB_POOL_SIZE")
         .ok()
@@ -300,6 +325,8 @@ async fn main() -> Result<()> {
         uptime_seconds = uptime.as_secs(),
         "AI worker shutting down - final metrics"
     );
+
+    metrics_handle.stop(true).await;
 
     Ok(())
 }

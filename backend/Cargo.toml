@@ -55,6 +55,10 @@ name = "ai-worker"
 path = "src/bin/ai_worker.rs"
 
 [[bin]]
+name = "scheduler-worker"
+path = "src/bin/scheduler_worker.rs"
+
+[[bin]]
 name = "load-test"
 path = "src/bin/load_test.rs"
 
