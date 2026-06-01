@@ -1,135 +1,411 @@
-# Jambo – Real-Time Multiplayer Card Game
+# Jambo — Real-Time Multiplayer Card Game
 
-**Jambo** is a real-time, 4-player trick-taking card game where one human player competes against three AI-controlled opponents — all in the browser, no login required.
+A full-stack, real-time trick-taking card game built with **Rust** and **React**. Supports solo play against AI bots, multiplayer games with invitations, persistent rooms with game runs, PayPal payments, and end-to-end observability.
 
-The game uses a 32-card deck (suits ♥♠♦♣, ranks 3–10). Each player receives 5 cards and takes turns playing one card per round. After 5 rounds, the player who won the most rounds gains credits from the others. Special **KORA** and **DOUBLE_KORA** outcomes multiply the stakes when the winning card is a 3 (the lowest rank of its suit).
+This project is a complete rewrite of the original Python/Django **FapFap** implementation, ported to Rust for performance, safety, and scalability.
 
-This project is a complete rewrite of the original **FapFap** Python/Django implementation, ported to Rust for performance, safety, and scalability.
+---
+
+## Features
+
+- **Quick solo games** — jump in against 3 AI bots, no account required
+- **Multiplayer games** — invite friends, accept/decline, start when ready
+- **Rooms & Game Runs** — persistent rooms, configurable game runs (N games with auto‑advance)
+- **6 AI strategies** — zone-based bot opponents (LongUp/Down, MidUp/Down, ShortUp/Down)
+- **Real‑time WebSockets** — Redis Pub/Sub with sharded subscribers for game and room events
+- **KORA / DOUBLE_KORA** — special game-ending conditions with multiplied stakes
+- **PayPal integration** — account unfreeze and credit topup
+- **Rate limiting** — Redis-backed sliding window per endpoint
+- **Idempotency** — per-player request deduplication
+- **Internationalization** — English and French (backend + frontend)
+- **Prometheus metrics** — 40+ metric families across all components
+- **End‑to‑end tracing** — CorrelationId propagated through HTTP → Redis → RabbitMQ → WebSocket
+- **Fallback resilience** — circuit breaker, sync fallback, graceful degradation without Redis
+- **Optimistic locking** — 3-retry concurrent modification handling
+
+---
+
+## Game Rules
+
+| Parameter | Value |
+|-----------|-------|
+| **Deck** | 32 cards (4 suits × 8 ranks: 3–10) |
+| **Players** | 4 (mix of humans and bots) |
+| **Cards per player** | 5 (5 rounds per game) |
+| **Rule** | Must follow suit if you hold a card of the leading suit |
+
+**KORA**: When the winning card of a round is a 3 (`index % 8 == 0`), the game ends immediately.
+- `Kora` (1× multiplier) — round starter is NOT the winner
+- `DoubleKora` (2× multiplier) — round starter IS the winner
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Docker Compose                                │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐                      │
+│   │PostgreSQL│    │  Redis   │    │ RabbitMQ │                      │
+│   └────┬─────┘    └────┬─────┘    └────┬─────┘                      │
+└────────┼───────────────┼───────────────┼────────────────────────────┘
+         │               │               │
+┌────────┼───────────────┼───────────────┼────────────────────────────┐
+│        │         jambo-backend         │                            │
+│        │   ┌─────────────┐   ┌─────────┴────────┐                   │
+│        ├───┤ GameService  │   │ WebSocketManager │                   │
+│        │   │ (transact.)  │   │ + sharded Redis  │──── WebSocket ───│──┐
+│        │   └──────┬───────┘   │   subscriber     │                   │  │
+│        │          │           └──────────────────┘                   │  │
+│        │   ┌──────┴───────┐                                         │  │
+│        │   │BotScheduler  │── RabbitMQ ──>┌───────────┐             │  │
+│        │   │+ sync fallback│              │ ai-worker │             │  │
+│        │   └──────────────┘              └───────────┘             │  │
+│        │   ┌──────────────┐                                         │  │
+│        │   │scheduler-    │  (separate binary)                      │  │
+│        │   │worker (7     │  background tasks                       │  │
+│        │   │periodic)     │                                         │  │
+│        │   └──────────────┘                                         │  │
+└────────┼────────────────────────────────────────────────────────────┘  │
+         │                                                               │
+┌────────┼────────────────────────────────────────────────────────────┐  │
+│   Frontend (React/TS + Vite + Tailwind + Zustand)                    │  │
+│   ┌────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐        │  │
+│   │ Game   │  │  Room    │  │   Auth   │  │  WebSocket    │◄───────┘  │
+│   │ Store  │  │  Store   │  │  Store   │  │  Hooks        │           │
+│   └────────┘  └──────────┘  └──────────┘  └───────────────┘           │
+└──────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Tech Stack
 
-### Backend
+### Backend (Rust)
 
-| Technology | Purpose |
-|---|---|
-| **Rust** (edition 2021) | Systems programming language — performance, memory safety, zero-cost abstractions |
-| **Actix Web 4** | Async HTTP and WebSocket framework |
-| **SeaORM 2.0** | Async ORM with PostgreSQL, schema migration |
-| **PostgreSQL 16** | Primary data store (games, players, cards, rounds) |
-| **Redis 7** | Pub/Sub event bus for real-time WebSocket broadcasting |
-| **RabbitMQ 3** | Message queue for asynchronous AI bot task dispatch |
-| **Lapin** | Rust AMQP client for RabbitMQ integration |
-| **Tokio** | Async runtime (full features) |
-| **Tracing** | Structured logging with correlation ID propagation |
-| **Serde** | Serialization/deserialization for API DTOs and events |
+| Crate | Purpose |
+|-------|---------|
+| `actix-web 4` | Async HTTP server, routing, middleware |
+| `actix-ws 0.3` | WebSocket upgrade and messaging |
+| `sea-orm 2.0` | Async ORM for PostgreSQL, schema migrations |
+| `lapin 4` | RabbitMQ AMQP client with circuit breaker, retry, DLX |
+| `redis 0.24` | Redis async client (Pub/Sub, sorted sets, atomic ops) |
+| `tokio 1` | Async runtime (full features) |
+| `prometheus 0.13` | Metrics export (`/metrics` endpoint) |
+| `tracing` / `tracing-subscriber` | Structured JSON logging with spans |
+| `serde` / `serde_json` | JSON serialization / deserialization |
+| `jsonwebtoken 9` | JWT authentication |
+| `uuid 1` | UUID v4 identifiers |
+| `lettre 0.11` | SMTP email sending |
+| `handlebars 6` | Email template rendering |
+| `config 0.15` | Environment-based configuration (68 parameters) |
 
-### Frontend
+### Frontend (React / TypeScript)
 
-| Technology | Purpose |
-|---|---|
-| **React 18** | UI component library |
-| **TypeScript** | Type-safe JavaScript |
-| **Vite 5** | Build tool and dev server |
-| **Tailwind CSS 3** | Utility-first CSS framework |
-| **Zustand** | Lightweight state management |
-| **Axios** | HTTP client for REST API calls |
-| **React Router DOM** | Client-side routing |
-| **Vitest** | Unit testing framework |
-| **Playwright** | End-to-end testing |
+| Package | Purpose |
+|---------|---------|
+| `react 18` / `react-dom` | UI framework |
+| `typescript` | Type safety |
+| `vite 5` | Build tool and dev server |
+| `tailwindcss 3` | Utility-first CSS |
+| `zustand 4` | Lightweight state management (4 stores) |
+| `axios 1` | HTTP client |
+| `react-router-dom 6` | Client-side routing |
+| `i18next` + `react-i18next` | Internationalization |
+| `vitest` | Unit testing |
+| `playwright` | End-to-end testing |
 
 ### Infrastructure
 
 | Technology | Purpose |
-|---|---|
-| **Docker Compose** | Local development orchestration (PostgreSQL, Redis, RabbitMQ, backend, frontend, AI worker) |
-| **Coolify** | Production deployment platform |
-| **Nginx** | Reverse proxy for frontend serving |
+|------------|---------|
+| **PostgreSQL 16** | Primary data store (12 tables) |
+| **Redis 7** | Pub/Sub event bus, caching, rate limiting, leaderboard |
+| **RabbitMQ 3** | Async AI bot task dispatch |
+| **Docker Compose** | Local development orchestration |
+| **Coolify** | Production deployment |
+| **Nginx** | Reverse proxy |
+
+### Binary Targets
+
+| Binary | Role |
+|--------|------|
+| `jambo-backend` | HTTP/WS server, API handlers, metrics |
+| `ai-worker` | Standalone RabbitMQ consumer for bot moves |
+| `scheduler-worker` | 7 periodic background tasks |
+| `load-test` | Full-stack load testing |
+| `http-load-test` | HTTP-only load testing |
+| `ws-load-test` | WebSocket-only load testing |
 
 ---
 
-## Installation
+## Quick Start
 
 ### Prerequisites
 
-- **Rust toolchain** (stable, with `cargo` and `rustc`)
+- **Rust** (stable toolchain)
 - **Node.js 20+** and `npm`
 - **Docker** and **Docker Compose**
 
-### 1. Clone the repository
+### 1. Clone
 
 ```bash
-git clone <repository-url>
-cd jambo
+git clone <repo-url> && cd jambo
 ```
 
-### 2. Start the infrastructure
+### 2. Infrastructure
 
 ```bash
 cd infra
-docker-compose up -d postgres rabbitmq redis
+docker compose up -d postgres rabbitmq redis
 ```
 
-This starts PostgreSQL, RabbitMQ, and Redis in detached mode.
-
-### 3. Run the backend
+### 3. Backend
 
 ```bash
-cd ../backend
-cargo run
+cd backend
+# Copy and configure environment
+cp .env.example .env
+# Start the main server
+cargo run --bin jambo-backend
 ```
 
-The backend starts on `http://localhost:8080` and exposes the following endpoints:
+Starts on `http://localhost:8080`.
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/anonymous` | Anonymous player dashboard stats |
-| `POST /api/quickie` | Create a quick game with 3 AI bots |
-| `GET /api/games` | List player's games |
-| `POST /api/game/{id}/play` | Play a card |
-| `WebSocket /ws/{game_id}` | Real-time game event stream |
-
-### 4. Run the frontend
+Optionally start the AI worker and scheduler:
 
 ```bash
-cd ../frontend
+cargo run --bin ai-worker &
+cargo run --bin scheduler-worker &
+```
+
+### 4. Frontend
+
+```bash
+cd frontend
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000` in your browser. The dashboard displays your anonymous stats; the **"Start a game"** button is functional and connects to the backend.
+Open `http://localhost:3000`.
 
-### Full-Stack Docker Deployment
+### Full Docker Deployment
 
 ```bash
 cd infra
-docker-compose up --build
+docker compose up --build
 ```
 
-This builds and starts all services (PostgreSQL, Redis, RabbitMQ, backend, frontend, AI worker) with health checks and dependency ordering.
+Builds and starts all services with health checks and dependency ordering.
+
+---
+
+## API Overview
+
+### Public
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/api/anonymous` | Anonymous dashboard stats |
+| `POST` | `/api/quickie` | Create solo quick game |
+| `GET` | `/api/config` | Client configuration |
+| `POST` | `/api/contact` | Contact form (rate‑limited) |
+| `POST` | `/api/lang` | Set language |
+| `GET` | `/api/lang` / `/api/languages` | Language info |
+
+### Auth
+
+| Method | Path | Rate Limit |
+|--------|------|------------|
+| `POST` | `/api/auth/register` | 3/hour |
+| `POST` | `/api/auth/login` | 10/min |
+| `POST` | `/api/auth/logout` | — |
+| `POST` | `/api/auth/forgot-password` | 3/hour |
+| `POST` | `/api/auth/reset-password` | 10/min |
+| `GET` | `/api/auth/me` | — |
+
+### Authenticated (`/api/me/`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/profile` | User profile |
+| `GET` / `POST` | `/games` | List / create games |
+| `GET` | `/games/{id}` | Game details |
+| `GET` | `/active-game` | Current active game |
+| `GET` | `/invitations` | Pending invitations |
+| `GET` | `/leaderboard` | Global leaderboard |
+| `POST` | `/unfreeze` + `/unfreeze/capture` | PayPal unfreeze |
+| `POST` | `/topup` + `/topup/capture` | PayPal topup |
+| `POST` / `GET` | `/rooms` | Create / list rooms |
+| `POST` | `/rooms/join` | Join room by code |
+| `GET` | `/rooms/{id}` | Room details |
+| `POST` | `/rooms/{id}/invite` | Invite to room |
+| `POST` | `/rooms/{id}/leave` | Leave room |
+| `POST` / `GET` | `/rooms/{id}/runs` | Create / list game runs |
+| `GET` | `/rooms/{id}/runs/active` | Active run |
+| `POST` | `/runs/{id}/join` / `/leave` | Join / leave run |
+| `POST` | `/runs/{id}/next-game` | Start next game |
+| `GET` | `/runs/{id}/current-game` | Current game |
+
+### Game Management (`/api/games/`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/{id}/invites` | Send invitations |
+| `POST` | `/{id}/respond` | Accept / decline |
+| `POST` | `/{id}/start` | Start game |
+| `POST` | `/{id}/play` | Play card (idempotent) |
+| `GET` | `/{id}/me` | Game state |
+
+### WebSocket
+
+| Path | Auth | Purpose |
+|------|------|---------|
+| `GET /ws/{game_id}` | JWT | Game events (18 event types) |
+| `GET /ws/room/{room_id}` | JWT | Room events (5 event types) |
+
+---
+
+## Project Structure
+
+```
+jambo/
+├── backend/                    # Rust backend
+│   ├── src/
+│   │   ├── main.rs             # Server bootstrap
+│   │   ├── config.rs           # 68 env-based config params
+│   │   ├── bootstrap.rs        # Dependency injection wiring
+│   │   ├── routes.rs           # All route definitions
+│   │   ├── api/                # HTTP handlers (16 modules)
+│   │   │   ├── auth.rs         #   Registration, login, JWT
+│   │   │   ├── dashboard.rs    #   Authenticated dashboard
+│   │   │   ├── game.rs         #   Legacy play endpoint
+│   │   │   ├── quickie.rs      #   Anonymous quick game
+│   │   │   ├── room.rs         #   Room + game run management
+│   │   │   ├── topup.rs        #   PayPal topup
+│   │   │   ├── unfreeze.rs     #   PayPal unfreeze
+│   │   │   ├── middleware/     #   Rate limiter, idempotency, IP forward
+│   │   │   ├── dto/            #   Request/response structs
+│   │   │   └── services/       #   Auth, dashboard, room services
+│   │   ├── game/               # Core domain logic
+│   │   │   ├── orchestrator/   #   GameOrchestrator (coordination façade)
+│   │   │   ├── service/        #   GameService (transactional engine, ~2000 loc)
+│   │   │   ├── bot_scheduler.rs#   RabbitMQ dispatch + sync fallback
+│   │   │   ├── worker_core.rs  #   Shared AI processing logic
+│   │   │   ├── strategy.rs     #   6 bot AI strategies
+│   │   │   └── ...             #   Card mapping, distribution, evaluation, payment
+│   │   ├── websocket/          # Real-time communication
+│   │   │   ├── manager.rs      #   Connection tracking
+│   │   │   ├── manager_redis.rs#   Sharded Redis subscriber (N=min(cpus,8))
+│   │   │   └── manager_cleanup.rs # Stale connection cleanup
+│   │   ├── messaging/          # RabbitMQ + Redis clients
+│   │   │   ├── events.rs       #   18 GameEvent + 5 RoomEvent variants
+│   │   │   └── ai_task.rs      #   AI task message structure
+│   │   ├── database/           # SeaORM models + repositories
+│   │   ├── scheduler/          # 7 periodic background tasks
+│   │   ├── cache/              # UserCache, leaderboard cache
+│   │   ├── auth/               # JWT + auth middleware
+│   │   ├── i18n/               # Translator + language endpoints
+│   │   ├── mailer/             # SMTP + email templates
+│   │   ├── payment/            # PayPal integration
+│   │   ├── observability/      # Metrics (40+ families), CorrelationId, tracing
+│   │   ├── error/              # AppError, GameError, ValidationError
+│   │   └── bin/                # ai-worker, scheduler-worker, load-test binaries
+│   ├── migration/              # SeaORM migrations
+│   ├── templates/              # Handlebars email templates
+│   └── tests/                  # Integration tests
+│
+├── frontend/                   # React/TypeScript frontend
+│   ├── src/
+│   │   ├── App.tsx             # Main: routing, game lifecycle
+│   │   ├── components/         # 18 React components
+│   │   │   ├── GameTable.tsx   #   4-player game board
+│   │   │   ├── PlayerSlot.tsx  #   Player area with cards
+│   │   │   ├── Card.tsx        #   Single card rendering
+│   │   │   ├── CardFan.tsx     #   Fan-shaped opponent cards
+│   │   │   ├── GameOverModal.tsx#  End-of-game overlay
+│   │   │   ├── WinnerRing.tsx  #   Round winner indicator
+│   │   │   ├── GameLobby.tsx   #   Multiplayer pre-game lobby
+│   │   │   ├── AuthModal.tsx   #   Login/register modal
+│   │   │   ├── UserDashboard.tsx#  Authenticated dashboard
+│   │   │   ├── RoomDashboard.tsx#  Room management
+│   │   │   ├── LeaderboardPanel.tsx
+│   │   │   ├── LanguageSwitcher.tsx
+│   │   │   └── Toast.tsx
+│   │   ├── stores/             # Zustand stores (4)
+│   │   ├── hooks/              # useWebSocket, useGameWebSocket, useRoomWebSocket
+│   │   └── utils/              # Math, localStorage helpers
+│   └── tests/                  # Vitest + Playwright tests
+│
+├── docs/
+│   ├── DESIGN.md               # Comprehensive design document (1800+ lines)
+│   └── PERFORMANCE.md          # Performance benchmarks
+│
+├── infra/                      # Docker Compose configuration
+├── .github/                    # CI/CD workflows
+└── plans/                      # Development plans
+```
+
+---
+
+## Key Design Patterns
+
+| Pattern | Location | Description |
+|---------|----------|-------------|
+| **Orchestrator** | `game/orchestrator/` | Thin façade between API handlers and domain services |
+| **Transactional Engine** | `game/service/` | All game mutations in atomic DB transactions |
+| **Optimistic Locking** | `game/service/gameplay.rs` | 3-retry loop with exponential backoff |
+| **Strategy** | `game/strategy.rs` | 6 bot AI strategies, randomly assigned |
+| **Pub/Sub** | `messaging/events.rs` | GameEvent/RoomEvent → Redis → WebSocket |
+| **Async Task Queue** | `game/bot_scheduler.rs` | RabbitMQ dispatch with sync fallback chain |
+| **Circuit Breaker** | `messaging/mod.rs` | 5-failure threshold, 30s cooldown, half-open probe |
+| **Idempotency** | `game/orchestrator/` | Redis SET NX EX, 3-state (pending/ok/expired) |
+| **Sharded Subscriber** | `websocket/manager_redis.rs` | N = min(cpus,8) Redis psubscribe shards |
+| **Repository** | `database/traits.rs` | Abstractions for testability |
+| **Correlation ID** | `observability/middleware.rs` | End-to-end tracing across HTTP/Redis/RabbitMQ/WS |
+
+---
+
+## Configuration
+
+The backend accepts **68 environment variables** (see `backend/src/config.rs`). Key categories:
+
+| Category | Examples |
+|----------|---------|
+| Server | `HOST`, `PORT`, `LOG_LEVEL` |
+| Database | `DATABASE_URL`, pool size/timeout settings |
+| RabbitMQ | `RABBITMQ_URL`, retry/circuit breaker settings |
+| Redis | `REDIS_URL` (optional) |
+| Auth | `JWT_SECRET`, `JWT_EXPIRY_HOURS` |
+| Game | `GAME_STALENESS_THRESHOLD_SECS`, staleness alert/kick timers |
+| Credits | `DEFAULT_CREDIT`, `FREEZE_DURATION_SECS`, unfreeze/topup amounts |
+| PayPal | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MODE` |
+| Rate Limits | 12 parameters for auth/contact endpoints |
+| CORS | `CORS_ALLOWED_ORIGINS` |
+
+---
+
+## Performance
+
+| Operation | Latency |
+|-----------|---------|
+| Card play (HTTP → WS) | < 50ms |
+| Bot move (async RabbitMQ) | ~100–200ms |
+| Bot move (sync fallback) | ~50–100ms |
+| Quick game creation | < 100ms |
+| WebSocket event delivery | < 10ms |
+| Leaderboard fetch (Redis) | < 10ms |
+
+See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for detailed benchmarks against the original Python/Django implementation.
 
 ---
 
 ## Documentation
 
-For a deeper understanding of the project's architecture, design decisions, and performance characteristics, refer to the following documents:
-
-- **[`docs/DESIGN.md`](docs/DESIGN.md)** — Comprehensive design document covering:
-  - Project brief and core deliverables
-  - Architecture overview and data flow
-  - Component mapping (backend layers, frontend components)
-  - Use cases with trigger → flow descriptions
-  - Data models (database entities, API DTOs, game events, AI tasks)
-  - Card mapping and game rules
-  - Design decisions and trade-offs
-
-- **[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)** — Performance analysis comparing the Rust backend against the original Python/Django implementation:
-  - HTTP endpoint latency benchmarks (12 ms vs 45 ms average for game creation)
-  - WebSocket broadcast latency under load (< 5 ms with 1000 concurrent clients)
-  - Database query throughput (4× higher than Django ORM)
-  - Memory usage reduction (~80%)
-  - Methodology and test environment specifications
+- **[`docs/DESIGN.md`](docs/DESIGN.md)** — 1800+ line comprehensive design document covering architecture diagrams, all module roles, 18 event types, 12 use cases, WebSocket/Redis mechanisms, AI worker, scheduler, caching, scalability, fallbacks, metrics, i18n, logging, database schema, and performance expectations.
+- **[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)** — Benchmarks comparing Rust vs Python/Django.
 
 ---
 

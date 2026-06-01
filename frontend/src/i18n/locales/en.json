@@ -194,7 +194,7 @@
     "koraText1": "The bet is doubled to 20 credits per player.",
     "koraText2": "The winner collects 60 credits (3 × 20).",
     "doubleKora": "Double Kora (Quadruple Bet)",
-    "doubleKoraText": "If the winning card is a 3 AND no one followed the leading suit, it triggers a Double Kora:",
+    "doubleKoraText": "If round 5 ends with a KORA and the same player also won round 4 with a 3, it triggers a Double Kora:",
     "doubleKoraText1": "The bet is quadrupled to 40 credits per player.",
     "doubleKoraText2": "The winner collects 120 credits (3 × 40).",
     "gameEnd": "Game End",
