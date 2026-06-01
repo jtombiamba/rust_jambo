@@ -23,7 +23,7 @@ impl GameCardRepository {
         card_index: i32,
         round: Option<i32>,
     ) -> Result<GameCard, DbErr> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         let card_active = game_card::ActiveModel {
@@ -53,7 +53,7 @@ impl GameCardRepository {
         let active_models: Vec<game_card::ActiveModel> = cards
             .into_iter()
             .map(|(game_id, player_id, card_index)| game_card::ActiveModel {
-                id: Set(Uuid::new_v4()),
+                id: Set(Uuid::now_v7()),
                 game_id: Set(game_id),
                 player_id: Set(player_id),
                 card_index: Set(card_index),

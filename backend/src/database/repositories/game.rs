@@ -19,7 +19,7 @@ impl GameRepository {
     }
 
     pub async fn create(&self, bet: i32, auto: bool) -> Result<Game, DbErr> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         let game_active = game::ActiveModel {
@@ -62,7 +62,7 @@ impl GameRepository {
         game_mode: GameMode,
         initial_status: GameStatus,
     ) -> Result<Game, DbErr> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         let game_active = game::ActiveModel {
@@ -106,7 +106,7 @@ impl GameRepository {
         initial_status: GameStatus,
         creator_id: Option<Uuid>,
     ) -> Result<Game, DbErr> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         let game_active = game::ActiveModel {

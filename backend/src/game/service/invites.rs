@@ -174,7 +174,7 @@ impl GameService {
         profile_active.updated_at = ActiveValue::Set(now);
         profile_active.update(&txn).await?;
 
-        let new_player_id = Uuid::new_v4();
+        let new_player_id = Uuid::now_v7();
         let player_active = player::ActiveModel {
             id: ActiveValue::Set(new_player_id),
             game_id: ActiveValue::Set(game_id),

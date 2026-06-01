@@ -69,8 +69,8 @@ impl UserRepository {
         ip_hash: Option<&str>,
     ) -> Result<(User, PlayerProfile), DbErr> {
         let now = chrono::Utc::now();
-        let user_id = Uuid::new_v4();
-        let profile_id = Uuid::new_v4();
+        let user_id = Uuid::now_v7();
+        let profile_id = Uuid::now_v7();
         let pseudo = pseudo.to_string();
         let email = email.to_string();
         let password_hash = password_hash.to_string();

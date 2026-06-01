@@ -22,7 +22,7 @@ impl GameInviteRepository {
         game_id: Uuid,
         invited_user_id: Uuid,
     ) -> Result<game_invite::Model, DbErr> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         let invite_active = game_invite::ActiveModel {

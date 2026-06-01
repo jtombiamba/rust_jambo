@@ -27,7 +27,7 @@ impl RoomRepository {
     ) -> Result<Room, sea_orm::DbErr> {
         let now = chrono::Utc::now();
         let active = room::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             name: Set(name.to_string()),
             creator_id: Set(creator_id),
             invitation_code: Set(invitation_code.to_string()),
@@ -110,7 +110,7 @@ impl RoomMemberRepository {
     pub async fn create(&self, room_id: Uuid, user_id: Uuid) -> Result<RoomMember, sea_orm::DbErr> {
         let now = chrono::Utc::now();
         let active = room_member::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             room_id: Set(room_id),
             user_id: Set(user_id),
             joined_at: Set(now),
@@ -202,7 +202,7 @@ impl GameRunRepository {
     ) -> Result<GameRun, sea_orm::DbErr> {
         let now = chrono::Utc::now();
         let active = game_run::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             room_id: Set(room_id),
             num_games: Set(num_games),
             bet_per_game: Set(bet_per_game),
@@ -311,7 +311,7 @@ impl GameRunPlayerRepository {
     ) -> Result<GameRunPlayer, sea_orm::DbErr> {
         let now = chrono::Utc::now();
         let active = game_run_player::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             game_run_id: Set(run_id),
             user_id: Set(user_id),
             position: Set(position),
@@ -420,7 +420,7 @@ impl GameRunGameRepository {
     ) -> Result<GameRunGame, sea_orm::DbErr> {
         let now = chrono::Utc::now();
         let active = game_run_game::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             game_run_id: Set(run_id),
             game_id: Set(game_id),
             game_index: Set(game_index),
@@ -493,7 +493,7 @@ impl GameRunEventRepository {
     ) -> Result<GameRunEvent, sea_orm::DbErr> {
         let now = chrono::Utc::now();
         let active = game_run_event::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             game_run_id: Set(run_id),
             user_id: Set(user_id),
             event_type: Set(event_type.to_string()),
