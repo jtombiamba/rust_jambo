@@ -385,7 +385,7 @@ impl GameService {
                 cards[start..end]
                     .iter()
                     .map(move |&card_index| game_card::ActiveModel {
-                        id: ActiveValue::Set(Uuid::new_v4()),
+                        id: ActiveValue::Set(Uuid::now_v7()),
                         game_id: ActiveValue::Set(game_id),
                         player_id: ActiveValue::Set(Some(pid)),
                         card_index: ActiveValue::Set(card_index),

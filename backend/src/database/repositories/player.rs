@@ -24,7 +24,7 @@ impl PlayerRepository {
         name: &str,
         position: i32,
     ) -> Result<Player, DbErr> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         let player_active = player::ActiveModel {
@@ -76,7 +76,7 @@ impl PlayerRepository {
         position: i32,
         user_id: Uuid,
     ) -> Result<Player, DbErr> {
-        let id = Uuid::new_v4();
+        let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         let player_active = player::ActiveModel {

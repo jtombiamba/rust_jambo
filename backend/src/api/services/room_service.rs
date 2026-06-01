@@ -252,7 +252,7 @@ impl RoomService {
     async fn acquire_start_game_lock(&self, run_id: Uuid) -> Result<(), RoomServiceError> {
         if let Some(mut redis) = self.redis_client.clone() {
             let key = format!("start_game_lock:{}", run_id);
-            let instance_id = Uuid::new_v4().to_string();
+            let instance_id = Uuid::now_v7().to_string();
             let acquired = redis
                 .set_nx_ex(&key, &instance_id, 30)
                 .await

@@ -90,7 +90,7 @@ impl RoomService {
 
         let txn = self.db.begin().await?;
 
-        let run_id = Uuid::new_v4();
+        let run_id = Uuid::now_v7();
         let now = chrono::Utc::now();
         use crate::database::models::game_run;
         let run_active = game_run::ActiveModel {
@@ -129,7 +129,7 @@ impl RoomService {
                 .await?;
 
             use crate::database::models::game_run_player;
-            let rp_id = Uuid::new_v4();
+            let rp_id = Uuid::now_v7();
             game_run_player::Entity::insert(game_run_player::ActiveModel {
                 id: Set(rp_id),
                 game_run_id: Set(run_id),
@@ -265,7 +265,7 @@ impl RoomService {
 
         use crate::database::models::game_run_player;
         game_run_player::Entity::insert(game_run_player::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             game_run_id: Set(run_id),
             user_id: Set(user_id),
             position: Set(position),

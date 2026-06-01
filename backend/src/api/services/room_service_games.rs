@@ -130,7 +130,7 @@ impl RoomService {
         let mut shuffled_positions: Vec<usize> = (0..player_ids.len()).collect();
         shuffled_positions.shuffle(&mut thread_rng());
 
-        let game_id = Uuid::new_v4();
+        let game_id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
         use serde_json::json;
@@ -177,7 +177,7 @@ impl RoomService {
 
         for (new_pos, &orig_idx) in shuffled_positions.iter().enumerate() {
             let loop_user_id = player_ids[orig_idx];
-            let player_id = Uuid::new_v4();
+            let player_id = Uuid::now_v7();
             let name = user_map
                 .get(&loop_user_id)
                 .cloned()
@@ -240,7 +240,7 @@ impl RoomService {
                 let end = start + crate::game::constants::CARDS_PER_PLAYER;
                 cards[start..end].iter().map(move |&ci| {
                     crate::database::models::game_card::ActiveModel {
-                        id: Set(Uuid::new_v4()),
+                        id: Set(Uuid::now_v7()),
                         game_id: Set(game_id),
                         player_id: Set(Some(p.id)),
                         card_index: Set(ci),
@@ -259,7 +259,7 @@ impl RoomService {
 
         use crate::database::models::game_run_game;
         game_run_game::Entity::insert(game_run_game::ActiveModel {
-            id: Set(Uuid::new_v4()),
+            id: Set(Uuid::now_v7()),
             game_run_id: Set(run_id),
             game_id: Set(game_id),
             game_index: Set(game_index),

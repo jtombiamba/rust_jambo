@@ -70,7 +70,7 @@ impl GameService {
         profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
         profile_active.update(&txn).await?;
 
-        let game_id = Uuid::new_v4();
+        let game_id = Uuid::now_v7();
         let now = chrono::Utc::now();
         let expires_at = now + chrono::Duration::minutes(INVITE_TIMEOUT_MINUTES);
 
@@ -99,7 +99,7 @@ impl GameService {
         let insert_result = game::Entity::insert(game_active).exec(&txn).await?;
         let inserted_game_id = insert_result.last_insert_id;
 
-        let player_id = Uuid::new_v4();
+        let player_id = Uuid::now_v7();
         let player_active = player::ActiveModel {
             id: ActiveValue::Set(player_id),
             game_id: ActiveValue::Set(inserted_game_id),
