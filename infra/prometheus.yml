@@ -7,3 +7,13 @@ scrape_configs:
     static_configs:
       - targets: ["backend:8080"]
     metrics_path: /metrics
+
+  - job_name: "jambo-ai-worker"
+    static_configs:
+      - targets: ["ai-worker:10080"]
+    metrics_path: /metrics
+
+  - job_name: "jambo-scheduler-worker"
+    static_configs:
+      - targets: ["scheduler-worker:9080"]
+    metrics_path: /metrics

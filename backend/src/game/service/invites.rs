@@ -41,10 +41,7 @@ impl GameService {
     ) -> Result<(), GameServiceError> {
         let game = game::Entity::find_by_id(game_id)
             .one(&self.db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         if game.status != GameStatus::Pending {
@@ -61,27 +58,14 @@ impl GameService {
             }
             if crate::database::repositories::PlayerRepository::new(self.db.clone())
                 .find_by_game_and_user(game_id, user_id)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
+                .await?
                 .is_some()
             {
                 continue;
             }
-            let existing = invite_repo
-                .find_invite(game_id, user_id)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+            let existing = invite_repo.find_invite(game_id, user_id).await?;
             if existing.is_none() {
-                invite_repo
-                    .create_invite(game_id, user_id)
-                    .await
-                    .map_err(|e| {
-                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                invite_repo.create_invite(game_id, user_id).await?;
             }
         }
         Ok(())
@@ -95,16 +79,11 @@ impl GameService {
     ) -> Result<crate::database::models::player::Model, GameServiceError> {
         let _guard = self.accept_invite_lock(game_id).await;
 
-        let txn = self.db.begin().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         if game_model.status != GameStatus::Pending {
@@ -120,10 +99,7 @@ impl GameService {
             .filter(player::Column::GameId.eq(game_id))
             .filter(player::Column::UserId.eq(user_id))
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         if existing_player.is_some() {
             txn.rollback().await.ok();
             return Err(GameServiceError::AlreadyJoined);
@@ -134,19 +110,13 @@ impl GameService {
             .filter(game_invite::Column::InvitedUserId.eq(user_id))
             .filter(game_invite::Column::Status.eq(InviteStatus::Pending))
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::NotInvited)?;
 
         let player_count: u64 = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .count(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         if player_count >= game_model.max_players as u64 {
             txn.rollback().await.ok();
@@ -160,10 +130,7 @@ impl GameService {
         let profile = player_profile::Entity::find()
             .filter(player_profile::Column::UserId.eq(user_id))
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or_else(|| GameServiceError::ProfileNotFound)?;
 
         if let Some(frozen_until) = profile.frozen_until {
@@ -205,9 +172,7 @@ impl GameService {
         profile_active.credit = ActiveValue::Set(final_credit);
         profile_active.frozen_until = ActiveValue::Set(frozen_until_val);
         profile_active.updated_at = ActiveValue::Set(now);
-        profile_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        profile_active.update(&txn).await?;
 
         let new_player_id = Uuid::new_v4();
         let player_active = player::ActiveModel {
@@ -227,16 +192,12 @@ impl GameService {
             if is_unique_violation(&e) {
                 return Err(GameServiceError::AlreadyJoined);
             }
-            return Err(GameServiceError::Database(
-                Box::new(e) as Box<dyn std::error::Error + Send>
-            ));
+            return Err(GameServiceError::Database(e));
         }
 
         let mut invite_active: game_invite::ActiveModel = invite.into();
         invite_active.status = ActiveValue::Set(InviteStatus::Accepted);
-        invite_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        invite_active.update(&txn).await?;
 
         let current_positions: HashMap<i32, Uuid> = if game_model.player_positions.is_null() {
             HashMap::new()
@@ -261,13 +222,9 @@ impl GameService {
             })?);
         game_active.status = ActiveValue::Set(new_status);
         game_active.updated_at = ActiveValue::Set(now);
-        game_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        game_active.update(&txn).await?;
 
-        txn.commit().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         if let Some(ref redis) = self.redis_client {
             let event = GameEvent::PlayerJoined {
@@ -297,10 +254,7 @@ impl GameService {
 
         player::Entity::find_by_id(new_player_id)
             .one(&self.db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::PlayerNotFound)
     }
 
@@ -313,10 +267,7 @@ impl GameService {
 
         let invite = invite_repo
             .find_invite(game_id, user_id)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::NotInvited)?;
 
         if invite.status != InviteStatus::Pending {
@@ -325,10 +276,7 @@ impl GameService {
 
         let game = game::Entity::find_by_id(game_id)
             .one(&self.db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         if game.status != GameStatus::Pending {
@@ -337,10 +285,7 @@ impl GameService {
 
         invite_repo
             .update_invite_status(invite.id, InviteStatus::Declined)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         info!("User {} declined invite for game {}", user_id, game_id);
         Ok(())

@@ -21,17 +21,12 @@ impl GameService {
     ) -> Result<MultiplayerGameOutcome, GameServiceError> {
         const INVITE_TIMEOUT_MINUTES: i64 = 6;
 
-        let txn = self.db.begin().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let profile = player_profile::Entity::find()
             .filter(player_profile::Column::UserId.eq(creator_user_id))
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or_else(|| GameServiceError::ProfileNotFound)?;
 
         if let Some(frozen_until) = profile.frozen_until {
@@ -73,9 +68,7 @@ impl GameService {
         profile_active.credit = ActiveValue::Set(final_credit);
         profile_active.frozen_until = ActiveValue::Set(frozen_until);
         profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
-        profile_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        profile_active.update(&txn).await?;
 
         let game_id = Uuid::new_v4();
         let now = chrono::Utc::now();
@@ -103,12 +96,7 @@ impl GameService {
             game_run_id: ActiveValue::NotSet,
             kicked_players: ActiveValue::Set(serde_json::json!([])),
         };
-        let insert_result = game::Entity::insert(game_active)
-            .exec(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        let insert_result = game::Entity::insert(game_active).exec(&txn).await?;
         let inserted_game_id = insert_result.last_insert_id;
 
         let player_id = Uuid::new_v4();
@@ -124,33 +112,21 @@ impl GameService {
             kicked: ActiveValue::Set(false),
             kicked_at: ActiveValue::NotSet,
         };
-        player::Entity::insert(player_active)
-            .exec(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+        player::Entity::insert(player_active).exec(&txn).await?;
 
         let player_positions: HashMap<i32, Uuid> = HashMap::from([(0, creator_user_id)]);
         let game_model = game::Entity::find_by_id(inserted_game_id)
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or_else(|| GameServiceError::Internal("Game not found after insert".to_string()))?;
         let mut game_active: game::ActiveModel = game_model.into();
         game_active.player_positions =
             ActiveValue::Set(serde_json::to_value(player_positions).map_err(|e| {
                 GameServiceError::Internal(format!("Failed to serialize player_positions: {}", e))
             })?);
-        game_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        game_active.update(&txn).await?;
 
-        txn.commit().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         Ok(MultiplayerGameOutcome {
             game_id: inserted_game_id,

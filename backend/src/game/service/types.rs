@@ -87,7 +87,7 @@ pub(crate) struct CachedCard {
 #[derive(Error, Debug)]
 pub enum GameServiceError {
     #[error("Database error: {0}")]
-    Database(#[from] Box<dyn std::error::Error + Send>),
+    Database(#[from] sea_orm::DbErr),
     #[error("Game not found")]
     GameNotFound,
     #[error("Player not found")]
@@ -158,6 +158,15 @@ impl GameServiceError {
             GameServiceError::VersionConflict => "game_service:version_conflict",
             GameServiceError::Internal(_) => "game_service:internal",
             GameServiceError::ProfileNotFound => "game_service:profile_not_found",
+        }
+    }
+}
+
+impl From<sea_orm::TransactionError<sea_orm::DbErr>> for GameServiceError {
+    fn from(e: sea_orm::TransactionError<sea_orm::DbErr>) -> Self {
+        match e {
+            sea_orm::TransactionError::Connection(e) => GameServiceError::Database(e),
+            sea_orm::TransactionError::Transaction(e) => GameServiceError::Database(e),
         }
     }
 }

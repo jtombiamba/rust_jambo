@@ -17,16 +17,11 @@ use super::GameService;
 
 impl GameService {
     pub async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameServiceError> {
-        let txn = self.db.begin().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         if game_model.status != GameStatus::Pending {
@@ -37,28 +32,20 @@ impl GameService {
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .all(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         for p in &players {
             if let Some(uid) = p.user_id {
                 let profile = player_profile::Entity::find()
                     .filter(player_profile::Column::UserId.eq(uid))
                     .one(&txn)
-                    .await
-                    .map_err(|e| {
-                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    .await?;
                 if let Some(profile_model) = profile {
                     let mut profile_active: player_profile::ActiveModel = profile_model.into();
                     profile_active.credit =
                         ActiveValue::Set(profile_active.credit.unwrap() + game_model.bet);
                     profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
-                    profile_active.update(&txn).await.map_err(|e| {
-                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    profile_active.update(&txn).await?;
                 }
             }
         }
@@ -67,29 +54,20 @@ impl GameService {
         game_active.status = ActiveValue::Set(GameStatus::Cancelled);
         game_active.updated_at = ActiveValue::Set(chrono::Utc::now());
         game_active.finished_at = ActiveValue::Set(Some(chrono::Utc::now()));
-        game_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        game_active.update(&txn).await?;
 
         let pending_invites = game_invite::Entity::find()
             .filter(game_invite::Column::GameId.eq(game_id))
             .filter(game_invite::Column::Status.eq(InviteStatus::Pending))
             .all(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         for inv in pending_invites {
             let mut inv_active: game_invite::ActiveModel = inv.into();
             inv_active.status = ActiveValue::Set(InviteStatus::Declined);
-            inv_active.update(&txn).await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            inv_active.update(&txn).await?;
         }
 
-        txn.commit().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         info!("Game cancelled: game_id={}", game_id);
 
@@ -117,16 +95,11 @@ impl GameService {
         kicked_player_id: Uuid,
         all_players: &[player::Model],
     ) -> Result<(), GameServiceError> {
-        let txn = self.db.begin().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         if game_model.status != GameStatus::Active {
@@ -143,9 +116,7 @@ impl GameService {
         let mut kicked_active: player::ActiveModel = kicked_player.clone().into();
         kicked_active.kicked = ActiveValue::Set(true);
         kicked_active.kicked_at = ActiveValue::Set(Some(chrono::Utc::now()));
-        kicked_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        kicked_active.update(&txn).await?;
 
         // Rebuild player_positions: keep only non-kicked players
         let active_players: Vec<&player::Model> =
@@ -174,21 +145,15 @@ impl GameService {
                 })?,
             );
             game_active.stall_warning_sent_at = ActiveValue::Set(None);
-            game_active.update(&txn).await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            game_active.update(&txn).await?;
 
             // Process payment: remaining player gets kicked player's bet
             let bet = game_model.bet;
             let mut winner_active: player::ActiveModel = (**winner).clone().into();
             winner_active.credits = ActiveValue::Set(winner.credits + bet);
-            winner_active.update(&txn).await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            winner_active.update(&txn).await?;
 
-            txn.commit().await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            txn.commit().await?;
 
             info!(
                 "Player {} kicked from game {}, {} remaining -> {} wins by forfeit",
@@ -259,9 +224,7 @@ impl GameService {
         for (new_pos, &active) in active_players.iter().enumerate() {
             let mut p_active: player::ActiveModel = (*active).clone().into();
             p_active.position = ActiveValue::Set(new_pos as i32);
-            p_active.update(&txn).await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            p_active.update(&txn).await?;
         }
 
         // Advance turn if the kicked player was the current player
@@ -288,13 +251,9 @@ impl GameService {
         game_active.rank = ActiveValue::Set(Some(new_rank));
         game_active.updated_at = ActiveValue::Set(chrono::Utc::now());
         game_active.stall_warning_sent_at = ActiveValue::Set(None);
-        game_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        game_active.update(&txn).await?;
 
-        txn.commit().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         info!(
             "Player {} kicked from game {}, {} players remaining, new rank {}",
@@ -348,10 +307,7 @@ impl GameService {
             .filter(game::Column::GameMode.eq(GameMode::Multiplayer))
             .filter(game::Column::InviteExpiresAt.lte(now))
             .all(&self.db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         let mut cancelled = 0u64;
         for g in expired_games {
@@ -379,16 +335,11 @@ impl GameService {
             cards
         };
 
-        let txn = self.db.begin().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let txn = self.db.begin().await?;
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         if game_model.status != GameStatus::Ready {
@@ -404,10 +355,7 @@ impl GameService {
             .filter(player::Column::GameId.eq(game_id))
             .order_by_asc(player::Column::Position)
             .all(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         let num_players = players.len();
         if num_players < 2 {
@@ -451,10 +399,7 @@ impl GameService {
 
         game_card::Entity::insert_many(card_models)
             .exec(&txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         let initial_rank = 0i32;
         let first_player_id = player_ids[0];
@@ -464,13 +409,9 @@ impl GameService {
         game_active.rank = ActiveValue::Set(Some(initial_rank));
         game_active.roll = ActiveValue::Set(1);
         game_active.updated_at = ActiveValue::Set(now);
-        game_active.update(&txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        game_active.update(&txn).await?;
 
-        txn.commit().await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        txn.commit().await?;
 
         info!(
             "Game started: game_id={}, players={}, first_turn={}",
