@@ -10,12 +10,13 @@ pub const RANK_END: u8 = 10;
 
 /// Multiplier applied to the bet when checking credit solvability at game join time.
 ///
-/// A KORA finish doubles the bet for losers (×2), and a Double KORA quadruples it (×4).
-/// To prevent players from going into negative credit after a KORA, we require
-/// `profile.credit >= bet * KORA_CREDIT_MULTIPLIER` before allowing them to join.
-///
-/// Set to 2 to cover KORA (×2). Set to 4 to also cover Double KORA (×4).
+/// A KORA finish doubles the bet for losers (×2). We require
+/// `profile.credit >= bet * KORA_CREDIT_MULTIPLIER` before allowing players to join.
 pub const KORA_CREDIT_MULTIPLIER: i32 = 2;
+
+/// Multiplier applied to the bet for a Double KORA finish (×4).
+/// A Double KORA occurs when the same player wins rounds 4 and 5 both with a 3.
+pub const DOUBLE_KORA_CREDIT_MULTIPLIER: i32 = 4;
 
 pub static BOT_THINKING_DELAY_MS: LazyLock<u64> = LazyLock::new(|| {
     std::env::var("BOT_THINKING_DELAY_MS")
@@ -34,6 +35,8 @@ mod tests {
         assert_eq!(CARDS_PER_PLAYER, 5);
         assert_eq!(TOTAL_CARDS, 32);
         assert_eq!(SUITS.len(), 4);
+        assert_eq!(KORA_CREDIT_MULTIPLIER, 2);
+        assert_eq!(DOUBLE_KORA_CREDIT_MULTIPLIER, 4);
     }
 
     #[test]

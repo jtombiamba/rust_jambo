@@ -10,7 +10,9 @@ use uuid::Uuid;
 
 use crate::database::models::{game, game_card, player, player_profile, GameStatus};
 use crate::game::card_mapping::Card;
-use crate::game::constants::CARDS_PER_PLAYER;
+use crate::game::constants::{
+    CARDS_PER_PLAYER, DOUBLE_KORA_CREDIT_MULTIPLIER, KORA_CREDIT_MULTIPLIER,
+};
 use crate::game::payment::calculate_payment;
 use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
 use crate::game::service::types::{GameServiceError, RoundEvalTimer, RoundEvaluationResult};
@@ -163,7 +165,26 @@ impl GameService {
 
         if game_ends {
             if round_result.is_kora {
-                final_status = GameStatus::Kora;
+                let round_4_winner_id = game_model.winner_id;
+                let round_5_winner_id = player_positions[winner_pos];
+
+                let is_double_kora = round_4_winner_id == Some(round_5_winner_id)
+                    && game_card::Entity::find()
+                        .filter(game_card::Column::PlayerId.eq(round_5_winner_id))
+                        .filter(game_card::Column::Round.eq(4))
+                        .filter(game_card::Column::Played.eq(true))
+                        .one(txn)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|c| c.card_index % 8 == 0)
+                        .unwrap_or(false);
+
+                if is_double_kora {
+                    final_status = GameStatus::DoubleKora;
+                } else {
+                    final_status = GameStatus::Kora;
+                }
             } else {
                 final_status = GameStatus::Finished;
             }
@@ -260,8 +281,8 @@ impl GameService {
             .ok_or_else(|| GameServiceError::Internal("Winner not in player list".to_string()))?;
 
         let bet_multiplier = match result.final_status {
-            GameStatus::Kora => 2,
-            GameStatus::DoubleKora => 4,
+            GameStatus::Kora => KORA_CREDIT_MULTIPLIER,
+            GameStatus::DoubleKora => DOUBLE_KORA_CREDIT_MULTIPLIER,
             _ => 1,
         };
 

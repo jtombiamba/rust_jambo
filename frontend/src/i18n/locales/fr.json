@@ -194,7 +194,7 @@
     "koraText1": "La mise est doublée à 20 crédits par joueur.",
     "koraText2": "Le gagnant reçoit 60 crédits (3 × 20).",
     "doubleKora": "Double Kora (Mise quadruplée)",
-    "doubleKoraText": "Si la carte gagnante est un 3 ET que personne n'a fourni la couleur demandée, cela déclenche un Double Kora :",
+    "doubleKoraText": "Si la manche 5 se termine par un KORA et que le même joueur a aussi gagné la manche 4 avec un 3, cela déclenche un Double Kora :",
     "doubleKoraText1": "La mise est quadruplée à 40 crédits par joueur.",
     "doubleKoraText2": "Le gagnant reçoit 120 crédits (3 × 40).",
     "gameEnd": "Fin de partie",
