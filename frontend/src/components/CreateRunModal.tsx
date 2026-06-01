@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import { extractApiError } from '../utils/errors'
 import { useTranslation } from 'react-i18next'
 
 interface Props {
@@ -66,7 +67,7 @@ const CreateRunModal: React.FC<Props> = ({ isOpen, roomId, onClose, onCreated })
       onCreated()
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('rooms.failedCreateRun')
+      const msg = extractApiError(err).message || t('rooms.failedCreateRun')
       setError(msg)
     } finally {
       setCreating(false)

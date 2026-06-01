@@ -26,7 +26,7 @@ pub enum OutgoingMessage {
     /// Acknowledgment of a join.
     GameJoined { game_id: Uuid },
     /// Error response.
-    Error { message: String },
+    Error { message: String, source: String },
     /// Pong response to a ping.
     Pong,
 }
@@ -89,10 +89,12 @@ mod tests {
     fn test_outgoing_error_serialization() {
         let msg = OutgoingMessage::Error {
             message: "something went wrong".into(),
+            source: "ws:test".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["type"], "error");
         assert_eq!(parsed["message"], "something went wrong");
+        assert_eq!(parsed["source"], "ws:test");
     }
 }

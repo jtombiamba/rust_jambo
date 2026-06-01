@@ -56,6 +56,35 @@ pub enum GameError {
     AccountFrozen { until: String },
     #[error("{0}")]
     Internal(#[source] Box<dyn std::error::Error + Send>),
+    #[error("Player profile not found")]
+    ProfileNotFound,
+}
+
+impl GameError {
+    pub fn source(&self) -> &'static str {
+        match self {
+            GameError::Database(_) => "game:database",
+            GameError::GameNotFound => "game:game_not_found",
+            GameError::PlayerNotFound => "game:player_not_found",
+            GameError::CardNotFound => "game:card_not_found",
+            GameError::NotYourTurn => "game:not_your_turn",
+            GameError::InvalidCard => "game:invalid_card",
+            GameError::RoundNotComplete => "game:round_not_complete",
+            GameError::GameFinished => "game:game_finished",
+            GameError::InsufficientCredits { .. } => "game:insufficient_credits",
+            GameError::GameNotPending => "game:game_not_pending",
+            GameError::NotCreator => "game:not_creator",
+            GameError::NotInvited => "game:not_invited",
+            GameError::AlreadyJoined => "game:already_joined",
+            GameError::GameFull => "game:game_full",
+            GameError::InviteExpired => "game:invite_expired",
+            GameError::CreatorCannotJoin => "game:creator_cannot_join",
+            GameError::GameNotReady => "game:game_not_ready",
+            GameError::AccountFrozen { .. } => "game:account_frozen",
+            GameError::Internal(_) => "game:internal",
+            GameError::ProfileNotFound => "game:profile_not_found",
+        }
+    }
 }
 
 #[cfg(test)]

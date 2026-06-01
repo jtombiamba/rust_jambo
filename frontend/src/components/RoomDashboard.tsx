@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import axios from 'axios'
 import { useTranslation } from 'react-i18next'
 import { useRoomStore } from '../stores/useRoomStore'
+import { extractApiError } from '../utils/errors'
 import GameRunPanel from './GameRunPanel'
 
 interface Props {
@@ -73,7 +74,7 @@ const RoomDashboard: React.FC<Props> = ({ roomId, onBack, onStartGame, onCreateR
         }
       })
       .catch((err) => {
-        setError(err.response?.data?.error || t('rooms.failedLoad'))
+        setError(extractApiError(err).message || t('rooms.failedLoad'))
       })
       .finally(() => setLoading(false))
   }, [roomId, setActiveRun, t])
@@ -111,8 +112,7 @@ const RoomDashboard: React.FC<Props> = ({ roomId, onBack, onStartGame, onCreateR
       await axios.post(`/api/me/rooms/${roomId}/leave`)
       onBack()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('rooms.failedLeave')
-      showT(msg)
+      showT(extractApiError(err).message || t('rooms.failedLeave'))
     }
   }
 

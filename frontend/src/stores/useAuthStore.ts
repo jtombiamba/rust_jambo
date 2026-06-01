@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import axios from 'axios'
+import { extractApiError } from '../utils/errors'
 
 export interface UserInfo {
   id: string
@@ -80,12 +81,12 @@ export const useAuthStore = create<AuthState>((set) => ({
       })
       return true
     } catch (err: unknown) {
-      const errorData = (err as { response?: { data?: { error?: string; field?: string } } })
-        .response?.data
+      const error = extractApiError(err)
+      const field = axios.isAxiosError(err) ? err.response?.data?.field : undefined
       set({
         authError: {
-          error: errorData?.error || 'Registration failed',
-          field: errorData?.field,
+          error: error.message,
+          field,
         },
         authLoading: false,
       })
@@ -105,12 +106,12 @@ export const useAuthStore = create<AuthState>((set) => ({
       })
       return true
     } catch (err: unknown) {
-      const errorData = (err as { response?: { data?: { error?: string; field?: string } } })
-        .response?.data
+      const error = extractApiError(err)
+      const field = axios.isAxiosError(err) ? err.response?.data?.field : undefined
       set({
         authError: {
-          error: errorData?.error || 'Login failed',
-          field: errorData?.field,
+          error: error.message,
+          field,
         },
         authLoading: false,
       })

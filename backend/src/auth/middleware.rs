@@ -6,11 +6,11 @@ use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage,
 };
-use serde_json::json;
 
 use super::config::AuthConfig;
 use super::extractors::AuthenticatedUser;
 use super::jwt;
+use crate::api::dto::responses::ApiErrorResponse;
 use crate::i18n::{extract_lang, Translator};
 use crate::messaging::RedisClient;
 
@@ -84,10 +84,17 @@ where
         let claims = match claims {
             Some(c) => c,
             None => {
-                let error = actix_web::error::ErrorUnauthorized(
-                    json!({"success": false, "error": translator.t("auth.auth_required", lang)})
-                        .to_string(),
-                );
+                let error_msg = serde_json::to_string(&ApiErrorResponse {
+                    success: false,
+                    error: translator.t("auth.auth_required", lang),
+                    field: None,
+                    source: "auth:middleware".to_string(),
+                    request_id: crate::observability::CORRELATION_ID
+                        .try_with(|id| id.to_string())
+                        .ok(),
+                })
+                .unwrap();
+                let error = actix_web::error::ErrorUnauthorized(error_msg);
                 return Box::pin(async move { Err(error) });
             }
         };
@@ -110,10 +117,17 @@ where
                     .await
                     .unwrap_or(false)
                 {
-                    return Err(actix_web::error::ErrorUnauthorized(
-                        json!({"success": false, "error": translator.t("auth.token_revoked", lang)})
-                            .to_string(),
-                    ));
+                    let error_msg = serde_json::to_string(&ApiErrorResponse {
+                        success: false,
+                        error: translator.t("auth.token_revoked", lang),
+                        field: None,
+                        source: "auth:middleware".to_string(),
+                        request_id: crate::observability::CORRELATION_ID
+                            .try_with(|id| id.to_string())
+                            .ok(),
+                    })
+                    .unwrap();
+                    return Err(actix_web::error::ErrorUnauthorized(error_msg));
                 }
             }
 

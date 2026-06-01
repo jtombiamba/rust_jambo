@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { useSearchParams, useNavigate } from 'react-router-dom'
+import { extractApiError } from '../utils/errors'
 
 export default function PasswordReset() {
   const { t } = useTranslation()
@@ -52,11 +53,7 @@ export default function PasswordReset() {
       })
       setSuccess(true)
     } catch (err: unknown) {
-      if (axios.isAxiosError(err) && err.response?.data?.error) {
-        setError(err.response.data.error)
-      } else {
-        setError(t('password.failedReset'))
-      }
+      setError(extractApiError(err).message || t('password.failedReset'))
     } finally {
       setSubmitting(false)
     }

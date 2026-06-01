@@ -4,6 +4,10 @@ pub mod ws;
 
 use uuid::Uuid;
 
+tokio::task_local! {
+    pub static CORRELATION_ID: Uuid;
+}
+
 /// Newtype for safe storage in actix_web::dev::Extensions.
 #[derive(Debug, Clone, Copy)]
 pub struct CorrelationId(pub Uuid);

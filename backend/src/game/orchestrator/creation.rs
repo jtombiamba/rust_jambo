@@ -32,9 +32,7 @@ impl GameOrchestrator {
             .find_by_user_id(user_id)
             .await
             .map_err(GameError::Database)?
-            .ok_or_else(|| {
-                GameError::Internal(Box::new(std::io::Error::other("Player profile not found")))
-            })?;
+            .ok_or(GameError::ProfileNotFound)?;
 
         if let Some(frozen_until) = profile.frozen_until {
             if frozen_until > chrono::Utc::now() {

@@ -11,6 +11,7 @@ use actix_web::{
 };
 use redis::RedisError;
 
+use crate::api::dto::responses::ApiErrorResponse;
 use crate::i18n::{extract_lang, Translator};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
@@ -295,7 +296,15 @@ where
 
                 let response = HttpResponse::TooManyRequests()
                     .insert_header(("Retry-After", result.retry_after_secs.to_string()))
-                    .body(translator.t("rate_limit.exceeded", lang));
+                    .json(ApiErrorResponse {
+                        success: false,
+                        error: translator.t("rate_limit.exceeded", lang),
+                        field: None,
+                        source: "rate_limiter".to_string(),
+                        request_id: crate::observability::CORRELATION_ID
+                            .try_with(|id| id.to_string())
+                            .ok(),
+                    });
 
                 return Err(actix_web::error::InternalError::from_response(
                     "rate limit exceeded",

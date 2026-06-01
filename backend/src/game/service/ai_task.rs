@@ -27,10 +27,7 @@ impl GameService {
 
         let game = game_repo
             .find_by_id(game_id)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         let players_future = player_repo.list_by_game(game_id);
@@ -40,17 +37,11 @@ impl GameService {
 
         let round_cards_future = card_repo.list_by_game_and_round(game_id, current_round);
 
-        let players = players_future.await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let players = players_future.await?;
 
-        let bot_cards = bot_cards_future.await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let bot_cards = bot_cards_future.await?;
 
-        let round_cards = round_cards_future.await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let round_cards = round_cards_future.await?;
 
         let player_positions: std::collections::HashMap<Uuid, i32> = {
             if game.player_positions.is_null() {

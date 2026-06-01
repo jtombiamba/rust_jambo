@@ -63,28 +63,19 @@ impl GameService {
     ) -> Result<CachedGameState, GameServiceError> {
         let game = game::Entity::find_by_id(game_id)
             .one(&self.db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .order_by_asc(player::Column::Position)
             .all(&self.db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         let cards = game_card::Entity::find()
             .filter(game_card::Column::GameId.eq(game_id))
             .all(&self.db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         let cached_players: Vec<CachedPlayer> = players
             .iter()
@@ -140,19 +131,13 @@ impl GameService {
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .all(db)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         for player_model in players {
             let cards = game_card::Entity::find()
                 .filter(game_card::Column::PlayerId.eq(player_model.id))
                 .all(db)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
             let played_in_round = cards.iter().any(|c| c.played && c.round == Some(round));
             if !played_in_round {
                 return Ok(false);

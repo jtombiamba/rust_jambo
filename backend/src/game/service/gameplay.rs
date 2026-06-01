@@ -30,9 +30,7 @@ impl GameService {
                 return Ok(true);
             } else {
                 let repo = GameCardRepository::new(self.db.clone());
-                let player_cards = repo.list_by_player(player_id).await.map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                let player_cards = repo.list_by_player(player_id).await?;
                 let unplayed_cards: Vec<i32> = player_cards
                     .iter()
                     .filter(|gc| !gc.played)
@@ -69,17 +67,12 @@ impl GameService {
         let mut attempt = 0u32;
 
         'retry: loop {
-            let txn = self.db.begin().await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            let txn = self.db.begin().await?;
 
             // 1. Fetch game and verify it's not finished (via txn)
             let game = game::Entity::find_by_id(game_id)
                 .one(&txn)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
+                .await?
                 .ok_or(GameServiceError::GameNotFound)?;
             if game.status == GameStatus::Finished
                 || game.status == GameStatus::Kora
@@ -96,10 +89,7 @@ impl GameService {
                 .filter(player::Column::GameId.eq(game_id))
                 .order_by_asc(player::Column::Position)
                 .all(&txn)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
             let current_player = players
                 .iter()
                 .find(|p| p.id == player_id)
@@ -115,10 +105,7 @@ impl GameService {
             let game_cards = game_card::Entity::find()
                 .filter(game_card::Column::PlayerId.eq(player_id))
                 .all(&txn)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
             let target_card = game_cards
                 .iter()
                 .find(|gc| gc.card_index == card_index && !gc.played)
@@ -141,9 +128,7 @@ impl GameService {
             card_active.played = ActiveValue::Set(true);
             card_active.played_at = ActiveValue::Set(Some(chrono::Utc::now()));
             card_active.round = ActiveValue::Set(Some(game.roll));
-            card_active.update(&txn).await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            card_active.update(&txn).await?;
 
             // 6a. Compute updated current_winning_card and current_winning_player_position
             let new_winning_card = if current_winning_card.is_none() {
@@ -212,10 +197,7 @@ impl GameService {
                     .filter(game::Column::Id.eq(game_id))
                     .filter(game::Column::UpdatedAt.eq(read_version))
                     .exec(&txn)
-                    .await
-                    .map_err(|e| {
-                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    .await?;
 
                 if update_result.rows_affected == 0 {
                     txn.rollback().await.ok();
@@ -238,9 +220,7 @@ impl GameService {
             }
 
             // 9. Commit transaction
-            txn.commit().await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            txn.commit().await?;
 
             // === PHASE 2: Post-transaction operations (best-effort, non-critical) ===
 
@@ -306,10 +286,7 @@ impl GameService {
             let card_repo = GameCardRepository::new(self.db.clone());
             let card = card_repo
                 .list_by_player(player_id)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?
+                .await?
                 .into_iter()
                 .find(|gc| gc.id == target_card.id)
                 .ok_or(GameServiceError::Internal("Card disappeared".to_string()))?;
@@ -330,14 +307,9 @@ impl GameService {
         let player_repo = PlayerRepository::new(self.db.clone());
         let game = game_repo
             .find_by_id(game_id)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
-        let players = player_repo.list_by_game(game_id).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let players = player_repo.list_by_game(game_id).await?;
         let active_players: Vec<_> = players.iter().filter(|p| !p.kicked).collect();
         let current_rank = game.rank.unwrap_or(0) as usize;
         let player_id =

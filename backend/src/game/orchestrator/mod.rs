@@ -55,7 +55,8 @@ fn map_service_error(e: crate::game::service::GameServiceError) -> GameError {
         GameServiceError::VersionConflict => GameError::Internal(Box::new(std::io::Error::other(
             "Game state was modified concurrently, please retry",
         ))),
-        GameServiceError::Database(e) => GameError::Internal(e),
+        GameServiceError::Database(e) => GameError::Database(e),
+        GameServiceError::ProfileNotFound => GameError::ProfileNotFound,
     }
 }
 

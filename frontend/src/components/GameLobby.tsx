@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useWebSocket, GameEvent } from '../hooks/useWebSocket'
+import { extractApiError } from '../utils/errors'
 
 interface LobbyPlayer {
   pseudo: string
@@ -220,7 +221,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       showToast(t('lobby.invitedUser', { pseudo: userItem.pseudo }))
       setSlotPseudos(prev => ({ ...prev, [slot]: `@${userItem.pseudo}` }))
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('lobby.failedSendInvite'))
+      showToast(extractApiError(err).message || t('lobby.failedSendInvite'))
     } finally {
       setSlotInviting(prev => ({ ...prev, [slot]: false }))
     }
@@ -232,7 +233,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       const res = await axios.post(`/api/games/${gameId}/start`)
       onGameStart(res.data)
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('lobby.failedStartGame'))
+      showToast(extractApiError(err).message || t('lobby.failedStartGame'))
     } finally {
       setStarting(false)
     }

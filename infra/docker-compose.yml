@@ -187,6 +187,8 @@ services:
       SMTP_TLS: "false"
       SMTP_FROM_EMAIL: noreply@fapfap.local
       SMTP_FROM_NAME: "FapFap Game"
+    expose:
+      - "10080"
     volumes:
       - ../backend/migration:/app/migration:ro
     healthcheck:
@@ -208,6 +210,8 @@ services:
       mailhog:
         condition: service_started
     environment:
+      HOST: 0.0.0.0
+      PORT: 8080
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
       REDIS_URL: redis://redis:6379
       RUST_LOG: info
@@ -232,6 +236,8 @@ services:
       FREEZE_DURATION_SECS: 1800
       UNFREEZE_CREDIT_NO_PAYMENT: 250
       DEFAULT_CREDIT: 500
+    expose:
+      - "9080"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9080/metrics"]

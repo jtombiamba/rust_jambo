@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { extractApiError } from '../utils/errors'
 import { useTranslation } from 'react-i18next'
 import { ActiveRun } from '../stores/useRoomStore'
 
@@ -34,7 +35,7 @@ const GameRunPanel: React.FC<Props> = ({ run, currentGameId, onStartGame, onBack
         showToast(t('rooms.gameStarted', { index: res.data.game_index + 1, total: res.data.total_games }))
       }
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('run.failedStart')
+      const msg = extractApiError(err).message || t('run.failedStart')
       setError(msg)
     } finally {
       setStarting(false)

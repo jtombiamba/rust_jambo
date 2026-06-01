@@ -14,6 +14,7 @@ import { useGameStore } from './stores/useGameStore'
 import { useAuthStore } from './stores/useAuthStore'
 import { useLanguageStore } from './stores/useLanguageStore'
 import { useRoomStore } from './stores/useRoomStore'
+import { extractApiError } from './utils/errors'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import RoomList from './components/RoomList'
 import RoomDashboard from './components/RoomDashboard'
@@ -108,8 +109,8 @@ function AppContent() {
         }
       })
       .catch((err) => {
-        const msg = err.response?.data?.error || t('dashboard.failedJoinGame')
-        showToast(msg, 'error')
+        const error = extractApiError(err)
+        showToast(error.message || t('dashboard.failedJoinGame'), 'error', error.requestId)
       })
   }, [showToast, t])
 
@@ -204,9 +205,9 @@ function AppContent() {
         })
         .catch(err => {
           console.error('Failed to start game', err)
-          const msg = err.response?.data?.error || 'Unknown error'
-          setError(msg)
-          showToast(msg, 'error')
+          const error = extractApiError(err)
+          setError(error.message)
+          showToast(error.message, 'error', error.requestId)
           setStartingGame(false)
         })
     } else {
@@ -217,9 +218,9 @@ function AppContent() {
         })
         .catch(err => {
           console.error('Failed to start game', err)
-          const msg = err.response?.data?.error || 'Unknown error'
-          setError(msg)
-          showToast(msg, 'error')
+          const error = extractApiError(err)
+          setError(error.message)
+          showToast(error.message, 'error', error.requestId)
           setStartingGame(false)
         })
     }
@@ -235,11 +236,11 @@ function AppContent() {
       })
       .catch(err => {
         console.error('Failed to create multiplayer game', err)
-        const msg = err.response?.data?.error || 'Unknown error'
-        setError(msg)
-        showToast(msg, 'error')
+        const error = extractApiError(err)
+        setError(error.message)
+        showToast(error.message, 'error', error.requestId)
         setStartingGame(false)
-        return { gameId: '', error: msg }
+        return { gameId: '', error: error.message }
       })
   }
 
@@ -253,9 +254,9 @@ function AppContent() {
     })
       .catch(err => {
         console.error('Failed to play card', err);
-        const msg = err.response?.data?.error || 'Failed to play card';
-        setCardError(msg);
-        showToast(msg, 'error');
+        const error = extractApiError(err);
+        setCardError(error.message);
+        showToast(error.message, 'error', error.requestId);
       })
       .finally(() => setPlayingCard(null));
   };

@@ -1,6 +1,7 @@
 use actix_web::{Error, FromRequest, HttpMessage, HttpRequest};
-use serde_json::json;
 use uuid::Uuid;
+
+use crate::api::dto::responses::ApiErrorResponse;
 
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
@@ -19,7 +20,16 @@ impl FromRequest for AuthenticatedUser {
             .cloned()
             .ok_or_else(|| {
                 actix_web::error::ErrorUnauthorized(
-                    json!({"success": false, "error": "Authentication required"}).to_string(),
+                    serde_json::to_string(&ApiErrorResponse {
+                        success: false,
+                        error: "Authentication required".to_string(),
+                        field: None,
+                        source: "auth:extractor".to_string(),
+                        request_id: crate::observability::CORRELATION_ID
+                            .try_with(|id| id.to_string())
+                            .ok(),
+                    })
+                    .unwrap(),
                 )
             });
         std::future::ready(result)

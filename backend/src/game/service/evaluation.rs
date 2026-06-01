@@ -29,10 +29,7 @@ impl GameService {
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .all(txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
 
         for player_model in &players {
             if player_model.kicked {
@@ -41,10 +38,7 @@ impl GameService {
             let cards = game_card::Entity::find()
                 .filter(game_card::Column::PlayerId.eq(player_model.id))
                 .all(txn)
-                .await
-                .map_err(|e| {
-                    GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                })?;
+                .await?;
             let played_in_round = cards.iter().any(|c| c.played && c.round == Some(round));
             if !played_in_round {
                 return Ok(false);
@@ -77,10 +71,7 @@ impl GameService {
             .filter(game_card::Column::Played.eq(true))
             .order_by_asc(game_card::Column::PlayedAt)
             .all(txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         info!(
             "evaluate_round_in_txn: found {} played cards for round {}",
             played_cards.len(),
@@ -95,10 +86,7 @@ impl GameService {
             .filter(player::Column::GameId.eq(game_id))
             .order_by_asc(player::Column::Position)
             .all(txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            .await?;
         let active_players: Vec<&player::Model> = players.iter().filter(|p| !p.kicked).collect();
         let player_positions: Vec<Uuid> = active_players.iter().map(|p| p.id).collect();
 
@@ -165,10 +153,7 @@ impl GameService {
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
 
         let read_version = game_model.updated_at;
@@ -243,9 +228,7 @@ impl GameService {
             );
         }
 
-        let update_result = update.exec(txn).await.map_err(|e| {
-            GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-        })?;
+        let update_result = update.exec(txn).await?;
 
         if update_result.rows_affected == 0 {
             return Err(GameServiceError::VersionConflict);
@@ -289,10 +272,7 @@ impl GameService {
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
-            .await
-            .map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?
+            .await?
             .ok_or(GameServiceError::GameNotFound)?;
         let bet = game_model.bet * bet_multiplier;
 
@@ -302,18 +282,13 @@ impl GameService {
             let new_credits = player.credits + game_model.bet + credits[idx];
             let mut player_active: player::ActiveModel = player.clone().into();
             player_active.credits = ActiveValue::Set(new_credits);
-            player_active.update(txn).await.map_err(|e| {
-                GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-            })?;
+            player_active.update(txn).await?;
 
             if let Some(user_id) = player.user_id {
                 let profile = player_profile::Entity::find()
                     .filter(player_profile::Column::UserId.eq(user_id))
                     .one(txn)
-                    .await
-                    .map_err(|e| {
-                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    .await?;
 
                 if let Some(profile_model) = profile {
                     let won = player.id == winner_id;
@@ -342,9 +317,7 @@ impl GameService {
                         profile_active.frozen_until = ActiveValue::Set(None);
                     }
                     profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
-                    profile_active.update(txn).await.map_err(|e| {
-                        GameServiceError::Database(Box::new(e) as Box<dyn std::error::Error + Send>)
-                    })?;
+                    profile_active.update(txn).await?;
                 }
             }
         }

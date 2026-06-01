@@ -3,6 +3,7 @@ import axios from 'axios'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useLanguageStore } from '../stores/useLanguageStore'
+import { extractApiError } from '../utils/errors'
 import GameRules from './GameRules'
 import LeaderboardPanel from './LeaderboardPanel'
 import LanguageSwitcher from './LanguageSwitcher'
@@ -253,8 +254,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
 
       await fetchData()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Top up failed'
-      showToast(msg)
+      showToast(extractApiError(err).message || 'Top up failed')
     } finally {
       setToppingUp(false)
     }
@@ -309,8 +309,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
 
       await fetchData()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } }).response?.data?.error || 'Unfreeze failed'
-      showToast(msg)
+      showToast(extractApiError(err).message || 'Unfreeze failed')
     } finally {
       setUnfreezing(false)
     }
@@ -369,7 +368,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
         try {
           await axios.post(`/api/games/${result.gameId}/invites`, { pseudos: filledPseudos })
         } catch (err: unknown) {
-          showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('dashboard.failedSendInvites'))
+          showToast(extractApiError(err).message || t('dashboard.failedSendInvites'))
         }
       }
       onViewLobby(result.gameId)
@@ -393,7 +392,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
       onViewLobby(gameId)
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('dashboard.failedJoinGame'))
+      showToast(extractApiError(err).message || t('dashboard.failedJoinGame'))
     } finally {
       setJoiningGameId(null)
     }
@@ -406,7 +405,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
       showToast(t('dashboard.invitationDeclined'))
     } catch (err: unknown) {
-      showToast((err as { response?: { data?: { error?: string } } }).response?.data?.error || t('dashboard.failedDeclineInvitation'))
+      showToast(extractApiError(err).message || t('dashboard.failedDeclineInvitation'))
     } finally {
       setJoiningGameId(null)
     }

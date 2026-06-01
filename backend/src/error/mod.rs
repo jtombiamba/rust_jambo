@@ -3,9 +3,9 @@ pub mod validation_error;
 
 use actix_web::{http::StatusCode, HttpResponse, ResponseError};
 use sea_orm::DbErr;
-use serde_json::json;
 use thiserror::Error;
 
+use crate::api::dto::responses::ApiErrorResponse;
 use crate::api::services::auth_service::AuthError;
 
 pub use game_error::GameError;
@@ -46,17 +46,28 @@ pub enum AppError {
     #[error("Configuration error: {0}")]
     Config(#[from] config::ConfigError),
 
-    #[error("WebSocket error: {0}")]
-    #[allow(dead_code)]
-    WebSocket(String),
-
-    #[error("Cache error: {0}")]
-    #[allow(dead_code)]
-    Cache(String),
-
     #[error("External service error: {0}")]
     #[allow(dead_code)]
     ExternalService(String),
+}
+
+impl AppError {
+    pub fn source(&self) -> &'static str {
+        match self {
+            AppError::Game(e) => e.source(),
+            AppError::Validation(e) => e.source(),
+            AppError::Database(_) => "app:database",
+            AppError::Internal(_) => "app:internal",
+            AppError::NotFound(_) => "app:not_found",
+            AppError::Forbidden(_) => "app:forbidden",
+            AppError::Unauthorized(_) => "app:unauthorized",
+            AppError::Conflict(_) => "app:conflict",
+            AppError::BadRequest(_) => "app:bad_request",
+            AppError::Serialization(_) => "app:serialization",
+            AppError::Config(_) => "app:config",
+            AppError::ExternalService(_) => "app:external_service",
+        }
+    }
 }
 
 impl From<std::io::Error> for AppError {
@@ -79,8 +90,6 @@ impl ResponseError for AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Serialization(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::WebSocket(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::Cache(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::ExternalService(_) => StatusCode::BAD_GATEWAY,
         }
     }
@@ -93,18 +102,28 @@ impl ResponseError for AppError {
         } else {
             self.to_string()
         };
-        HttpResponse::build(status).json(json!({
-            "success": false,
-            "error": error_message
-        }))
+        let request_id = crate::observability::CORRELATION_ID
+            .try_with(|id| id.to_string())
+            .ok();
+        if is_server_error {
+            tracing::error!(error = ?self, request_id = ?request_id, "Server error occurred");
+        }
+        HttpResponse::build(status).json(ApiErrorResponse {
+            success: false,
+            error: error_message,
+            field: None,
+            source: self.source().to_string(),
+            request_id,
+        })
     }
 }
 
 fn game_error_status_code(e: &GameError) -> StatusCode {
     match e {
-        GameError::GameNotFound | GameError::PlayerNotFound | GameError::CardNotFound => {
-            StatusCode::NOT_FOUND
-        }
+        GameError::GameNotFound
+        | GameError::PlayerNotFound
+        | GameError::CardNotFound
+        | GameError::ProfileNotFound => StatusCode::NOT_FOUND,
         GameError::NotYourTurn
         | GameError::InvalidCard
         | GameError::NotCreator

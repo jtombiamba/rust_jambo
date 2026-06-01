@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { extractApiError } from '../utils/errors'
 import { useTranslation } from 'react-i18next'
 
 interface Props {
@@ -29,7 +30,7 @@ const CreateRoomModal: React.FC<Props> = ({ isOpen, onClose, onCreated }) => {
       setName('')
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || t('rooms.failedCreate')
+      const msg = extractApiError(err).message || t('rooms.failedCreate')
       setError(msg)
     } finally {
       setCreating(false)

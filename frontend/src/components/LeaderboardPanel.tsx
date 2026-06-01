@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import axios from 'axios'
+import { extractApiError } from '../utils/errors'
 
 interface LeaderboardEntry {
   rank: number
@@ -32,7 +33,7 @@ export default function LeaderboardPanel() {
         setLoading(false)
       })
       .catch((err) => {
-        setError(err.response?.data?.error || t('leaderboard.failedToLoad'))
+        setError(extractApiError(err).message || t('leaderboard.failedToLoad'))
         setLoading(false)
       })
   }, [t])

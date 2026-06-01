@@ -2,9 +2,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::api::dto::auth::{
-    AuthResponse, ErrorResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest,
-    RegisterRequest, ResetPasswordRequest, ResetPasswordResponse, UserInfo,
+    AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, RegisterRequest,
+    ResetPasswordRequest, ResetPasswordResponse, UserInfo,
 };
+use crate::api::dto::responses::ApiErrorResponse;
 use crate::auth::config::AuthConfig;
 use crate::auth::{jwt, password};
 use crate::database::traits::UserRepoTrait;
@@ -32,6 +33,18 @@ pub enum AuthError {
     },
 }
 
+impl AuthError {
+    pub fn source(&self) -> &'static str {
+        match self {
+            AuthError::Validation { .. } => "auth:validation",
+            AuthError::Conflict { .. } => "auth:conflict",
+            AuthError::Unauthorized { .. } => "auth:unauthorized",
+            AuthError::Internal { .. } => "auth:internal",
+            AuthError::NotFound { .. } => "auth:not_found",
+        }
+    }
+}
+
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -46,44 +59,27 @@ impl std::fmt::Display for AuthError {
 
 impl actix_web::ResponseError for AuthError {
     fn error_response(&self) -> actix_web::HttpResponse {
-        use actix_web::http::StatusCode;
-        match self {
-            AuthError::Validation { error, field } => {
-                actix_web::HttpResponse::build(StatusCode::BAD_REQUEST).json(ErrorResponse {
-                    success: false,
-                    error: error.clone(),
-                    field: field.clone(),
-                })
-            }
-            AuthError::Conflict { error, field } => {
-                actix_web::HttpResponse::build(StatusCode::CONFLICT).json(ErrorResponse {
-                    success: false,
-                    error: error.clone(),
-                    field: field.clone(),
-                })
-            }
-            AuthError::Unauthorized { error } => {
-                actix_web::HttpResponse::build(StatusCode::UNAUTHORIZED).json(ErrorResponse {
-                    success: false,
-                    error: error.clone(),
-                    field: None,
-                })
-            }
+        let status = self.status_code();
+        let request_id = crate::observability::CORRELATION_ID
+            .try_with(|id| id.to_string())
+            .ok();
+        let (error_msg, field) = match self {
+            AuthError::Validation { error, field } => (error.clone(), field.clone()),
+            AuthError::Conflict { error, field } => (error.clone(), field.clone()),
+            AuthError::Unauthorized { error } => (error.clone(), None),
             AuthError::Internal { error } => {
-                actix_web::HttpResponse::InternalServerError().json(ErrorResponse {
-                    success: false,
-                    error: error.clone(),
-                    field: None,
-                })
+                tracing::error!(error = %error, request_id = ?request_id, "Auth internal error");
+                ("Internal server error".to_string(), None)
             }
-            AuthError::NotFound { error } => {
-                actix_web::HttpResponse::NotFound().json(ErrorResponse {
-                    success: false,
-                    error: error.clone(),
-                    field: None,
-                })
-            }
-        }
+            AuthError::NotFound { error } => (error.clone(), None),
+        };
+        actix_web::HttpResponse::build(status).json(ApiErrorResponse {
+            success: false,
+            error: error_msg,
+            field,
+            source: self.source().to_string(),
+            request_id,
+        })
     }
 
     fn status_code(&self) -> actix_web::http::StatusCode {
