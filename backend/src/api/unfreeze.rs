@@ -1,5 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse, ResponseError};
 use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::api::dto::requests::CaptureOrderRequest;
@@ -8,6 +9,7 @@ use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::messaging::RedisClient;
+use crate::observability::metrics::{PAYMENT_UNFREEZE_DURATION_SECONDS, PAYMENT_UNFREEZE_TOTAL};
 
 const UNFREEZE_CAPTURE_PREFIX: &str = "unfreeze_capture";
 const UNFREEZE_ORDER_PREFIX: &str = "unfreeze_order";
@@ -45,6 +47,7 @@ pub async fn create_unfreeze_order(
         config.frontend_url.trim_end_matches('/')
     );
 
+    let create_start = Instant::now();
     let order = match payment_service.create_order(&return_url, &cancel_url).await {
         Ok(o) => o,
         Err(e) => {
@@ -53,9 +56,17 @@ pub async fn create_unfreeze_order(
                 auth_user.user_id,
                 e
             );
+            PAYMENT_UNFREEZE_TOTAL.with_label_values(&["failed"]).inc();
+            PAYMENT_UNFREEZE_DURATION_SECONDS
+                .with_label_values(&["create_order"])
+                .observe(create_start.elapsed().as_secs_f64());
             return AppError::Internal("Failed to create payment order".into()).error_response();
         }
     };
+    PAYMENT_UNFREEZE_TOTAL.with_label_values(&["created"]).inc();
+    PAYMENT_UNFREEZE_DURATION_SECONDS
+        .with_label_values(&["create_order"])
+        .observe(create_start.elapsed().as_secs_f64());
 
     if let Some(mut redis_client) = redis.get_ref().clone() {
         let order_key = format!("{}:{}", UNFREEZE_ORDER_PREFIX, order.order_id);
@@ -116,6 +127,7 @@ pub async fn capture_unfreeze_order(
         }
     }
 
+    let capture_start = Instant::now();
     let result = match payment_service
         .capture_order(order_id, Some(&paypal_idem_key))
         .await
@@ -128,11 +140,20 @@ pub async fn capture_unfreeze_order(
                 order_id,
                 e
             );
+            PAYMENT_UNFREEZE_TOTAL.with_label_values(&["failed"]).inc();
+            PAYMENT_UNFREEZE_DURATION_SECONDS
+                .with_label_values(&["capture_order"])
+                .observe(capture_start.elapsed().as_secs_f64());
             return AppError::Internal("Failed to capture payment".into()).error_response();
         }
     };
 
+    PAYMENT_UNFREEZE_DURATION_SECONDS
+        .with_label_values(&["capture_order"])
+        .observe(capture_start.elapsed().as_secs_f64());
+
     if !result.success {
+        PAYMENT_UNFREEZE_TOTAL.with_label_values(&["failed"]).inc();
         return AppError::Internal("Payment was not successful".into()).error_response();
     }
 
@@ -202,6 +223,7 @@ pub async fn paypal_return(
         let _ = rc.set_ex(&redis_key, "processing", UNFREEZE_TTL_SECS).await;
     }
 
+    let capture_start = Instant::now();
     let capture_ok = match payment_service
         .capture_order(&order_id, Some(&paypal_idem_key))
         .await
@@ -217,7 +239,12 @@ pub async fn paypal_return(
         }
     };
 
+    PAYMENT_UNFREEZE_DURATION_SECONDS
+        .with_label_values(&["capture_order"])
+        .observe(capture_start.elapsed().as_secs_f64());
+
     if !capture_ok {
+        PAYMENT_UNFREEZE_TOTAL.with_label_values(&["failed"]).inc();
         if let Some(ref mut rc) = redis_opt {
             let _ = rc.del(&redis_key).await;
         }
@@ -234,6 +261,9 @@ pub async fn paypal_return(
             if let Some(ref mut rc) = redis_opt {
                 let _ = rc.set_ex(&redis_key, "completed", UNFREEZE_TTL_SECS).await;
             }
+            PAYMENT_UNFREEZE_TOTAL
+                .with_label_values(&["captured"])
+                .inc();
             close_window_html("Payment Complete — Account Unfrozen")
         }
         Err(e) => {
@@ -268,6 +298,9 @@ async fn unfreeze_user_and_finalize(
             if let Some(rc) = redis_client {
                 let _ = rc.set_ex(redis_key, "completed", UNFREEZE_TTL_SECS).await;
             }
+            PAYMENT_UNFREEZE_TOTAL
+                .with_label_values(&["captured"])
+                .inc();
             HttpResponse::Ok().json(UnfreezeCaptureResponse {
                 success: true,
                 message: "Account unfrozen. Welcome back!".into(),

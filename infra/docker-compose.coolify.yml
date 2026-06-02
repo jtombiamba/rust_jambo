@@ -33,6 +33,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-lru --save "" --appendonly no
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -184,8 +185,6 @@ services:
       - internal
     expose:
       - "10080"
-    volumes:
-      - ../backend/migrations:/app/migrations:ro
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 10s
@@ -247,8 +246,61 @@ services:
       - "coolify.service.name=jambo-scheduler-worker"
       - "coolify.service.port=0"
 
+  # ── Monitoring (optional: use --profile monitoring to enable) ──────────
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["monitoring"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.route-prefix=/prometheus"
+      - "--web.external-url=/prometheus"
+    networks:
+      - internal
+    expose:
+      - "9090"
+
+  dozzle:
+    image: amir20/dozzle:latest
+    profiles: ["monitoring"]
+    environment:
+      DOZZLE_BASE: /dozzle
+      DOZZLE_ENABLE_ACTIONS: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+    expose:
+      - "8080"
+
+  monitoring-nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    profiles: ["monitoring"]
+    environment:
+      PROMETHEUS_USER: ${PROMETHEUS_USER:-admin}
+      PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?PROMETHEUS_PASSWORD must be set}
+      DOZZLE_USER: ${DOZZLE_USER:-admin}
+      DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:?DOZZLE_PASSWORD must be set}
+    networks:
+      - internal
+    labels:
+      - "coolify.service.name=jambo-monitoring"
+      - "coolify.service.port=8888"
+    expose:
+      - "8888"
+    depends_on:
+      - prometheus
+      - dozzle
+
 volumes:
   postgres_data:
+  prometheus_data:
 
 networks:
   internal:

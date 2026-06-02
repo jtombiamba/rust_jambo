@@ -342,6 +342,44 @@ pub static CPU_USAGE_PERCENT: Lazy<GaugeVec> = Lazy::new(|| {
     register_gauge_vec!("cpu_usage_percent", "CPU usage percentage", &["process"]).unwrap()
 });
 
+pub static PAYMENT_TOPUP_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "payment_topup_total",
+        "Total number of top-up payment operations",
+        &["status"]
+    )
+    .unwrap()
+});
+
+pub static PAYMENT_UNFREEZE_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "payment_unfreeze_total",
+        "Total number of unfreeze payment operations",
+        &["status"]
+    )
+    .unwrap()
+});
+
+pub static PAYMENT_TOPUP_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "payment_topup_duration_seconds",
+        "Duration of top-up payment operations in seconds",
+        &["operation"],
+        vec![0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]
+    )
+    .unwrap()
+});
+
+pub static PAYMENT_UNFREEZE_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
+    register_histogram_vec!(
+        "payment_unfreeze_duration_seconds",
+        "Duration of unfreeze payment operations in seconds",
+        &["operation"],
+        vec![0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]
+    )
+    .unwrap()
+});
+
 pub fn init_all() {
     RABBITMQ_PUBLISH_TOTAL.with_label_values(&["ai_tasks"]);
     RABBITMQ_PUBLISH_ERRORS_TOTAL.with_label_values(&["ai_tasks"]);
@@ -428,4 +466,14 @@ pub fn init_all() {
     CPU_USAGE_PERCENT.with_label_values(&["backend"]);
     CPU_USAGE_PERCENT.with_label_values(&["ai_worker"]);
     CPU_USAGE_PERCENT.with_label_values(&["scheduler_worker"]);
+    PAYMENT_TOPUP_TOTAL.with_label_values(&["created"]);
+    PAYMENT_TOPUP_TOTAL.with_label_values(&["captured"]);
+    PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]);
+    PAYMENT_UNFREEZE_TOTAL.with_label_values(&["created"]);
+    PAYMENT_UNFREEZE_TOTAL.with_label_values(&["captured"]);
+    PAYMENT_UNFREEZE_TOTAL.with_label_values(&["failed"]);
+    PAYMENT_TOPUP_DURATION_SECONDS.with_label_values(&["create_order"]);
+    PAYMENT_TOPUP_DURATION_SECONDS.with_label_values(&["capture_order"]);
+    PAYMENT_UNFREEZE_DURATION_SECONDS.with_label_values(&["create_order"]);
+    PAYMENT_UNFREEZE_DURATION_SECONDS.with_label_values(&["capture_order"]);
 }

@@ -35,6 +35,7 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-lru --save "" --appendonly no
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -247,21 +248,41 @@ services:
 
   dozzle:
     image: amir20/dozzle:latest
+    environment:
+      DOZZLE_BASE: /dozzle
+      DOZZLE_ENABLE_ACTIONS: "false"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    ports:
-      - "8081:8080"
+    expose:
+      - "8080"
 
   prometheus:
     image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
+    expose:
+      - "9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      - "--web.route-prefix=/prometheus"
+      - "--web.external-url=/prometheus"
+
+  monitoring-nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    environment:
+      PROMETHEUS_USER: ${PROMETHEUS_USER:-admin}
+      PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:-changeme}
+      DOZZLE_USER: ${DOZZLE_USER:-admin}
+      DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:-changeme}
+    depends_on:
+      - prometheus
+      - dozzle
 
 volumes:
   postgres_data:
