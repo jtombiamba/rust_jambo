@@ -1,5 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse, ResponseError};
 use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::api::dto::requests::CaptureOrderRequest;
@@ -9,6 +10,7 @@ use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::messaging::RedisClient;
+use crate::observability::metrics::{PAYMENT_TOPUP_DURATION_SECONDS, PAYMENT_TOPUP_TOTAL};
 
 const TOPUP_CAPTURE_PREFIX: &str = "topup_capture";
 const TOPUP_ORDER_PREFIX: &str = "topup_order";
@@ -61,6 +63,7 @@ pub async fn create_topup_order(
         config.frontend_url.trim_end_matches('/')
     );
 
+    let create_start = Instant::now();
     let order = match payment_service
         .create_topup_order(&return_url, &cancel_url)
         .await
@@ -72,9 +75,17 @@ pub async fn create_topup_order(
                 auth_user.user_id,
                 e
             );
+            PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]).inc();
+            PAYMENT_TOPUP_DURATION_SECONDS
+                .with_label_values(&["create_order"])
+                .observe(create_start.elapsed().as_secs_f64());
             return AppError::Internal("Failed to create payment order".into()).error_response();
         }
     };
+    PAYMENT_TOPUP_TOTAL.with_label_values(&["created"]).inc();
+    PAYMENT_TOPUP_DURATION_SECONDS
+        .with_label_values(&["create_order"])
+        .observe(create_start.elapsed().as_secs_f64());
 
     if let Some(mut redis_client) = redis.get_ref().clone() {
         let order_key = format!("{}:{}", TOPUP_ORDER_PREFIX, order.order_id);
@@ -142,6 +153,7 @@ pub async fn capture_topup_order(
         }
     }
 
+    let capture_start = Instant::now();
     let result = match payment_service
         .capture_order(order_id, Some(&paypal_idem_key))
         .await
@@ -154,11 +166,20 @@ pub async fn capture_topup_order(
                 order_id,
                 e
             );
+            PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]).inc();
+            PAYMENT_TOPUP_DURATION_SECONDS
+                .with_label_values(&["capture_order"])
+                .observe(capture_start.elapsed().as_secs_f64());
             return AppError::Internal("Failed to capture payment".into()).error_response();
         }
     };
 
+    PAYMENT_TOPUP_DURATION_SECONDS
+        .with_label_values(&["capture_order"])
+        .observe(capture_start.elapsed().as_secs_f64());
+
     if !result.success {
+        PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]).inc();
         return AppError::Internal("Payment was not successful".into()).error_response();
     }
 
@@ -228,6 +249,7 @@ pub async fn paypal_return_topup(
         let _ = rc.set_ex(&redis_key, "processing", TOPUP_TTL_SECS).await;
     }
 
+    let capture_start = Instant::now();
     let capture_ok = match payment_service
         .capture_order(&order_id, Some(&paypal_idem_key))
         .await
@@ -243,7 +265,12 @@ pub async fn paypal_return_topup(
         }
     };
 
+    PAYMENT_TOPUP_DURATION_SECONDS
+        .with_label_values(&["capture_order"])
+        .observe(capture_start.elapsed().as_secs_f64());
+
     if !capture_ok {
+        PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]).inc();
         if let Some(ref mut rc) = redis_opt {
             let _ = rc.del(&redis_key).await;
         }
@@ -267,6 +294,7 @@ pub async fn paypal_return_topup(
             if let Some(ref mut rc) = redis_opt {
                 let _ = rc.set_ex(&redis_key, "completed", TOPUP_TTL_SECS).await;
             }
+            PAYMENT_TOPUP_TOTAL.with_label_values(&["captured"]).inc();
             close_window_html("Payment Complete — Credits Added")
         }
         Err(e) => {
@@ -308,6 +336,7 @@ async fn topup_user_and_finalize(
                 let _ = rc.del(&format!("dashboard:profile:{user_id}")).await;
                 let _ = rc.set_ex(redis_key, "completed", TOPUP_TTL_SECS).await;
             }
+            PAYMENT_TOPUP_TOTAL.with_label_values(&["captured"]).inc();
             HttpResponse::Ok().json(TopupCaptureResponse {
                 success: true,
                 message: "Credits topped up!".into(),

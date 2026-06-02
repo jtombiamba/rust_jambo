@@ -81,6 +81,9 @@ For a production card‑game service where latency and resource efficiency are p
 - Implement automated load‑testing as part of CI/CD.
 - Profile the hottest code paths (card validation, round evaluation) with `cargo flamegraph`.
 - Compare ARM64 performance for potential deployment on AWS Graviton.
+- Use the built-in Prometheus dashboard (port 8888, password-protected) to monitor real-time metrics during benchmarks.
+  Payment metrics (`payment_topup_total`, `payment_unfreeze_duration_seconds`) are also available for tracking
+  PayPal integration performance.
 
 ---
 === END OF PART 5 ===

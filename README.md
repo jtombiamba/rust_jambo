@@ -18,7 +18,7 @@ This project is a complete rewrite of the original Python/Django **FapFap** impl
 - **Rate limiting** — Redis-backed sliding window per endpoint
 - **Idempotency** — per-player request deduplication
 - **Internationalization** — English and French (backend + frontend)
-- **Prometheus metrics** — 40+ metric families across all components
+- **Prometheus metrics** — 42+ metric families (including payment tracking) across all components
 - **End‑to‑end tracing** — CorrelationId propagated through HTTP → Redis → RabbitMQ → WebSocket
 - **Fallback resilience** — circuit breaker, sync fallback, graceful degradation without Redis
 - **Optimistic locking** — 3-retry concurrent modification handling
@@ -124,7 +124,9 @@ This project is a complete rewrite of the original Python/Django **FapFap** impl
 | **RabbitMQ 3** | Async AI bot task dispatch |
 | **Docker Compose** | Local development orchestration |
 | **Coolify** | Production deployment |
-| **Nginx** | Reverse proxy |
+| **Nginx** | Reverse proxy (application + monitoring on separate containers) |
+| **Prometheus** | Metrics collection (behind nginx auth) |
+| **Dozzle** | Docker log viewer (behind nginx auth) |
 
 ### Binary Targets
 
@@ -137,6 +139,8 @@ This project is a complete rewrite of the original Python/Django **FapFap** impl
 | `http-load-test` | HTTP-only load testing |
 | `ws-load-test` | WebSocket-only load testing |
 
+All containers run as **non-root users** (`jambo` for backend binaries, `nginx` for frontend and monitoring). The backend Dockerfile uses an `ENTRYPOINT` script that validates binary names and forwards arguments.
+
 ---
 
 ## Quick Start
@@ -144,7 +148,7 @@ This project is a complete rewrite of the original Python/Django **FapFap** impl
 ### Prerequisites
 
 - **Rust** (stable toolchain)
-- **Node.js 20+** and `npm`
+- **Node.js 22+** and `npm`
 - **Docker** and **Docker Compose**
 
 ### 1. Clone
@@ -268,6 +272,21 @@ Builds and starts all services with health checks and dependency ordering.
 
 ---
 
+## Monitoring
+
+Prometheus and Dozzle are served behind a dedicated nginx reverse proxy with basic authentication, accessible on port `8888`.
+
+| Service | URL | Auth |
+|---------|-----|------|
+| Prometheus | `http://localhost:8888/prometheus/` | `PROMETHEUS_USER` / `PROMETHEUS_PASSWORD` |
+| Dozzle | `http://localhost:8888/dozzle/` | `DOZZLE_USER` / `DOZZLE_PASSWORD` |
+
+Default credentials are `admin` / `changeme` for both. Override via environment variables or `.env`.
+
+Redis is configured with a **256 MB memory cap** and `volatile-lru` eviction policy — stale cache keys are evicted first while payment idempotency keys remain protected.
+
+---
+
 ## Project Structure
 
 ```
@@ -365,6 +384,7 @@ jambo/
 | **Sharded Subscriber** | `websocket/manager_redis.rs` | N = min(cpus,8) Redis psubscribe shards |
 | **Repository** | `database/traits.rs` | Abstractions for testability |
 | **Correlation ID** | `observability/middleware.rs` | End-to-end tracing across HTTP/Redis/RabbitMQ/WS |
+| **Payment Metrics** | `observability/metrics.rs` | topup/unfreeze counters and duration histograms |
 
 ---
 
@@ -384,6 +404,9 @@ The backend accepts **68 environment variables** (see `backend/src/config.rs`). 
 | PayPal | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MODE` |
 | Rate Limits | 12 parameters for auth/contact endpoints |
 | CORS | `CORS_ALLOWED_ORIGINS` |
+| Monitoring | `PROMETHEUS_USER`, `PROMETHEUS_PASSWORD`, `DOZZLE_USER`, `DOZZLE_PASSWORD` |
+
+A complete `.env.example` is available in the project root. Copy it to `.env` and adjust for your environment.
 
 ---
 

@@ -43,7 +43,7 @@ A real‑time, multiplayer card game (Jambo / FapFap Game) with:
 | Pub/Sub | Redis 7 (`game:*`, `room:*` channels) |
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, Zustand |
 | I18n | Backend: `Translator` + JSON; Frontend: `i18next` |
-| Metrics | Prometheus (`/metrics` endpoint, 40+ families) |
+| Metrics | Prometheus (`/metrics` endpoint, 42+ families) |
 | Tracing | `tracing` + CorrelationId (HTTP → Redis → RabbitMQ → WS) |
 | Payments | PayPal REST API (unfreeze + topup) |
 
@@ -1493,6 +1493,15 @@ When Redis is completely unavailable:
 |--------|------|--------|-------------|
 | `redis_publish_duration_seconds` | Histogram | — | Redis publish latency |
 | `redis_cache_hit_ratio` | Gauge | `cache` (user/game) | Cache hit ratio |
+
+#### Payment
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `payment_topup_total` | CounterVec | `status` (created/captured/failed) | Top-up payment operations |
+| `payment_unfreeze_total` | CounterVec | `status` (created/captured/failed) | Unfreeze payment operations |
+| `payment_topup_duration_seconds` | HistogramVec | `operation` (create_order/capture_order) | PayPal top-up call latency |
+| `payment_unfreeze_duration_seconds` | HistogramVec | `operation` (create_order/capture_order) | PayPal unfreeze call latency |
 
 #### Rate Limiting
 
