@@ -1,0 +1,61 @@
+name: Coolify Pull & Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      monitoring:
+        description: 'Enable monitoring (prometheus, dozzle, monitoring-nginx)'
+        type: boolean
+        default: true
+
+jobs:
+  deploy:
+    name: Pull images and launch containers
+    runs-on: [self-hosted, coolify]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images and launch core services
+        working-directory: infra
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          IP_HASH_PEPPER: ${{ secrets.IP_HASH_PEPPER }}
+          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          docker compose -f docker-compose.coolify.pull.yml pull
+          docker compose -f docker-compose.coolify.pull.yml up -d --wait \
+            --wait-timeout 120
+
+      - name: Launch monitoring services
+        if: ${{ github.event.inputs.monitoring == 'true' }}
+        working-directory: infra
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          IP_HASH_PEPPER: ${{ secrets.IP_HASH_PEPPER }}
+          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          PROMETHEUS_PASSWORD: ${{ secrets.PROMETHEUS_PASSWORD }}
+          DOZZLE_PASSWORD: ${{ secrets.DOZZLE_PASSWORD }}
+        run: |
+          docker compose -f docker-compose.coolify.pull.yml \
+            --profile monitoring up -d --wait --wait-timeout 60
+
+      - name: Prune unused images
+        run: docker image prune -af
