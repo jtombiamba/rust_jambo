@@ -29,6 +29,7 @@ services:
       retries: 5
     networks:
       - internal
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -40,6 +41,7 @@ services:
       retries: 5
     networks:
       - internal
+    restart: unless-stopped
 
   backend:
     image: ghcr.io/jtombiamba/rust_jambo-backend:latest
@@ -177,6 +179,7 @@ services:
       - internal
     expose:
       - "10080"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 10s

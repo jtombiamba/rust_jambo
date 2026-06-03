@@ -164,7 +164,10 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
+        Ok(())
+    }
 
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .drop_index(
                 Index::drop()
@@ -280,7 +283,7 @@ enum GameCards {
 }
 
 #[derive(DeriveIden)]
-enum PlayerTypeEnum {
+pub enum PlayerTypeEnum {
     #[sea_orm(iden = "player_type")]
     Enum,
     #[sea_orm(iden = "human")]

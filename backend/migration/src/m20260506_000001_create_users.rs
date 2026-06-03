@@ -1,3 +1,4 @@
+use crate::m20220101_000001_create_table::PlayerTypeEnum;
 use sea_orm_migration::prelude::*;
 use sea_orm_migration::schema::*;
 
@@ -184,10 +185,4 @@ enum PlayerProfiles {
 enum Players {
     Table,
     UserId,
-}
-
-#[derive(DeriveIden)]
-enum PlayerTypeEnum {
-    #[sea_orm(iden = "player_type")]
-    Enum,
 }
