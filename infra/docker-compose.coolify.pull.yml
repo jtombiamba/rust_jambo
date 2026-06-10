@@ -130,10 +130,10 @@ services:
     networks:
       - internal
     expose:
-      - "80"
+      - "3000"
     labels:
       - "coolify.service.name=jambo-frontend"
-      - "coolify.service.port=80"
+      - "coolify.service.port=3000"
 
   ai-worker:
     image: ghcr.io/jtombiamba/rust_jambo-backend:latest
@@ -248,7 +248,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     volumes:
-      - ${PWD}/prometheus:/etc/prometheus
+      - ./prometheus:/etc/prometheus
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -259,8 +259,9 @@ services:
       - monitoring
     # expose:
     #   - "9090"
-    # labels:
-    #   - "traefik.enable=true"
+    labels:
+      - "traefik.enable=true"
+    # - "traefik.http.middlewares.test-auth.basicauth.users=jimmy:$$2y$$05$$nwD343bKo6DxIZh4qHcJ6eaKqtWeOxhF7Ljv2OLIDo4jfrjUZzzHG"
     #   - "traefik.http.routers.prometheus.rule=Host(`jambo.monitoring.tombislab.com`) && PathPrefix(`/prometheus`)"
     #   - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
 
