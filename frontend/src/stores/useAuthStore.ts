@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import axios from 'axios'
+import { api } from '../api/api'
 import { extractApiError } from '../utils/errors'
 
 export interface UserInfo {
@@ -62,17 +62,34 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   checkAuth: async () => {
     try {
-      const res = await axios.get<UserInfo>('/api/auth/me')
+      console.log("check auth");
+      const res = await api.get<UserInfo>('/api/auth/me')
+      console.log("what happens check auth first status = " + res.status);
+      console.log("what happens check auth" + res.data);
       set({ isAuthenticated: true, user: res.data })
-    } catch {
+    } catch (err: unknown) {
+      console.log("err = "  + err);
+      const msg = extractApiError(err).message || "dunno"
+      console.log("check auth failed" + msg);
       set({ isAuthenticated: false, user: null })
     }
+    // try {
+    //   console.log("check auth");
+    //   const res = await api.get<UserInfo>('/api/auth/me')
+    //   console.log("what happens check auth first status = " + res.status);
+    //   console.log("what happens check auth" + res.data);
+    //   set({ isAuthenticated: true, user: res.data })
+    // } catch (err: unknown) {
+    //   const msg = extractApiError(err).message || "dunno"
+    //   console.log("check auth failed" + msg);
+    //   set({ isAuthenticated: false, user: null })
+    // }
   },
 
   register: async (data) => {
     set({ authLoading: true, authError: null })
     try {
-      const res = await axios.post('/api/auth/register', data)
+      const res = await api.post('/api/auth/register', data)
       set({
         isAuthenticated: true,
         user: res.data.user,
@@ -82,7 +99,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       return true
     } catch (err: unknown) {
       const error = extractApiError(err)
-      const field = axios.isAxiosError(err) ? err.response?.data?.field : undefined
+      const field = api.isAxiosError(err) ? err.response?.data?.field : undefined
       set({
         authError: {
           error: error.message,
@@ -97,7 +114,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (data) => {
     set({ authLoading: true, authError: null })
     try {
-      const res = await axios.post('/api/auth/login', data)
+      console.log("call login");
+      const res = await api.post('/api/auth/login', data)
       set({
         isAuthenticated: true,
         user: res.data.user,
@@ -107,7 +125,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       return true
     } catch (err: unknown) {
       const error = extractApiError(err)
-      const field = axios.isAxiosError(err) ? err.response?.data?.field : undefined
+      const field = api.isAxiosError(err) ? err.response?.data?.field : undefined
       set({
         authError: {
           error: error.message,
@@ -122,7 +140,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   forgotPassword: async (email) => {
     set({ authLoading: true, authError: null })
     try {
-      const res = await axios.post('/api/auth/forgot-password', { email })
+      const res = await api.post('/api/auth/forgot-password', { email })
       set({
         authError: { error: res.data.message, field: undefined },
         authLoading: false,
@@ -137,7 +155,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: async () => {
     try {
-      await axios.post('/api/auth/logout')
+      await api.post('/api/auth/logout')
     } catch {
       // ignore
     }

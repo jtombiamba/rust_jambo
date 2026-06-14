@@ -174,7 +174,7 @@ cp .env.example .env
 cargo run --bin jambo-backend
 ```
 
-Starts on `http://localhost:8080`.
+Starts on `http://localhost:5000`.
 
 Optionally start the AI worker and scheduler:
 

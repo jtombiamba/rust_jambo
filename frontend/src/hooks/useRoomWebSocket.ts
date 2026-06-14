@@ -38,6 +38,7 @@ export function useRoomWebSocket({ roomId, onEvent }: Props) {
     let shouldReconnect = true
 
     const connect = () => {
+      console.log("creating new websocket");
       const ws = new WebSocket(url)
       socketRef.current = ws
 

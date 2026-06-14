@@ -25,7 +25,7 @@ pub async fn ws_handler(
     manager: web::Data<WebSocketManager>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let game_id = game_id.into_inner();
-
+    tracing::info!("[DEBUG] WebSocket connection attempt for game {}", game_id);
     let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
     let token = req.cookie("Authorization").map(|c| c.value().to_string());
     let redis_client = req
@@ -33,6 +33,7 @@ pub async fn ws_handler(
         .cloned()
         .and_then(|r| r.get_ref().clone());
     let user_id = validate_ws_token(token, auth_config, redis_client).await;
+
     if user_id.is_none() {
         tracing::warn!(
             "Unauthenticated WebSocket connection attempt for game {}",

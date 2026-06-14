@@ -610,6 +610,7 @@ function AppContent() {
   const gamesRemaining = Math.max(0, gamesAllowed - gamesPlayed)
   const anonymousCredits = stats?.credits ?? 0
   const anonymousOutOfCredits = anonymousCredits <= 0
+  console.log("not authenticated folk");
 
   return (
     <div className="min-h-screen flex flex-col">

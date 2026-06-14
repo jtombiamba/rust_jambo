@@ -11,7 +11,8 @@ pub async fn get_anonymous_stats() -> impl Responder {
         credits: 500,
     };
     let json_str = serde_json::to_string(&stats).unwrap_or_default();
-    tracing::debug!("[DEBUG] AnonymousStatsResponse JSON: {}", json_str);
+    // tracing::debug!("[DEBUG] AnonymousStatsResponse JSON: {}", json_str);
+    tracing::info!("[DEBUG] AnonymousStatsResponse JSON: {}", json_str);
     HttpResponse::Ok().json(stats)
 }
 

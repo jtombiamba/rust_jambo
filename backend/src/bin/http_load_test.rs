@@ -18,7 +18,7 @@ use common::{compute_percentile_stats, PercentileStats};
 #[command(name = "http-load-test")]
 #[command(about = "Human-only multiplayer HTTP load test")]
 struct Cli {
-    #[arg(long, default_value = "http://localhost:8080")]
+    #[arg(long, default_value = "http://localhost:5000")]
     target_url: String,
 
     #[arg(long, default_value = "50")]

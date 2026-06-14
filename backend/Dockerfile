@@ -36,7 +36,7 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENV RUST_LOG=${RUST_LOG}
-EXPOSE 8080
+EXPOSE 5000
 
 USER jambo
 ENTRYPOINT ["docker-entrypoint.sh"]
