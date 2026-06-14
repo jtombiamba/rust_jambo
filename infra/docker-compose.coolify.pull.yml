@@ -129,9 +129,10 @@ services:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://backend:5000}
     networks:
       - internal
-    # expose:
-    #   - "3000"
+    expose:
+      - "80"
     labels:
+      - "traefik.enable=true"
       - "coolify.service.name=jambo-frontend"
       # - "coolify.service.port=3000"
 
@@ -248,13 +249,37 @@ services:
   prometheus:
     image: prom/prometheus:latest
     volumes:
-      - ./prometheus:/etc/prometheus
       - prometheus_data:/prometheus
     command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.path=/prometheus"
-      - "--web.route-prefix=/prometheus"
-      - "--web.external-url=/prometheus"
+      - sh
+      - -c
+      - |
+        cat > /etc/prometheus/prometheus.yml << 'EOF'
+        global:
+          scrape_interval: 15s
+          evaluation_interval: 15s
+
+        scrape_configs:
+          - job_name: "jambo-backend"
+            static_configs:
+              - targets: ["backend:5000"]
+            metrics_path: /metrics
+
+          - job_name: "jambo-ai-worker"
+            static_configs:
+              - targets: ["ai-worker:7000"]
+            metrics_path: /metrics
+
+          - job_name: "jambo-scheduler-worker"
+            static_configs:
+              - targets: ["scheduler-worker:6000"]
+            metrics_path: /metrics
+        EOF
+        exec prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --web.route-prefix=/prometheus \
+          --web.external-url=/prometheus
     networks:
       - monitoring
     # expose:
@@ -294,6 +319,7 @@ services:
       - internal
       - monitoring
     labels:
+      - "traefik.enable=true"
       - "coolify.service.name=jambo-monitoring"
     expose:
       - "8888"
