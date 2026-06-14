@@ -5,5 +5,6 @@ COPY --chown=nginx:nginx nginx.conf /etc/nginx/nginx.conf
 COPY --chown=nginx:nginx entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 USER nginx
+EXPOSE 8888
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

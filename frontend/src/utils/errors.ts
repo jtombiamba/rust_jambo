@@ -17,5 +17,11 @@ export function extractApiError(err: unknown): { message: string; source?: strin
       requestId: data.request_id,
     }
   }
+  else if (axios.isAxiosError(err)) {
+    const data = err.code;
+    return {
+      message: data || '',
+    }
+  }
   return { message: '' }
 }

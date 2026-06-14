@@ -66,7 +66,7 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
-      PORT: 8080
+      PORT: 5000
       LOG_LEVEL: info
       RUST_LOG: info
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
@@ -117,11 +117,11 @@ services:
       TOPUP_CREDIT_THRESHOLD: "50"
       TOPUP_CREDIT_AMOUNT: "500"
     ports:
-      - "8080:8080"
+      - "5000:5000"
     volumes:
       - ../backend/migration:/app/migration:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl --fail http://localhost:5000/health || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -136,7 +136,8 @@ services:
     ports:
       - "3000:80"
     environment:
-      - VITE_API_BASE_URL=http://localhost:8080
+      - VITE_API_BASE_URL=http://localhost:5000
+      - DEV=true
 
   ai-worker:
     build:
@@ -157,7 +158,7 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
-      PORT: 8080
+      PORT: 5000
       LOG_LEVEL: info
       RUST_LOG: info
       MAX_RABBITMQ_CONNECTION_RETRIES: 10
@@ -189,7 +190,7 @@ services:
       SMTP_FROM_EMAIL: noreply@fapfap.local
       SMTP_FROM_NAME: "FapFap Game"
     expose:
-      - "10080"
+      - "7000"
     volumes:
       - ../backend/migration:/app/migration:ro
     healthcheck:
@@ -212,7 +213,7 @@ services:
         condition: service_started
     environment:
       HOST: 0.0.0.0
-      PORT: 8080
+      PORT: 5000
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
       REDIS_URL: redis://redis:6379
       RUST_LOG: info
@@ -238,10 +239,10 @@ services:
       UNFREEZE_CREDIT_NO_PAYMENT: 250
       DEFAULT_CREDIT: 500
     expose:
-      - "9080"
+      - "6000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9080/metrics"]
+      test: ["CMD", "curl", "-f", "http://localhost:6000/metrics"]
       interval: 30s
       timeout: 5s
       retries: 3

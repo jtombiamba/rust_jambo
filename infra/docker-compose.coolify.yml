@@ -58,7 +58,7 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
-      PORT: 8080
+      PORT: 5000
       RUST_LOG: ${RUST_LOG:-info}
       MAX_RABBITMQ_CONNECTION_RETRIES: ${MAX_RABBITMQ_CONNECTION_RETRIES:-10}
       RABBITMQ_PUBLISH_MAX_RETRIES: ${RABBITMQ_PUBLISH_MAX_RETRIES:-3}
@@ -111,11 +111,11 @@ services:
     networks:
       - internal
     expose:
-      - "8080"
+      - "5000"
     # Optional: labels for Coolify
     labels:
       - "coolify.service.name=jambo-backend"
-      - "coolify.service.port=8080"
+      - "coolify.service.port=5000"
 
   frontend:
     build:
@@ -124,7 +124,7 @@ services:
     depends_on:
       - backend
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://backend:8080}
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://backend:5000}
     networks:
       - internal
     expose:
@@ -147,7 +147,7 @@ services:
         condition: service_healthy
     environment:
       HOST: 0.0.0.0
-      PORT: 8080
+      PORT: 5000
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
@@ -184,7 +184,7 @@ services:
     networks:
       - internal
     expose:
-      - "10080"
+      - "7000"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 10s
@@ -206,7 +206,7 @@ services:
         condition: service_healthy
     environment:
       HOST: 0.0.0.0
-      PORT: 8080
+      PORT: 5000
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
       REDIS_URL: redis://redis:6379
       RUST_LOG: ${RUST_LOG:-info}
@@ -235,10 +235,10 @@ services:
     networks:
       - internal
     expose:
-      - "9080"
+      - "6000"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9080/metrics"]
+      test: ["CMD", "curl", "-f", "http://localhost:6000/metrics"]
       interval: 30s
       timeout: 5s
       retries: 3

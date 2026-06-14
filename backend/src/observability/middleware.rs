@@ -85,8 +85,14 @@ where
                     let duration = start.elapsed();
 
                     let status_code = match &result {
-                        Ok(resp) => resp.status().as_u16(),
-                        Err(_) => 500u16,
+                        Ok(resp) => {
+                            tracing::debug!("result = {}", resp.status().as_str());
+                            resp.status().as_u16()
+                        }
+                        Err(e) => {
+                            tracing::debug!("Some Error {}", e.error_response().status().as_u16());
+                            e.error_response().status().as_u16()
+                        }
                     };
 
                     span.record("http.duration_ms", duration.as_millis() as u64);
