@@ -12,8 +12,8 @@ export function getAccessToken() {
 
 axios.defaults.withCredentials = true;
 axios.defaults.baseURL = (typeof window !== "undefined"
-  ? (import.meta.env.VITE_API_BASE_URL || "http://localhost:5000")
-  : import.meta.env.VITE_API_BASE_URL || "http://localhost:5000"
+  ? (import.meta.env.VITE_API_BASE_URL || "/api")
+  : import.meta.env.VITE_API_BASE_URL || "/api"
 );
 
 
