@@ -31,6 +31,9 @@ pub struct QuickGameOutcome {
     pub max_players: i32,
     pub invite_expires_at: Option<String>,
     pub deck_slots: Option<Vec<Option<i32>>>,
+    /// One-time WebSocket authentication token for anonymous users.
+    /// Present only when the user is not authenticated.
+    pub ws_token: Option<String>,
 }
 
 /// Outcome of a create_multiplayer_game operation.
@@ -120,6 +123,7 @@ impl From<QuickGameOutcome> for QuickGameResponse {
             max_players: o.max_players,
             invite_expires_at: o.invite_expires_at,
             deck_slots: o.deck_slots,
+            ws_token: o.ws_token,
         }
     }
 }

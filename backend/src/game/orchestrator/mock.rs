@@ -56,6 +56,7 @@ impl MockGameOrchestrator {
             max_players: 4,
             invite_expires_at: None,
             deck_slots: None,
+            ws_token: None,
         };
         Self::new(Ok(play_outcome), Ok(quick_outcome))
     }

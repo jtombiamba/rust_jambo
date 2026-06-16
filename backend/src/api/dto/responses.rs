@@ -37,6 +37,10 @@ pub struct QuickGameResponse {
     pub invite_expires_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deck_slots: Option<Vec<Option<i32>>>,
+    /// One-time WebSocket authentication token for anonymous users.
+    /// Present only when the user is not authenticated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ws_token: Option<String>,
 }
 
 #[allow(dead_code)]

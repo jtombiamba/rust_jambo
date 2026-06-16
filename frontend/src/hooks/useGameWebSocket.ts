@@ -6,7 +6,7 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { useToast } from '../components/useToast';
 
 
-export function useGameWebSocket(gameId: string | null) {
+export function useGameWebSocket(gameId: string | null, wsToken?: string | null) {
   const {
     applyCardPlayed,
     setCurrentTurn,
@@ -33,6 +33,7 @@ export function useGameWebSocket(gameId: string | null) {
     gameId: gameId || '',
     playerId: myPlayerId,
     playerPosition: myPosition,
+    wsToken: wsToken || undefined,
     onMessage: (event: GameEvent) => {
       switch (event.type) {
         case 'card_played': {

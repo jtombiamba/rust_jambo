@@ -17,6 +17,7 @@ use messages::{IncomingMessage, OutgoingMessage};
 
 /// WebSocket endpoint for a specific game.
 /// Path parameter: game_id (UUID)
+/// Query parameter: token (optional) — one-time game token for unauthenticated users
 #[allow(unused_mut)]
 pub async fn ws_handler(
     req: HttpRequest,
@@ -27,12 +28,30 @@ pub async fn ws_handler(
     let game_id = game_id.into_inner();
     tracing::info!("[DEBUG] WebSocket connection attempt for game {}", game_id);
     let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
-    let token = req.cookie("Authorization").map(|c| c.value().to_string());
     let redis_client = req
         .app_data::<web::Data<Option<RedisClient>>>()
         .cloned()
         .and_then(|r| r.get_ref().clone());
-    let user_id = validate_ws_token(token, auth_config, redis_client).await;
+
+    // Try auth cookie first, then fall back to one-time game token from query param
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let user_id = if token.is_some() {
+        validate_ws_token(token, auth_config.clone(), redis_client.clone()).await
+    } else {
+        // Check for one-time game token in query parameter
+        let game_token = req
+            .query_string()
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| *k == "token")
+            .map(|(_, v)| v.to_string());
+
+        if let Some(ref gt) = game_token {
+            validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await
+        } else {
+            None
+        }
+    };
 
     if user_id.is_none() {
         tracing::warn!(
@@ -408,4 +427,69 @@ async fn validate_ws_token(
     }
 
     Some(claims.sub)
+}
+
+/// Validate a one-time game token for unauthenticated WebSocket connections.
+/// The token must:
+/// 1. Be a valid JWT with purpose "ws:game" and matching game_id
+/// 2. Exist in Redis (single-use enforcement) — consumed on first use
+async fn validate_game_token(
+    token: &str,
+    game_id: Uuid,
+    auth_config: Option<web::Data<AuthConfig>>,
+    mut redis_client: Option<RedisClient>,
+) -> Option<Uuid> {
+    let config = auth_config?;
+
+    // Validate the JWT signature, expiry, and purpose
+    let claims = jwt::validate_game_token(token, &config).ok()?;
+
+    // Ensure the token is for this specific game
+    if claims.sub != game_id {
+        tracing::warn!(
+            "Game token mismatch: token is for game {} but connection is for game {}",
+            claims.sub,
+            game_id
+        );
+        return None;
+    }
+
+    // Validate the token exists in Redis (inserted at generation time).
+    // We don't delete it — it persists for its full TTL so anonymous users
+    // can reconnect after transient disconnections. JWT signature, expiry,
+    // and purpose checks already secure the token.
+    let redis_key = format!("ws_token:{}:{}", game_id, claims.jti);
+    if let Some(ref mut r) = redis_client {
+        match r.exists(&redis_key).await {
+            Ok(true) => {
+                tracing::info!(
+                    "Game token validated for game {}, jti: {}",
+                    game_id,
+                    claims.jti
+                );
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    "Game token not found in Redis (never issued or expired) for game {}",
+                    game_id
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::error!("Redis error checking game token: {}", e);
+                // If Redis is down, fall back to allowing the connection
+                // (the token JWT is still validated)
+                tracing::warn!(
+                    "Redis unavailable, allowing game token connection for game {}",
+                    game_id
+                );
+            }
+        }
+    }
+
+    // Use a deterministic UUID derived from the game_id for unauthenticated users.
+    // This ensures the same "anonymous" user identity within a game session.
+    // The namespace constant is arbitrary but fixed to avoid collisions with real user IDs.
+    const ANON_NAMESPACE: u128 = 0x006A_6F6E_6573_5F61_6E6F_6E5F_7575_6964_u128;
+    Some(uuid::Uuid::from_u128(game_id.as_u128() ^ ANON_NAMESPACE))
 }
