@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useToast } from '../components/useToast'
+import { getWsUrl } from '../utils/runtimeConfig'
 
 interface RoomEvent {
   type: 'member_joined' | 'member_left' | 'run_created' | 'game_started' | 'run_completed'
@@ -30,9 +31,7 @@ export function useRoomWebSocket({ roomId, onEvent }: Props) {
   useEffect(() => {
     if (!roomId) return
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const url = `${protocol}//${host}/ws/room/${roomId}`
+    const url = getWsUrl(`/ws/room/${roomId}`)
 
     let reconnectTimeout: ReturnType<typeof setTimeout>
     let shouldReconnect = true

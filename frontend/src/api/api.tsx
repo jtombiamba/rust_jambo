@@ -1,4 +1,5 @@
 import axios from "axios";
+import { getApiBaseUrl } from "../utils/runtimeConfig";
 
 let accessToken: string | null = null;
 
@@ -11,11 +12,7 @@ export function getAccessToken() {
 }
 
 axios.defaults.withCredentials = true;
-axios.defaults.baseURL = (typeof window !== "undefined"
-  ? (import.meta.env.VITE_API_BASE_URL || "backend:5000")
-  : import.meta.env.VITE_API_BASE_URL || "backend:5000"
-);
-
+axios.defaults.baseURL = getApiBaseUrl();
 
 axios.interceptors.request.use((config) => {
   if (accessToken) {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { getWsUrl } from '../utils/runtimeConfig';
 
 const log = (...args: unknown[]) => {
   if (import.meta.env.DEV) console.log(...args);
@@ -54,8 +55,8 @@ class WebSocketManager {
   private subscribers: Set<(event: GameEvent) => void> = new Set();
   private errorSubscribers: Set<(error: Event) => void> = new Set();
   private closeSubscribers: Set<(event: CloseEvent) => void> = new Set();
-  private reconnectTimer: number | null = null;
-  private cleanupTimer: number | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private isConnecting = false;
   private usageCount = 0;
   private gameId: string;
@@ -174,9 +175,7 @@ class WebSocketManager {
     this.isConnecting = true;
     log('Creating WebSocket connection to game', this.gameId);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const url = `${protocol}//${host}/ws/${this.gameId}`;
+    const url = getWsUrl(`/ws/${this.gameId}`);
 
     const ws = new WebSocket(url);
     this.ws = ws;
