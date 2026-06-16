@@ -42,6 +42,7 @@ interface QuickGameResponse {
   bet: number
   max_players: number
   deck_slots?: (number | null)[]
+  ws_token?: string
 }
 
 interface MultiplayerGameResponse {
@@ -63,6 +64,7 @@ function AppContent() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [lobbyGameId, setLobbyGameId] = useState<string | null>(null)
   const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
+  const [wsToken, setWsToken] = useState<string | null>(null)
   const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver } = useGameStore()
   const isMultiplayer = players.length > 0 && players.every(p => p.type === 'human')
   const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite, user } = useAuthStore()
@@ -80,7 +82,7 @@ function AppContent() {
   const [autoStartCountdown, setAutoStartCountdown] = useState(0)
   const autoStartRef = useRef(false)
   const [roomRefreshKey, setRoomRefreshKey] = useState(0)
-  useGameWebSocket(gameId)
+  useGameWebSocket(gameId, wsToken)
   useRoomWebSocket({
     roomId: isAuthenticated && roomId ? roomId : null,
     onEvent: (event) => {
@@ -214,6 +216,10 @@ function AppContent() {
       axios.post<QuickGameResponse>('/api/quickie')
         .then(response => {
           setGameStore(response.data.game_id, response.data.players, response.data.status, response.data.current_turn, response.data.bet)
+          // Store the one-time game token for WebSocket authentication
+          if (response.data.ws_token) {
+            setWsToken(response.data.ws_token)
+          }
           setStartingGame(false)
         })
         .catch(err => {
@@ -385,6 +391,7 @@ function AppContent() {
             onPlayAgain={runId ? handlePlayNextInRun : startGame}
             onReturnToLobby={() => {
               resetGame()
+              setWsToken(null)
               setRunId(null)
               setAutoStartCountdown(0)
             }}
@@ -419,6 +426,7 @@ function AppContent() {
                       onClick={() => {
                         setAutoStartCountdown(0)
                         resetGame()
+                        setWsToken(null)
                         setRunId(null)
                       }}
                     >
@@ -455,6 +463,7 @@ function AppContent() {
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
               onClick={() => {
                 resetGame()
+                setWsToken(null)
                 setRunId(null)
                 setAutoStartCountdown(0)
               }}
@@ -610,7 +619,6 @@ function AppContent() {
   const gamesRemaining = Math.max(0, gamesAllowed - gamesPlayed)
   const anonymousCredits = stats?.credits ?? 0
   const anonymousOutOfCredits = anonymousCredits <= 0
-  console.log("not authenticated folk");
 
   return (
     <div className="min-h-screen flex flex-col">

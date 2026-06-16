@@ -203,6 +203,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -229,6 +230,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -255,6 +257,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -281,6 +284,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -307,6 +311,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -333,6 +338,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -359,6 +365,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -387,6 +394,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;
@@ -415,6 +423,7 @@ mod tests {
                 max_players: 4,
                 invite_expires_at: None,
                 deck_slots: None,
+                ws_token: None,
             }),
         ));
         let app = make_app(mock).await;

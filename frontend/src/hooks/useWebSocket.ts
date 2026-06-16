@@ -40,6 +40,7 @@ interface UseWebSocketOptions {
   gameId: string;
   playerId?: string;
   playerPosition?: number;
+  wsToken?: string;
   onMessage?: (event: GameEvent) => void;
   onError?: (error: Event) => void;
   onClose?: (event: CloseEvent) => void;
@@ -62,9 +63,14 @@ class WebSocketManager {
   private gameId: string;
   private playerId: string | null = null;
   private playerPosition: number | null = null;
+  private wsToken: string | null = null;
 
   private constructor(gameId: string) {
     this.gameId = gameId;
+  }
+
+  setWsToken(token: string | null): void {
+    this.wsToken = token;
   }
 
   setPlayerIdentity(playerId: string, playerPosition: number): void {
@@ -175,7 +181,9 @@ class WebSocketManager {
     this.isConnecting = true;
     log('Creating WebSocket connection to game', this.gameId);
 
-    const url = getWsUrl(`/ws/${this.gameId}`);
+    const basePath = `/ws/${this.gameId}`;
+    const queryString = this.wsToken ? `?token=${encodeURIComponent(this.wsToken)}` : '';
+    const url = getWsUrl(`${basePath}${queryString}`);
 
     const ws = new WebSocket(url);
     this.ws = ws;
@@ -270,6 +278,7 @@ export function useWebSocket({
   gameId,
   playerId,
   playerPosition,
+  wsToken,
   onMessage,
   onError,
   onClose,
@@ -285,6 +294,7 @@ export function useWebSocket({
   const [isConnected, setIsConnected] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const lastAppliedTokenRef = useRef<string | null | undefined>(undefined);
 
   // Convert connection status to boolean
   const updateConnectionStatus = useCallback(() => {
@@ -340,6 +350,15 @@ export function useWebSocket({
     try {
       const manager = WebSocketManager.getInstance(gameId);
 
+      // Set the one-time game token on the manager (for unauthenticated users).
+      // Only apply when the token changes to avoid reconnecting needlessly.
+      if (wsToken && wsToken !== lastAppliedTokenRef.current) {
+        lastAppliedTokenRef.current = wsToken;
+        manager.setWsToken(wsToken);
+      } else if (!wsToken) {
+        lastAppliedTokenRef.current = undefined;
+      }
+
       // Set player identity on the manager so it's included in join_game message
       if (playerId && playerPosition !== undefined) {
         manager.setPlayerIdentity(playerId, playerPosition);
@@ -368,7 +387,7 @@ export function useWebSocket({
       console.error('Failed to subscribe to WebSocket manager:', err);
       setLastError('Invalid gameId');
     }
-  }, [gameId, playerId, playerPosition, onMessage, onError, onClose, updateConnectionStatus]);
+  }, [gameId, playerId, playerPosition, wsToken, onMessage, onError, onClose, updateConnectionStatus]);
 
   // Expose a manual reconnect function
   const reconnect = useCallback(() => {

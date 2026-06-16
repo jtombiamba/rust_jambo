@@ -213,6 +213,7 @@ impl GameOrchestrator {
             max_players: 4,
             invite_expires_at: None,
             deck_slots: None,
+            ws_token: None,
         })
     }
 
@@ -359,6 +360,7 @@ impl GameOrchestrator {
             max_players: 4,
             invite_expires_at: None,
             deck_slots: None,
+            ws_token: None,
         })
     }
 
@@ -469,6 +471,7 @@ impl GameOrchestrator {
             max_players: 4,
             invite_expires_at: None,
             deck_slots: None,
+            ws_token: None,
         })
     }
 }

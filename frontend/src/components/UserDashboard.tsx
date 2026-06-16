@@ -171,7 +171,6 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     if (sortField) {
       params.order_by = `${sortField}_${sortDir}`
     }
-    console.log("fetching dashboard data");
 
     Promise.all([
       axios.get<ProfileData>('/api/me/profile'),

@@ -493,6 +493,7 @@ async fn build_game_state_response(
         max_players: game.max_players as i32,
         invite_expires_at: game.invite_expires_at.map(|t| t.to_rfc3339()),
         deck_slots: Some(deck_slots),
+        ws_token: None,
     })
 }
 

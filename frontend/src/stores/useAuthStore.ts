@@ -62,15 +62,11 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   checkAuth: async () => {
     try {
-      console.log("check auth");
       const res = await api.get<UserInfo>('/api/auth/me')
-      console.log("what happens check auth first status = " + res.status);
-      console.log("what happens check auth" + res.data);
       set({ isAuthenticated: true, user: res.data })
     } catch (err: unknown) {
-      console.log("err = "  + err);
       const msg = extractApiError(err).message || "dunno"
-      console.log("check auth failed" + msg);
+      console.error("check auth failed " + msg);
       set({ isAuthenticated: false, user: null })
     }
     // try {
@@ -114,7 +110,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (data) => {
     set({ authLoading: true, authError: null })
     try {
-      console.log("call login");
       const res = await api.post('/api/auth/login', data)
       set({
         isAuthenticated: true,
