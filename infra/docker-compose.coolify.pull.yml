@@ -246,25 +246,20 @@ services:
       - "coolify.service.name=jambo-scheduler-worker"
       - "coolify.service.port=0"
 
-  # prometheus:
-  #   image: prom/prometheus:latest
-  #   volumes:
-  #     - ./prometheus:/etc/prometheus
-  #     - prometheus_data:/prometheus
-  #   command:
-  #     --config.file=/etc/prometheus/prometheus.yml \
-  #       --storage.tsdb.path=/prometheus \
-  #       --web.route-prefix=/prometheus \
-  #       --web.external-url=/prometheus
-  #   networks:
-  #     - monitoring
-  #   # expose:
-  #   #   - "9090"
-  #   labels:
-  #     - "traefik.enable=true"
-  #   # - "traefik.http.middlewares.test-auth.basicauth.users=jimmy:$$2y$$05$$nwD343bKo6DxIZh4qHcJ6eaKqtWeOxhF7Ljv2OLIDo4jfrjUZzzHG"
-  #   #   - "traefik.http.routers.prometheus.rule=Host(`jambo.monitoring.tombislab.com`) && PathPrefix(`/prometheus`)"
-  #   #   - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+  prometheus:
+    image: ghcr.io/jtombiamba/rust_jambo-prometheus:latest
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.route-prefix=/prometheus"
+      - "--web.external-url=/prometheus"
+    networks:
+      - monitoring
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-prometheus"
 
   dozzle:
     image: amir20/dozzle:latest
@@ -287,8 +282,8 @@ services:
   monitoring-nginx:
     image: ghcr.io/jtombiamba/rust_jambo-monitoring-nginx:latest
     environment:
-      # PROMETHEUS_USER: ${PROMETHEUS_USER:-admin}
-      # PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?PROMETHEUS_PASSWORD must be set}
+      PROMETHEUS_USER: ${PROMETHEUS_USER:-admin}
+      PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?PROMETHEUS_PASSWORD must be set}
       DOZZLE_USER: ${DOZZLE_USER:-admin}
       DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:?DOZZLE_PASSWORD must be set}
     networks:
@@ -300,12 +295,12 @@ services:
     expose:
       - "8888"
     depends_on:
-      # - prometheus
+      - prometheus
       - dozzle
 
 volumes:
   postgres_data:
-  # prometheus_data:
+  prometheus_data:
 
 networks:
   internal:
