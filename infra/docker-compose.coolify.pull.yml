@@ -14,8 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - internal
+    # networks:
+    #   - internal
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -27,8 +27,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - internal
+    # networks:
+    #   - internal
     restart: unless-stopped
 
   redis:
@@ -39,8 +39,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - internal
+    # networks:
+    #   - internal
     restart: unless-stopped
 
   backend:
@@ -108,8 +108,8 @@ services:
       PAYPAL_LIVE_URL: ${PAYPAL_LIVE_URL:-https://api-m.paypal.com}
       TOPUP_CREDIT_THRESHOLD: ${TOPUP_CREDIT_THRESHOLD:-50}
       TOPUP_CREDIT_AMOUNT: ${TOPUP_CREDIT_AMOUNT:-500}
-    networks:
-      - internal
+    # networks:
+    #   - internal
     expose:
       - "5000"
     labels:
@@ -126,8 +126,8 @@ services:
       - backend
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://backend:5000}
-    networks:
-      - internal
+    # networks:
+    #   - internal
     expose:
       - "80"
     labels:
@@ -181,8 +181,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@example.com}
       SMTP_FROM_NAME: ${SMTP_FROM_NAME:-FapFap Game}
-    networks:
-      - internal
+    # networks:
+    #   - internal
     expose:
       - "7000"
     restart: unless-stopped
@@ -231,8 +231,8 @@ services:
       FREEZE_DURATION_SECS: ${FREEZE_DURATION_SECS:-86400}
       UNFREEZE_CREDIT_NO_PAYMENT: ${UNFREEZE_CREDIT_NO_PAYMENT:-250}
       DEFAULT_CREDIT: ${DEFAULT_CREDIT:-500}
-    networks:
-      - internal
+    # networks:
+    #   - internal
     expose:
       - "6000"
     restart: unless-stopped
@@ -254,8 +254,8 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--web.route-prefix=/prometheus"
       - "--web.external-url=/prometheus"
-    networks:
-      - internal
+    # networks:
+    #   - internal
     labels:
       - "traefik.enable=true"
       - "coolify.service.name=jambo-prometheus"
@@ -269,8 +269,8 @@ services:
     command: --base /dozzle
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - internal
+    # networks:
+    #   - internal
     # expose:
     #   - "5000"
     # labels:
@@ -285,8 +285,8 @@ services:
       PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?PROMETHEUS_PASSWORD must be set}
       DOZZLE_USER: ${DOZZLE_USER:-admin}
       DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:?DOZZLE_PASSWORD must be set}
-    networks:
-      - internal
+    # networks:
+    #   - internal
     labels:
       - "traefik.enable=true"
       - "coolify.service.name=jambo-monitoring"
@@ -300,7 +300,7 @@ volumes:
   postgres_data:
   prometheus_data:
 
-networks:
-  internal:
-    driver: bridge
-    internal: true
+# networks:
+#   internal:
+#     driver: bridge
+#     internal: true
