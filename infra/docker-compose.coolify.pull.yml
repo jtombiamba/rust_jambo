@@ -110,7 +110,6 @@ services:
       TOPUP_CREDIT_AMOUNT: ${TOPUP_CREDIT_AMOUNT:-500}
     networks:
       - internal
-      - monitoring
     expose:
       - "5000"
     labels:
@@ -256,7 +255,7 @@ services:
       - "--web.route-prefix=/prometheus"
       - "--web.external-url=/prometheus"
     networks:
-      - monitoring
+      - internal
     labels:
       - "traefik.enable=true"
       - "coolify.service.name=jambo-prometheus"
@@ -271,7 +270,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - monitoring
+      - internal
     # expose:
     #   - "5000"
     # labels:
@@ -288,7 +287,6 @@ services:
       DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:?DOZZLE_PASSWORD must be set}
     networks:
       - internal
-      - monitoring
     labels:
       - "traefik.enable=true"
       - "coolify.service.name=jambo-monitoring"
@@ -306,5 +304,3 @@ networks:
   internal:
     driver: bridge
     internal: true
-  monitoring:
-    driver: bridge
