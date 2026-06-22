@@ -35,9 +35,18 @@ pub async fn ws_handler(
 
     // Try auth cookie first, then fall back to one-time game token from query param
     let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    tracing::info!("[DEBUG] WebSocket connection attempt recovery of token");
     let user_id = if token.is_some() {
+        tracing::info!(
+            "[DEBUG] WebSocket connection via token cookie for game {}",
+            game_id
+        );
         validate_ws_token(token, auth_config.clone(), redis_client.clone()).await
     } else {
+        tracing::info!(
+            "[DEBUG] WebSocket connection via token query params for game {}",
+            game_id
+        );
         // Check for one-time game token in query parameter
         let game_token = req
             .query_string()
@@ -45,10 +54,14 @@ pub async fn ws_handler(
             .filter_map(|pair| pair.split_once('='))
             .find(|(k, _)| *k == "token")
             .map(|(_, v)| v.to_string());
-
         if let Some(ref gt) = game_token {
+            tracing::info!("[DEBUG] WebSocket validating token for game {}", game_id);
             validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await
         } else {
+            tracing::warn!(
+                "[WARN] WebSocket connection via token: no query params for game {}",
+                game_id
+            );
             None
         }
     };
