@@ -1,4 +1,4 @@
-use actix_web::cookie::Cookie;
+use actix_web::cookie::{time, Cookie};
 use actix_web::HttpResponseBuilder;
 
 pub fn set_auth_cookie(builder: &mut HttpResponseBuilder, token: &str) {
@@ -16,5 +16,6 @@ pub fn clear_auth_cookie(builder: &mut HttpResponseBuilder) {
     cookie.set_http_only(true);
     cookie.set_secure(false);
     cookie.set_same_site(actix_web::cookie::SameSite::Strict);
+    cookie.set_max_age(time::Duration::seconds(1));
     builder.cookie(cookie);
 }
