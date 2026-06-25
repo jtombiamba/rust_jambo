@@ -257,6 +257,66 @@ services:
     expose:
       - "8080"
 
+  # ── LGTM Stack ──────────────────────────────────────────────
+
+  loki:
+    build:
+      context: ./loki
+      dockerfile: Dockerfile
+    container_name: jambo-loki
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    expose:
+      - "3100"
+    restart: unless-stopped
+
+  promtail:
+    build:
+      context: ./promtail
+      dockerfile: Dockerfile
+    container_name: jambo-promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/promtail-config.yml
+    restart: unless-stopped
+    depends_on:
+      - loki
+
+  tempo:
+    build:
+      context: ./tempo
+      dockerfile: Dockerfile
+    container_name: jambo-tempo
+    volumes:
+      - tempo_data:/tmp/tempo
+    command: -config.file=/etc/tempo/tempo-config.yml
+    expose:
+      - "3200"
+      - "4317"
+    restart: unless-stopped
+
+  grafana:
+    build:
+      context: ./grafana
+      dockerfile: Dockerfile
+    container_name: jambo-grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SERVER_HTTP_PORT: 3000
+      GF_SERVER_ROOT_URL: /grafana
+      GF_SERVER_SERVE_FROM_SUB_PATH: true
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_BASIC_ENABLED: "true"
+    expose:
+      - "3000"
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
   prometheus:
     build:
       context: ./prometheus
@@ -282,10 +342,16 @@ services:
       PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:-changeme}
       DOZZLE_USER: ${DOZZLE_USER:-admin}
       DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:-changeme}
+      GRAFANA_USER: ${GRAFANA_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_PASSWORD:-changeme}
     depends_on:
       - prometheus
       - dozzle
+      - grafana
 
 volumes:
   postgres_data:
   prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:

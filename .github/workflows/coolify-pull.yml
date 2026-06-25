@@ -53,6 +53,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           PROMETHEUS_PASSWORD: ${{ secrets.PROMETHEUS_PASSWORD }}
           DOZZLE_PASSWORD: ${{ secrets.DOZZLE_PASSWORD }}
+          GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
         run: |
           docker compose -f docker-compose.coolify.pull.yml \
             --profile monitoring up -d --wait --wait-timeout 60

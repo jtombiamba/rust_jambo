@@ -249,6 +249,55 @@ services:
       - "coolify.service.name=jambo-scheduler-worker"
       - "coolify.service.port=0"
 
+  # ── LGTM Stack ──────────────────────────────────────────────
+
+  loki:
+    image: ghcr.io/jtombiamba/rust_jambo-loki:latest
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-loki"
+    restart: unless-stopped
+
+  promtail:
+    image: ghcr.io/jtombiamba/rust_jambo-promtail:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/promtail-config.yml
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-promtail"
+    restart: unless-stopped
+
+  tempo:
+    image: ghcr.io/jtombiamba/rust_jambo-tempo:latest
+    volumes:
+      - tempo_data:/tmp/tempo
+    command: -config.file=/etc/tempo/tempo-config.yml
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-tempo"
+    restart: unless-stopped
+
+  grafana:
+    image: ghcr.io/jtombiamba/rust_jambo-grafana:latest
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SERVER_HTTP_PORT: 3000
+      GF_SERVER_ROOT_URL: /grafana
+      GF_SERVER_SERVE_FROM_SUB_PATH: true
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_BASIC_ENABLED: "true"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-changeme}
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-grafana"
+    restart: unless-stopped
+
   prometheus:
     image: ghcr.io/jtombiamba/rust_jambo-prometheus:latest
     volumes:
@@ -289,6 +338,8 @@ services:
       PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?PROMETHEUS_PASSWORD must be set}
       DOZZLE_USER: ${DOZZLE_USER:-admin}
       DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:?DOZZLE_PASSWORD must be set}
+      GRAFANA_USER: ${GRAFANA_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_PASSWORD:-changeme}
     # networks:
     #   - internal
     labels:
@@ -299,10 +350,14 @@ services:
     depends_on:
       - prometheus
       - dozzle
+      - grafana
 
 volumes:
   postgres_data:
   prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:
 
 # networks:
 #   internal:

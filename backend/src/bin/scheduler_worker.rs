@@ -28,13 +28,7 @@ async fn metrics_handler() -> actix_web::HttpResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("scheduler_worker=info".parse().unwrap()),
-        )
-        .json()
-        .init();
+    jambo_backend::observability::init_tracing("jambo-scheduler-worker");
 
     metrics::init_all();
 

@@ -22,13 +22,7 @@ use crate::routes::configure;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("jambo_backend=info".parse().unwrap()),
-        )
-        .json()
-        .init();
+    crate::observability::init_tracing("jambo-backend");
 
     crate::observability::metrics::init_all();
 

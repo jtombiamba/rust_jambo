@@ -36,13 +36,7 @@ async fn metrics_handler() -> actix_web::HttpResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("ai_worker=info".parse().unwrap()),
-        )
-        .json()
-        .init();
+    jambo_backend::observability::init_tracing("jambo-ai-worker");
 
     let config = Config::from_env().context("Failed to load configuration")?;
     let cpu_count = num_cpus::get();
