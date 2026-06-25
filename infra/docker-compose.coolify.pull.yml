@@ -45,6 +45,7 @@ services:
 
   backend:
     image: ghcr.io/jtombiamba/rust_jambo-backend:latest
+    pull_policy: always
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,6 +123,7 @@ services:
 
   frontend:
     image: ghcr.io/jtombiamba/rust_jambo-frontend:latest
+    pull_policy: always
     depends_on:
       - backend
     environment:
@@ -137,6 +139,7 @@ services:
 
   ai-worker:
     image: ghcr.io/jtombiamba/rust_jambo-backend:latest
+    pull_policy: always
     command: ["ai-worker"]
     depends_on:
       postgres:
@@ -197,6 +200,7 @@ services:
 
   scheduler-worker:
     image: ghcr.io/jtombiamba/rust_jambo-backend:latest
+    pull_policy: always
     command: ["scheduler-worker"]
     depends_on:
       postgres:
