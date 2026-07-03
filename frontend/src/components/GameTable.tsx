@@ -4,6 +4,7 @@ import PlayerSlot, { PlayerSlotProps } from './PlayerSlot';
 import Card from './Card';
 import WinnerRing from './WinnerRing';
 import GameOverModal from './GameOverModal';
+import GameRules from './GameRules';
 import { RoundWinner, GameOverData } from '../stores/useGameStore';
 
 export interface GamePlayer {
@@ -70,6 +71,7 @@ const GameTable: React.FC<GameTableProps> = ({
   };
 
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(getLayoutMode);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
   useEffect(() => {
     const handleResize = () => {
@@ -171,7 +173,15 @@ const GameTable: React.FC<GameTableProps> = ({
 
   return (
     <div className="container mx-auto p-2 sm:p-4 md:p-8">
-      <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6 text-center">{t('game.gameTable')}</h2>
+      <div className="flex items-center justify-between mb-4 sm:mb-6">
+        <h2 className="text-xl sm:text-2xl font-bold">{t('game.gameTable')}</h2>
+        <button
+          onClick={() => setRulesOpen(true)}
+          className="px-3 py-1.5 text-sm font-medium bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+        >
+          {t('dashboard.rules')}
+        </button>
+      </div>
 
       <div className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px]">
 
@@ -384,6 +394,8 @@ const GameTable: React.FC<GameTableProps> = ({
           showPlayAgain={showPlayAgain}
         />
       )}
+
+      <GameRules isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />
     </div>
   );
 };

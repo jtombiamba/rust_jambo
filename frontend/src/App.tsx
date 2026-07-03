@@ -262,10 +262,17 @@ function AppContent() {
         console.error('Failed to play card', err);
         const error = extractApiError(err);
         setCardError(error.message);
-        showToast(error.message, 'error', error.requestId);
+        showToast(error.message, 'error');// , error.requestId);
       })
       .finally(() => setPlayingCard(null));
   };
+
+  const handleLocalStats = () => {
+   const storedStats = getStoredStats()
+    if (storedStats) {
+      setStats(storedStats)
+    }
+  }
 
   const handleViewLobby = (gameId: string) => {
     setLobbyGameId(gameId)
@@ -390,6 +397,7 @@ function AppContent() {
             showPlayAgain={!isMultiplayer && !runId}
             onPlayAgain={runId ? handlePlayNextInRun : startGame}
             onReturnToLobby={() => {
+              handleLocalStats()
               resetGame()
               setWsToken(null)
               setRunId(null)
@@ -462,6 +470,7 @@ function AppContent() {
             <button
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
               onClick={() => {
+                handleLocalStats()
                 resetGame()
                 setWsToken(null)
                 setRunId(null)

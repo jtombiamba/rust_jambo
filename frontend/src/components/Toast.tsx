@@ -24,6 +24,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     warning: 'bg-yellow-500',
   }
 
+  // comment request ID here the day you don't need to display it anymore in frontend
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}

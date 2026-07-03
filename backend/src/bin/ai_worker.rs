@@ -205,6 +205,7 @@ async fn main() -> Result<()> {
     // Main processing loop with semaphore-based concurrency
     loop {
         tokio::select! {
+            // check if consumer is able to find another AI Task in queue, break loop is no more tasks
             delivery_result = consumer.next() => {
                 let delivery = match delivery_result {
                     Some(Ok(d)) => d,
@@ -215,6 +216,7 @@ async fn main() -> Result<()> {
                     }
                     None => break,
                 };
+                // check if task retrieved in queue is parseable
                 let task = match AITask::from_json_bytes(&delivery.data) {
                     Ok(t) => t,
                     Err(e) => {
@@ -265,6 +267,7 @@ async fn main() -> Result<()> {
                         .with_label_values(&["ai_task"])
                         .observe(duration.as_secs_f64());
 
+                    // metrics
                     match result {
                         Ok(()) => {
                             tp.fetch_add(1, Ordering::Relaxed);

@@ -58,14 +58,14 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  // Auto-close after 10 seconds
-  useEffect(() => {
-    if (!isOpen) return;
-    const timer = setTimeout(() => {
-      onClose();
-    }, 10000);
-    return () => clearTimeout(timer);
-  }, [isOpen, onClose]);
+  // Auto-close after 10 seconds (give the player the responsability to close the modal)
+  // useEffect(() => {
+  //   if (!isOpen) return;
+  //   const timer = setTimeout(() => {
+  //     onClose();
+  //   }, 10000);
+  //   return () => clearTimeout(timer);
+  // }, [isOpen, onClose]);
 
   if (!isOpen) {
     return null;
@@ -190,9 +190,9 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
           </div>
 
           {/* Auto-close notice */}
-          <div className="auto-close-notice">
+          {/* <div className="auto-close-notice">
             {t('game.autoCloseNotice')}
-          </div>
+          </div> */}
         </div>
       </div>
     </>

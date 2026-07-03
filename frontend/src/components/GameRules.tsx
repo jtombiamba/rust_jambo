@@ -63,8 +63,6 @@ export default function GameRules({ isOpen, onClose }: Props) {
               <li>{t('rules.winningRoundText1')}</li>
               <li>{t('rules.winningRoundText2')}</li>
               <li>{t('rules.winningRoundText3')}</li>
-              <li>{t('rules.winningRoundText4')}</li>
-              <li>{t('rules.winningRoundText5')}</li>
             </ul>
           </section>
 
@@ -92,6 +90,16 @@ export default function GameRules({ isOpen, onClose }: Props) {
               <li>{t('rules.gameEndText1')}</li>
               <li>{t('rules.gameEndText2')}</li>
               <li>{t('rules.gameEndText3')}</li>
+            </ul>
+          </section>
+
+          <section className="mb-5">
+            <h3 className="text-lg font-semibold mb-2">{t('rules.gameLeave')}</h3>
+            <p className="text-gray-700 mb-1">{t('rules.gameLeaveText')}</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-700">
+              <li>{t('rules.gameLeaveText1')}</li>
+              <li>{t('rules.gameLeaveText2')}</li>
+              <li>{t('rules.gameLeaveText3')}</li>
             </ul>
           </section>
 

@@ -517,6 +517,7 @@ impl RabbitMQClient {
     /// Get queue length (approximate)
     #[allow(dead_code)]
     pub async fn get_queue_length(&self, queue: &str) -> Result<u32, lapin::Error> {
+        info!("queue length measure: {}", queue);
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = queue.into();
 
@@ -540,7 +541,7 @@ impl RabbitMQClient {
         let queue_info = channel
             .queue_declare(queue_name, QueueDeclareOptions::default(), queue_args)
             .await?;
-
+        info!("queue retrieved: {}", queue);
         let count = queue_info.message_count();
         metrics::RABBITMQ_QUEUE_LENGTH.set(count as f64);
 
