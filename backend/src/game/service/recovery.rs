@@ -151,15 +151,23 @@ impl GameService {
                     }
                 }
 
-                if let (Some(user_id), Some(ref mailer)) = (current_player.user_id, &self.mailer) {
-                    self.send_staleness_email(
-                        mailer.clone(),
-                        user_id,
-                        g.id,
-                        inactive_minutes,
-                        remaining_minutes,
-                    )
-                    .await;
+                // Fire-and-forget the staleness email so it doesn't block the scheduler loop
+                if let Some(user_id) = current_player.user_id {
+                    let mailer = self.mailer.clone();
+                    let db = self.db.clone();
+                    // let user_id = current_player.user_id.unwrap();
+                    let game_id = g.id;
+                    tokio::spawn(async move {
+                        Self::send_staleness_email_impl(
+                            mailer,
+                            db,
+                            user_id,
+                            game_id,
+                            inactive_minutes,
+                            remaining_minutes,
+                        )
+                        .await;
+                    });
                 }
 
                 match game::Entity::update_many()
@@ -242,16 +250,19 @@ impl GameService {
         processed
     }
 
-    async fn send_staleness_email(
-        &self,
-        mailer: std::sync::Arc<dyn crate::mailer::Mailer>,
+    /// Fire-and-forget helper: sends a staleness warning email without blocking the caller.
+    pub(crate) async fn send_staleness_email_impl(
+        mailer: Option<std::sync::Arc<dyn crate::mailer::Mailer>>,
+        db: sea_orm::DatabaseConnection,
         user_id: Uuid,
         game_id: Uuid,
         inactive_minutes: i64,
         remaining_minutes: i64,
     ) {
+        let Some(mailer) = mailer else { return };
+
         let user = match crate::database::models::user::Entity::find_by_id(user_id)
-            .one(&self.db)
+            .one(&db)
             .await
         {
             Ok(Some(u)) => u,
@@ -279,14 +290,19 @@ impl GameService {
         }
     }
 
-    pub(crate) async fn send_kicked_email(&self, user_id: Option<Uuid>, game_id: Uuid, bet: i32) {
+    /// Fire-and-forget helper: sends a kicked email without blocking the caller.
+    pub(crate) async fn send_kicked_email_impl(
+        mailer: Option<std::sync::Arc<dyn crate::mailer::Mailer>>,
+        db: sea_orm::DatabaseConnection,
+        user_id: Option<Uuid>,
+        game_id: Uuid,
+        bet: i32,
+    ) {
         let Some(user_id) = user_id else { return };
-        let Some(ref mailer) = self.mailer else {
-            return;
-        };
+        let Some(mailer) = mailer else { return };
 
         let user = match crate::database::models::user::Entity::find_by_id(user_id)
-            .one(&self.db)
+            .one(&db)
             .await
         {
             Ok(Some(u)) => u,
