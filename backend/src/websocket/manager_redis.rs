@@ -100,6 +100,17 @@ impl WebSocketManager {
             GameEvent::GameStarted { .. } => {
                 self.send_game_started_per_player(game_id, &event).await;
             }
+            GameEvent::PlayerKicked { player_id, .. } => {
+                self.broadcast_to_game(game_id, &event.to_json()).await;
+                self.remove_player_connections(game_id, *player_id).await;
+                let db = {
+                    let inner = self.inner.read().await;
+                    inner.db.clone()
+                };
+                if let Some(db) = db {
+                    super::game_state::send_snapshots_to_all_players(self, &db, game_id).await;
+                }
+            }
             _ => {
                 self.broadcast_to_game(game_id, &event.to_json()).await;
             }

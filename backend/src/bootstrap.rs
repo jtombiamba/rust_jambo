@@ -143,7 +143,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         mailer.clone(),
     ));
 
-    let ws_manager = WebSocketManager::new(redis_client.clone());
+    let ws_manager = WebSocketManager::new(redis_client.clone(), Some(db_connection.clone()));
     if let Err(e) = ws_manager.start_redis_subscriber().await {
         tracing::warn!("Failed to start Redis subscriber: {}", e);
     }

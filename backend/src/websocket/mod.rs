@@ -15,6 +15,9 @@ use crate::observability::CorrelationId;
 use manager::WebSocketManager;
 use messages::{IncomingMessage, OutgoingMessage};
 
+mod game_state;
+use game_state::send_game_state_snapshot;
+
 /// WebSocket endpoint for a specific game.
 /// Path parameter: game_id (UUID)
 /// Query parameter: token (optional) — one-time game token for unauthenticated users
@@ -81,6 +84,10 @@ pub async fn ws_handler(
         .get::<CorrelationId>()
         .copied()
         .unwrap_or_else(CorrelationId::new);
+
+    let db = req
+        .app_data::<web::Data<sea_orm::DatabaseConnection>>()
+        .cloned();
 
     let ws_span = tracing::info_span!(
         "ws_connection",
@@ -164,6 +171,7 @@ pub async fn ws_handler(
 
     // Spawn a task that handles incoming messages from the client
     let manager_clone = manager.clone();
+    let db_clone = db.clone();
     let cid_for_handler = correlation_id;
     let handler_span = tracing::info_span!(
         "ws_incoming",
@@ -187,8 +195,14 @@ pub async fn ws_handler(
                             connection_id.uuid(),
                             text
                         );
-                        if let Err(e) =
-                            handle_message(&mut session, &text, game_id, &manager_clone).await
+                        if let Err(e) = handle_message(
+                            &mut session,
+                            &text,
+                            game_id,
+                            &manager_clone,
+                            db_clone.clone(),
+                        )
+                        .await
                         {
                             error!(
                                 "Error handling message for connection {}: {}",
@@ -252,6 +266,7 @@ async fn handle_message(
     text: &str,
     game_id: Uuid,
     manager: &web::Data<WebSocketManager>,
+    db: Option<web::Data<sea_orm::DatabaseConnection>>,
 ) -> Result<(), anyhow::Error> {
     let span = tracing::info_span!(
         "ws_message",
@@ -293,6 +308,11 @@ async fn handle_message(
                             pid,
                             pos,
                         ).await;
+                        // Send current game state snapshot to the newly connected player
+                        if let Some(db) = &db {
+                            send_game_state_snapshot(manager.get_ref(), db, game_id, pid, pos)
+                                .await;
+                        }
                     }
                     let response = OutgoingMessage::GameJoined { game_id };
                     session.text(serde_json::to_string(&response)?).await?;

@@ -25,10 +25,36 @@ pub enum IncomingMessage {
 pub enum OutgoingMessage {
     /// Acknowledgment of a join.
     GameJoined { game_id: Uuid },
+    /// Full game state snapshot sent privately to a player upon joining or reconnection.
+    GameStateSnapshot {
+        game_id: Uuid,
+        roll: i32,
+        rank: Option<i32>,
+        status: String,
+        current_winning_card: Option<i32>,
+        current_winning_player_position: Option<i32>,
+        players: Vec<GameStatePlayer>,
+        played_cards: Vec<GameStateCard>,
+    },
     /// Error response.
     Error { message: String, source: String },
     /// Pong response to a ping.
     Pong,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GameStatePlayer {
+    pub id: Uuid,
+    pub name: String,
+    pub position: i32,
+    pub display_position: i32,
+    pub player_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GameStateCard {
+    pub player_id: Uuid,
+    pub card_index: i32,
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 import { useEffect, useRef} from 'react';
-import { useGameStore, GameResult } from '../stores/useGameStore';
+import { useGameStore, GameResult, Player } from '../stores/useGameStore';
 import { useWebSocket, GameEvent } from './useWebSocket';
 import { updateAnonymousStatsAfterGame } from '../utils/storage';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -128,6 +128,49 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           if (humanPlayer && event.player_id === humanPlayer.id) {
             updatePlayerCards(event.player_id, event.cards);
           }
+          break;
+        }
+        case 'game_state_snapshot': {
+          const store = useGameStore.getState();
+          const existingPlayers = store.players;
+          const existingRemaining = store.remainingCards;
+
+          const snapshotPlayers: Player[] = event.players.map((p) => {
+            const existing = existingPlayers.find((ep) => ep.id === p.id);
+            return {
+              id: p.id,
+              type: p.player_type as 'human' | 'bot',
+              name: p.name,
+              position: p.position,
+              display_position: p.display_position,
+              cards: existing?.cards ?? [],
+              cards_count: existing?.cards_count,
+            };
+          });
+
+          const remainingCards: Record<string, number> = {};
+          snapshotPlayers.forEach((p) => {
+            remainingCards[p.id] = existingRemaining[p.id] ?? p.cards.length;
+          });
+
+          const deckSlots: (number | null)[] = new Array(snapshotPlayers.length).fill(null);
+          event.played_cards.forEach((card) => {
+            const player = snapshotPlayers.find((p) => p.id === card.player_id);
+            if (player) {
+              deckSlots[player.display_position] = card.card_index;
+            }
+          });
+
+          let currentTurn = store.currentTurn;
+          if (event.rank !== null && event.rank !== undefined) {
+            const currentPlayer = snapshotPlayers.find((p) => p.position === event.rank);
+            if (currentPlayer) {
+              currentTurn = currentPlayer.display_position;
+            }
+          }
+
+          store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, deckSlots);
+          clearRoundWinner();
           break;
         }
         case 'staleness_warning': {

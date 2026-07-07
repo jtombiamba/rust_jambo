@@ -56,6 +56,8 @@ struct Inner {
     room_connections: HashMap<Uuid, Vec<TrackedConnection>>,
     /// Redis client for publishing/subscribing to game events.
     redis_client: Option<RedisClient>,
+    /// Database connection for querying game state snapshots.
+    db: Option<sea_orm::DatabaseConnection>,
 }
 
 /// The WebSocket manager that coordinates connections and broadcasts.
@@ -65,13 +67,14 @@ pub struct WebSocketManager {
 }
 
 impl WebSocketManager {
-    /// Create a new WebSocket manager with an optional Redis client.
-    pub fn new(redis_client: Option<RedisClient>) -> Self {
+    /// Create a new WebSocket manager with an optional Redis client and database connection.
+    pub fn new(redis_client: Option<RedisClient>, db: Option<sea_orm::DatabaseConnection>) -> Self {
         Self {
             inner: Arc::new(RwLock::new(Inner {
                 connections: HashMap::new(),
                 room_connections: HashMap::new(),
                 redis_client,
+                db,
             })),
         }
     }
@@ -244,6 +247,35 @@ impl WebSocketManager {
         }
     }
 
+    /// Remove all connections for a specific player from a game without sending
+    /// a PlayerDisconnected event (the player was kicked, not disconnected).
+    /// This prevents the kicked player from receiving further game events.
+    pub async fn remove_player_connections(&self, game_id: Uuid, player_id: Uuid) {
+        let mut inner = self.inner.write().await;
+        if let Some(connections) = inner.connections.get_mut(&game_id) {
+            let before = connections.len();
+            connections.retain(|c| c.player_id != Some(player_id));
+            let removed = before - connections.len();
+            if connections.is_empty() {
+                inner.connections.remove(&game_id);
+                tracing::info!(
+                    "No more connections for game {} after removing player {}",
+                    game_id,
+                    player_id
+                );
+            }
+            if removed > 0 {
+                metrics::WS_CONNECTIONS_ACTIVE.sub(removed as f64);
+                tracing::info!(
+                    "Removed {} connection(s) for kicked player {} from game {}",
+                    removed,
+                    player_id,
+                    game_id
+                );
+            }
+        }
+    }
+
     /// Broadcast a message to all connections of a specific game.
     pub async fn broadcast_to_game(&self, game_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
@@ -322,6 +354,20 @@ impl WebSocketManager {
                 game_id,
                 player_id
             );
+        }
+    }
+
+    /// Get the list of (player_id, player_position) for all connected players in a game.
+    /// Returns only connections that have both a known player_id and player_position.
+    pub async fn get_connected_player_info(&self, game_id: Uuid) -> Vec<(Uuid, i32)> {
+        let inner = self.inner.read().await;
+        if let Some(connections) = inner.connections.get(&game_id) {
+            connections
+                .iter()
+                .filter_map(|c| c.player_id.zip(c.player_position))
+                .collect()
+        } else {
+            Vec::new()
         }
     }
 
