@@ -59,7 +59,7 @@ interface QuickGameResponse {
 }
 
 interface Props {
-  onStartGame: () => void
+  onStartGame: (stepByStep?: boolean) => void
   onStartMultiplayerGame: (bet: number, maxPlayers: number) => Promise<{ gameId: string; error: string | null }>
   onResumeGame: (data: QuickGameResponse) => void
   onViewLobby: (gameId: string) => void
@@ -115,6 +115,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [freezeRemainingSec, setFreezeRemainingSec] = useState(0)
   const [unfreezing, setUnfreezing] = useState(false)
   const [toppingUp, setToppingUp] = useState(false)
+  const [stepByStep, setStepByStep] = useState(false)
   const freezeTimerRef = useRef<ReturnType<typeof setInterval>>()
 
   const [statusFilter, setStatusFilter] = useState('')
@@ -557,10 +558,19 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 <button
                   className="px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   disabled={starting}
-                  onClick={onStartGame}
+                  onClick={() => onStartGame(stepByStep)}
                 >
                   {starting ? t('dashboard.startGameLoading') : t('dashboard.soloGame')}
                 </button>
+                <label className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="checkbox"
+                    checked={stepByStep}
+                    onChange={(e) => setStepByStep(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 rounded"
+                  />
+                  <span className="text-sm text-gray-700">{t('game.stepByStep')}</span>
+                </label>
                 <button
                   className="px-4 sm:px-6 py-2 sm:py-3 bg-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-purple-700 disabled:opacity-50"
                   disabled={starting}

@@ -30,6 +30,8 @@ pub struct CreateGameRequest {
     pub game_mode: String,
     #[serde(default = "default_max_players")]
     pub max_players: i16,
+    #[serde(default)]
+    pub step_by_step: bool,
 }
 
 fn default_bet() -> i32 {

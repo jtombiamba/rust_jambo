@@ -6,8 +6,9 @@ pub mod mock;
 mod types;
 
 pub use types::{
-    AcceptInviteOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome, BenchmarkPlayerOutcome,
-    GameOrchestratorTrait, MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
+    AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
+    BenchmarkPlayerOutcome, EvaluateRoundOutcome, GameOrchestratorTrait,
+    MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
 };
 
 use async_trait::async_trait;
@@ -152,7 +153,7 @@ impl GameOrchestrator {
             .map(|p| matches!(p.player_type, PlayerType::Bot))
             .unwrap_or(false);
 
-        if !result.game_ended && next_is_bot {
+        if !result.game_ended && next_is_bot && !result.step_by_step {
             self.bot_scheduler
                 .schedule_if_next_bot(game_id, result.next_player_id, correlation_id)
                 .await;
@@ -181,6 +182,112 @@ impl GameOrchestrator {
         }
 
         Ok(outcome)
+    }
+
+    pub async fn advance_bot(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<AdvanceBotOutcome, GameError> {
+        let game = GameRepository::new(self.db.clone())
+            .find_by_id(game_id)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or(GameError::GameNotFound)?;
+
+        let players = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await
+            .map_err(GameError::Database)?;
+
+        if !players.iter().any(|p| p.id == human_player_id) {
+            return Err(GameError::PlayerNotFound);
+        }
+
+        if !game.step_by_step {
+            return Err(GameError::Internal(Box::new(std::io::Error::other(
+                "advance_bot is only available in step-by-step mode",
+            ))));
+        }
+
+        let current_player_id = self
+            .game_service
+            .next_player(game_id)
+            .await
+            .map_err(map_service_error)?;
+        let current_is_bot = players
+            .iter()
+            .find(|p| p.id == current_player_id)
+            .map(|p| matches!(p.player_type, PlayerType::Bot))
+            .unwrap_or(false);
+
+        if !current_is_bot {
+            return Err(GameError::NotYourTurn);
+        }
+
+        let outcome = BotScheduler::execute_one_bot_move(
+            &self.db,
+            &self.game_service.redis_client(),
+            game_id,
+            current_player_id,
+        )
+        .await
+        .map_err(map_service_error)?;
+
+        let next_is_bot = outcome
+            .players
+            .iter()
+            .find(|p| p.id == outcome.next_player_id)
+            .map(|p| matches!(p.player_type, PlayerType::Bot))
+            .unwrap_or(false);
+
+        Ok(AdvanceBotOutcome {
+            card_played: outcome.card_played,
+            next_player_id: outcome.next_player_id,
+            next_is_bot,
+            round_complete: outcome.round_complete,
+            game_ended: outcome.game_ended,
+        })
+    }
+
+    pub async fn evaluate_round(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<EvaluateRoundOutcome, GameError> {
+        let game = GameRepository::new(self.db.clone())
+            .find_by_id(game_id)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or(GameError::GameNotFound)?;
+
+        let players = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await
+            .map_err(GameError::Database)?;
+
+        if !players.iter().any(|p| p.id == human_player_id) {
+            return Err(GameError::PlayerNotFound);
+        }
+
+        if !game.step_by_step {
+            return Err(GameError::Internal(Box::new(std::io::Error::other(
+                "evaluate_round is only available in step-by-step mode",
+            ))));
+        }
+
+        let result = self
+            .game_service
+            .evaluate_round(game_id)
+            .await
+            .map_err(map_service_error)?;
+
+        Ok(EvaluateRoundOutcome {
+            round_number: result.round,
+            winner_id: result.winner_id,
+            winner_position: result.winner_position as i32,
+            game_ended: result.game_ended,
+        })
     }
 
     pub async fn create_multiplayer_game(
@@ -299,8 +406,9 @@ impl GameOrchestratorTrait for GameOrchestrator {
     async fn create_quick_game(
         &self,
         correlation_id: Option<CorrelationId>,
+        step_by_step: bool,
     ) -> Result<QuickGameOutcome, GameError> {
-        self.create_quick_game(correlation_id).await
+        self.create_quick_game(correlation_id, step_by_step).await
     }
 
     async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
@@ -313,6 +421,16 @@ impl GameOrchestratorTrait for GameOrchestrator {
         db: &DatabaseConnection,
     ) -> Result<QuickGameOutcome, GameError> {
         self.create_quick_game_for_user(user_id, db).await
+    }
+
+    async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        user_id: Uuid,
+        db: &DatabaseConnection,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, GameError> {
+        self.create_quick_game_for_user_with_step_by_step(user_id, db, step_by_step)
+            .await
     }
 
     async fn create_multiplayer_game(
@@ -367,5 +485,21 @@ impl GameOrchestratorTrait for GameOrchestrator {
 
     async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
         self.cancel_game(game_id).await
+    }
+
+    async fn advance_bot(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<AdvanceBotOutcome, GameError> {
+        self.advance_bot(game_id, human_player_id).await
+    }
+
+    async fn evaluate_round(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<EvaluateRoundOutcome, GameError> {
+        self.evaluate_round(game_id, human_player_id).await
     }
 }

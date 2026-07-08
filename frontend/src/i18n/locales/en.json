@@ -138,7 +138,13 @@
     "autoCloseNotice": "This modal will auto-close in 10 seconds",
     "winnerLabel": "Winner!",
     "winnerKora": "KORA!",
-    "winnerDoubleKora": "DOUBLE KORA!"
+    "winnerDoubleKora": "DOUBLE KORA!",
+    "stepByStep": "Step-by-Step Mode",
+    "stepByStepDescription": "Control each bot move manually",
+    "playNextBot": "Play Next Bot",
+    "evaluateRound": "Evaluate Round",
+    "waitingForBot": "Waiting for bot move...",
+    "allCardsPlayed": "All cards played! Evaluate the round."
   },
   "lobby": {
     "gameLobby": "Game Lobby",

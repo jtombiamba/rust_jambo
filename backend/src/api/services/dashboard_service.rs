@@ -494,6 +494,7 @@ async fn build_game_state_response(
         invite_expires_at: game.invite_expires_at.map(|t| t.to_rfc3339()),
         deck_slots: Some(deck_slots),
         ws_token: None,
+        step_by_step: game.step_by_step,
     })
 }
 

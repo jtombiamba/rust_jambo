@@ -151,7 +151,7 @@ impl GameService {
             let round_complete = self.is_round_complete_txn(&txn, game_id, game.roll).await?;
             let mut round_result: Option<RoundEvaluationResult> = None;
 
-            if round_complete {
+            if round_complete && !game.step_by_step {
                 match self.evaluate_round_in_txn(&txn, game_id, game.roll).await {
                     Ok(result) => round_result = Some(result),
                     Err(GameServiceError::VersionConflict) => {
@@ -171,14 +171,15 @@ impl GameService {
                     }
                 }
             } else {
+                let new_rank = if round_complete && game.step_by_step {
+                    current_rank as i32
+                } else {
+                    next_player(current_rank, active_player_count) as i32
+                };
                 let update_result = game::Entity::update_many()
                     .col_expr(
                         game::Column::Rank,
-                        sea_orm::sea_query::Expr::value(sea_orm::Value::Int(Some(next_player(
-                            current_rank,
-                            active_player_count,
-                        )
-                            as i32))),
+                        sea_orm::sea_query::Expr::value(sea_orm::Value::Int(Some(new_rank))),
                     )
                     .col_expr(
                         game::Column::CurrentWinningCard,
@@ -298,6 +299,7 @@ impl GameService {
                 game_ended,
                 round_completed,
                 current_round,
+                step_by_step: game.step_by_step,
             });
         }
     }

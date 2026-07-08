@@ -22,6 +22,8 @@ pub async fn create_quick_game(
 ) -> impl Responder {
     let correlation_id = req.extensions().get::<CorrelationId>().copied();
 
+    let step_by_step = req.query_string().contains("step_by_step=true");
+
     // Check if the user already has a valid auth cookie
     let token = req.cookie("Authorization").map(|c| c.value().to_string());
     let is_authenticated = token
@@ -29,7 +31,10 @@ pub async fn create_quick_game(
         .and_then(|t| jwt::validate_token(t, &auth_config).ok())
         .is_some();
 
-    match orchestrator.create_quick_game(correlation_id).await {
+    match orchestrator
+        .create_quick_game(correlation_id, step_by_step)
+        .await
+    {
         Ok(mut outcome) => {
             // If not authenticated, generate a one-time game token for WebSocket auth
             if !is_authenticated {
@@ -130,6 +135,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;

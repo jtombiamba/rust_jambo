@@ -35,6 +35,7 @@ pub enum OutgoingMessage {
         current_winning_player_position: Option<i32>,
         players: Vec<GameStatePlayer>,
         played_cards: Vec<GameStateCard>,
+        step_by_step: bool,
     },
     /// Error response.
     Error { message: String, source: String },

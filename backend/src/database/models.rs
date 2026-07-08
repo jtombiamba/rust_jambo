@@ -32,6 +32,7 @@ pub mod game {
         pub invite_expires_at: Option<DateTime<Utc>>,
         pub stall_warning_sent_at: Option<DateTime<Utc>>,
         pub game_run_id: Option<Uuid>,
+        pub step_by_step: bool,
         #[sea_orm(column_type = "JsonBinary")]
         pub kicked_players: Value,
     }

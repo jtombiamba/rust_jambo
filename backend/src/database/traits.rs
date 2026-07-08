@@ -45,7 +45,7 @@ pub trait PlayerProfileRepoTrait: Send + Sync {
 #[async_trait]
 #[allow(dead_code)]
 pub trait GameRepoTrait: Send + Sync {
-    async fn create(&self, bet: i32, auto: bool) -> Result<Game, DbErr>;
+    async fn create(&self, bet: i32, auto: bool, step_by_step: bool) -> Result<Game, DbErr>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr>;
     async fn update_rank(&self, id: Uuid, rank: Option<i32>) -> Result<Game, DbErr>;
     async fn update_status(&self, id: Uuid, status: GameStatus) -> Result<Game, DbErr>;

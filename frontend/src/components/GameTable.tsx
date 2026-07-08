@@ -5,7 +5,7 @@ import Card from './Card';
 import WinnerRing from './WinnerRing';
 import GameOverModal from './GameOverModal';
 import GameRules from './GameRules';
-import { RoundWinner, GameOverData } from '../stores/useGameStore';
+import { RoundWinner, GameOverData, useStepByStepPhase } from '../stores/useGameStore';
 
 export interface GamePlayer {
   id: string;
@@ -28,6 +28,8 @@ export interface GameTableProps {
   onReturnToLobby?: () => void;
   onCloseGameOver?: () => void;
   showPlayAgain?: boolean;
+  onAdvanceBot?: () => void;
+  onEvaluateRound?: () => void;
 }
 
 type LayoutMode = 'mobile-portrait' | 'mobile-landscape' | 'desktop';
@@ -60,8 +62,11 @@ const GameTable: React.FC<GameTableProps> = ({
   onReturnToLobby,
   onCloseGameOver,
   showPlayAgain = true,
+  onAdvanceBot,
+  onEvaluateRound,
 }) => {
   const { t } = useTranslation();
+  const phase = useStepByStepPhase();
 
   const getLayoutMode = (): LayoutMode => {
     if (typeof window === 'undefined') return 'desktop';
@@ -382,6 +387,42 @@ const GameTable: React.FC<GameTableProps> = ({
           </div>
         )}
       </div>
+
+      {phase !== 'idle' && (
+        <div className="container mx-auto px-2 sm:px-4 md:px-8 mt-4">
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-0.5 rounded">
+                  {t('game.stepByStep')}
+                </span>
+                {phase === 'bot_turn' && (
+                  <span className="text-sm text-blue-700">{t('game.waitingForBot')}</span>
+                )}
+                {phase === 'evaluate_round' && (
+                  <span className="text-sm text-blue-700">{t('game.allCardsPlayed')}</span>
+                )}
+              </div>
+              {phase === 'bot_turn' && onAdvanceBot && (
+                <button
+                  className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700"
+                  onClick={onAdvanceBot}
+                >
+                  {t('game.playNextBot')}
+                </button>
+              )}
+              {phase === 'evaluate_round' && onEvaluateRound && (
+                <button
+                  className="px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700"
+                  onClick={onEvaluateRound}
+                >
+                  {t('game.evaluateRound')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {gameOver && gameOver.isGameOver && (
         <GameOverModal

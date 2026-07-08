@@ -88,6 +88,7 @@ pub(super) async fn send_game_state_snapshot(
         current_winning_player_position: game_model.current_winning_player_position,
         players: game_state_players,
         played_cards: played_cards.clone(),
+        step_by_step: game_model.step_by_step,
     };
 
     match serde_json::to_string(&snapshot) {
@@ -193,6 +194,7 @@ pub(super) async fn send_snapshots_to_all_players(
             current_winning_player_position: game_model.current_winning_player_position,
             players: game_state_players,
             played_cards: played_cards.clone(),
+            step_by_step: game_model.step_by_step,
         };
 
         match serde_json::to_string(&snapshot) {

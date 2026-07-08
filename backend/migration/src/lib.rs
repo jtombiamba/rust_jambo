@@ -12,6 +12,7 @@ mod m20260527_000001_game_staleness;
 mod m20260527_000002_rooms;
 mod m20260528_000001_fix_unique_index;
 mod m20260528_000002_run_stall_tracking;
+mod m20260707_000001_step_by_step;
 
 pub struct Migrator;
 
@@ -31,6 +32,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260527_000002_rooms::Migration),
             Box::new(m20260528_000001_fix_unique_index::Migration),
             Box::new(m20260528_000002_run_stall_tracking::Migration),
+            Box::new(m20260707_000001_step_by_step::Migration),
         ]
     }
 }

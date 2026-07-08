@@ -3,7 +3,7 @@ use prometheus::Encoder;
 
 use crate::api::anonymous::get_anonymous_stats;
 use crate::api::fallback;
-use crate::api::game::play_card;
+use crate::api::game::{advance_bot, evaluate_round, play_card};
 use crate::api::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::api::quickie::create_quick_game;
 use crate::api::room;
@@ -72,6 +72,8 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                 .service(crate::api::config::client_config)
                 .service(create_quick_game)
                 .service(play_card)
+                .service(advance_bot)
+                .service(evaluate_round)
                 .route(
                     "/lang",
                     web::post().to(crate::i18n::lang_endpoint::set_language),

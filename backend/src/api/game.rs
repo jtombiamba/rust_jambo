@@ -4,7 +4,9 @@ use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, Re
 use uuid::Uuid;
 
 use crate::api::dto::requests::PlayCardRequest;
-use crate::api::dto::responses::PlayCardResponse;
+use crate::api::dto::responses::{
+    AdvanceBotResponse, EvaluateRoundResponse, PlayCardResponse, PlayerActionRequest,
+};
 use crate::error::AppError;
 use crate::game::orchestrator::GameOrchestratorTrait;
 use crate::observability::CorrelationId;
@@ -41,6 +43,58 @@ pub async fn play_card(
     {
         Ok(outcome) => {
             let response: PlayCardResponse = outcome.into();
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+#[post("/game/{id}/advance-bot")]
+pub async fn advance_bot(
+    _req: HttpRequest,
+    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    id: web::Path<Uuid>,
+    payload: web::Json<PlayerActionRequest>,
+) -> impl Responder {
+    let game_id = id.into_inner();
+
+    match orchestrator.advance_bot(game_id, payload.player_id).await {
+        Ok(outcome) => {
+            let response = AdvanceBotResponse {
+                success: true,
+                card_played: outcome.card_played,
+                next_player_id: outcome.next_player_id,
+                next_is_bot: outcome.next_is_bot,
+                round_complete: outcome.round_complete,
+                game_ended: outcome.game_ended,
+            };
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+#[post("/game/{id}/evaluate-round")]
+pub async fn evaluate_round(
+    _req: HttpRequest,
+    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    id: web::Path<Uuid>,
+    payload: web::Json<PlayerActionRequest>,
+) -> impl Responder {
+    let game_id = id.into_inner();
+
+    match orchestrator
+        .evaluate_round(game_id, payload.player_id)
+        .await
+    {
+        Ok(outcome) => {
+            let response = EvaluateRoundResponse {
+                success: true,
+                round_number: outcome.round_number,
+                winner_id: outcome.winner_id,
+                winner_position: outcome.winner_position,
+                game_ended: outcome.game_ended,
+            };
             HttpResponse::Ok().json(response)
         }
         Err(e) => AppError::from(e).error_response(),
@@ -204,6 +258,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -231,6 +286,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -258,6 +314,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -285,6 +342,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -312,6 +370,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -339,6 +398,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -366,6 +426,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -395,6 +456,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
@@ -424,6 +486,7 @@ mod tests {
                 invite_expires_at: None,
                 deck_slots: None,
                 ws_token: None,
+                step_by_step: false,
             }),
         ));
         let app = make_app(mock).await;
