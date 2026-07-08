@@ -99,34 +99,31 @@ pub async fn ws_handler(
 
     let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
 
-    // Create a channel to send messages from the manager to this WebSocket
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    // Register the connection with the manager and get a connection ID
-    let connection_id = manager.add_connection(game_id, tx, correlation_id).await;
-
-    // Send a welcome message immediately to keep connection alive
+    // Send a welcome message BEFORE registering the connection
     match serde_json::to_string(&OutgoingMessage::GameJoined { game_id }) {
         Ok(welcome_message) => {
             if let Err(e) = session.text(welcome_message).await {
                 error!(
-                    "Failed to send welcome message to connection {}: {}",
-                    connection_id.uuid(),
+                    "Failed to send welcome message, not registering connection: {}",
                     e
                 );
-                // Connection might be already closed, but we'll continue anyway
-            } else {
-                info!(
-                    "Sent welcome message to connection {}",
-                    connection_id.uuid()
-                );
+                return Ok(res);
             }
+            info!("Sent welcome message for game {}", game_id);
         }
         Err(e) => {
-            error!("Failed to serialize welcome message: {}", e);
-            // Continue without welcome message
+            error!(
+                "Failed to serialize welcome message, not registering: {}",
+                e
+            );
+            return Ok(res);
         }
     }
+
+    // Register the connection AFTER successful welcome message
+    let connection_id = manager.add_connection(game_id, tx, correlation_id).await;
 
     // Spawn a task that forwards messages from the manager to the WebSocket
     let mut session_clone = session.clone();
@@ -158,7 +155,7 @@ pub async fn ws_handler(
                     e
                 );
                 manager_clone_for_forwarding
-                    .remove_connection(game_id, connection_id_for_forwarding)
+                    .force_disconnect(game_id, connection_id_for_forwarding)
                     .await;
                 break;
             }
@@ -232,6 +229,7 @@ pub async fn ws_handler(
                     }
                     Message::Pong(_) => {
                         trace!("Received pong from connection {}", connection_id.uuid());
+                        manager_clone.update_pong(game_id, connection_id).await;
                     }
                     _ => {}
                 },
@@ -389,16 +387,18 @@ pub async fn ws_room_handler(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let connection_id = manager
-        .add_room_connection(room_id, tx, correlation_id)
-        .await;
-
+    // Send welcome BEFORE registering
     if let Err(e) = session
         .text(serde_json::json!({"type": "room_joined", "room_id": room_id}).to_string())
         .await
     {
-        tracing::error!("Failed to send room welcome: {}", e);
+        tracing::error!("Failed to send room welcome, not registering: {}", e);
+        return Ok(res);
     }
+
+    let connection_id = manager
+        .add_room_connection(room_id, tx, correlation_id)
+        .await;
 
     let mut session_clone = session.clone();
     let manager_clone = manager.clone();
@@ -451,11 +451,16 @@ async fn validate_ws_token(
     let claims = jwt::validate_token(&t, &config).ok()?;
 
     if let Some(ref mut r) = redis_client {
-        if r.exists(&format!("token:blacklist:{}", claims.jti))
-            .await
-            .unwrap_or(false)
-        {
-            return None;
+        match r.exists(&format!("token:blacklist:{}", claims.jti)).await {
+            Ok(true) => {
+                return None;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!("Redis error during token blacklist check: {}", e);
+                crate::observability::metrics::WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL.inc();
+                return None;
+            }
         }
     }
 
@@ -510,12 +515,8 @@ async fn validate_game_token(
             }
             Err(e) => {
                 tracing::error!("Redis error checking game token: {}", e);
-                // If Redis is down, fall back to allowing the connection
-                // (the token JWT is still validated)
-                tracing::warn!(
-                    "Redis unavailable, allowing game token connection for game {}",
-                    game_id
-                );
+                crate::observability::metrics::WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc();
+                return None;
             }
         }
     }

@@ -6,6 +6,8 @@ use crate::database::models::{game, game_card, game_run, player, GameStatus};
 use crate::game::service::types::RoundEvaluationResult;
 use crate::messaging::events::GameEvent;
 use crate::messaging::events::RoomEvent;
+use crate::messaging::redis::PublishResult;
+use crate::observability::metrics::RUN_COMPLETION_ERRORS_TOTAL;
 
 use super::GameService;
 
@@ -26,8 +28,14 @@ impl GameService {
                 next_turn,
                 correlation_id,
             };
-            if let Err(e) = redis_client.publish_game_event(&event).await {
-                error!("Failed to publish CardPlayed event: {}", e);
+            match redis_client.publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!(
+                        "CRITICAL: Failed to publish CardPlayed event for game {} after retries: {}",
+                        game_id, e
+                    );
+                }
             }
         }
     }
@@ -44,8 +52,14 @@ impl GameService {
                 current_turn,
                 correlation_id,
             };
-            if let Err(e) = redis_client.publish_game_event(&event).await {
-                error!("Failed to publish TurnChanged event: {}", e);
+            match redis_client.publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!(
+                        "CRITICAL: Failed to publish TurnChanged event for game {}: {}",
+                        game_id, e
+                    );
+                }
             }
         }
     }
@@ -97,8 +111,14 @@ impl GameService {
                 correlation_id,
             };
 
-            if let Err(e) = redis_client.publish_game_event(&event).await {
-                error!("Failed to publish RoundCompleted event: {}", e);
+            match redis_client.publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!(
+                        "CRITICAL: Failed to publish RoundCompleted event for game {}: {}",
+                        game_id, e
+                    );
+                }
             }
         }
     }
@@ -131,8 +151,14 @@ impl GameService {
                 correlation_id,
             };
 
-            if let Err(e) = redis_client.publish_game_event(&event).await {
-                error!("Failed to publish GameFinished event: {}", e);
+            match redis_client.publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!(
+                        "CRITICAL: Failed to publish GameFinished event for game {}: {}",
+                        game_id, e
+                    );
+                }
             }
 
             let game_model = match game::Entity::find_by_id(game_id).one(&self.db).await {
@@ -148,9 +174,33 @@ impl GameService {
     }
 
     async fn finalize_run_on_game_completion(&self, run_id: Uuid, _game_model: &game::Model) {
-        let run = match game_run::Entity::find_by_id(run_id).one(&self.db).await {
-            Ok(Some(r)) => r,
-            _ => return,
+        let run = {
+            let mut attempts = 0u32;
+            loop {
+                match game_run::Entity::find_by_id(run_id).one(&self.db).await {
+                    Ok(Some(r)) => break r,
+                    Ok(None) => {
+                        tracing::warn!("Run {} not found for completion finalization", run_id);
+                        RUN_COMPLETION_ERRORS_TOTAL.inc();
+                        return;
+                    }
+                    Err(e) => {
+                        attempts += 1;
+                        if attempts >= 3 {
+                            tracing::error!(
+                                "Failed to finalize run {} after {} attempts: {}",
+                                run_id,
+                                attempts,
+                                e
+                            );
+                            RUN_COMPLETION_ERRORS_TOTAL.inc();
+                            return;
+                        }
+                        tracing::warn!("Retry {}/3 looking up run {}: {}", attempts, run_id, e);
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                }
+            }
         };
 
         if run.current_game_index >= run.num_games {
@@ -175,12 +225,17 @@ impl GameService {
                                 room_id: run.room_id,
                                 run_id,
                             };
-                            if let Err(e) = redis_client.publish_room_event(&room_event).await {
-                                tracing::error!(
-                                    "Failed to publish RunCompleted event for run {}: {}",
-                                    run_id,
-                                    e
-                                );
+                            match redis_client
+                                .publish_room_event_with_retry(&room_event)
+                                .await
+                            {
+                                PublishResult::Published => {}
+                                PublishResult::RetryExhausted(e) => {
+                                    tracing::error!(
+                                        "CRITICAL: Failed to publish RunCompleted event for run {} after retries: {}",
+                                        run_id, e
+                                    );
+                                }
                             }
                         }
                     } else {

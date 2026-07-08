@@ -23,68 +23,87 @@ impl WebSocketManager {
             let manager = self.clone();
 
             tokio::spawn(async move {
-                let mut pubsub = match redis.psubscribe(&["game:*", "room:*"]).await {
-                    Ok(ps) => ps,
-                    Err(e) => {
-                        tracing::error!(
-                            "Shard {} failed to subscribe to Redis pattern: {}",
-                            shard,
-                            e
-                        );
-                        return;
-                    }
-                };
-                tracing::info!("Redis subscriber shard {}/{} ready", shard, shard_count);
+                let mut attempt: u64 = 0;
 
-                let mut stream = pubsub.on_message();
-                while let Some(msg) = stream.next().await {
-                    let channel: String = msg.get_channel().unwrap_or_default();
-                    let payload: String = msg.get_payload().unwrap_or_default();
-                    tracing::debug!("Redis message on channel {} (shard {})", channel, shard);
+                loop {
+                    let mut pubsub = match redis.psubscribe(&["game:*", "room:*"]).await {
+                        Ok(ps) => {
+                            attempt = 0;
+                            crate::observability::metrics::REDIS_SUBSCRIBER_SHARDS_ACTIVE.inc();
+                            tracing::info!("Redis subscriber shard {} connected", shard);
+                            ps
+                        }
+                        Err(e) => {
+                            attempt += 1;
+                            let delay = (1u64 << attempt.min(5)).min(30);
+                            tracing::error!(
+                                "Shard {} subscribe attempt {} failed: {}, retrying in {}s",
+                                shard,
+                                attempt,
+                                e,
+                                delay
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                            continue;
+                        }
+                    };
 
-                    if let Some(game_id) = Self::extract_game_id_from_channel(&channel) {
-                        if Self::shard_for_game(game_id, shard_count) == shard {
-                            match serde_json::from_str::<GameEvent>(&payload) {
-                                Ok(event) => {
-                                    manager.route_event(game_id, event).await;
-                                }
-                                Err(e) => {
-                                    tracing::error!(
-                                        "Failed to parse game event for game {}: {}",
-                                        game_id,
-                                        e
-                                    );
-                                    manager
-                                        .send_error(
+                    let mut stream = pubsub.on_message();
+                    while let Some(msg) = stream.next().await {
+                        let channel: String = msg.get_channel().unwrap_or_default();
+                        let payload: String = msg.get_payload().unwrap_or_default();
+                        tracing::debug!("Redis message on channel {} (shard {})", channel, shard);
+
+                        if let Some(game_id) = Self::extract_game_id_from_channel(&channel) {
+                            if Self::shard_for_game(game_id, shard_count) == shard {
+                                match serde_json::from_str::<GameEvent>(&payload) {
+                                    Ok(event) => {
+                                        manager.route_event(game_id, event).await;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to parse game event for game {}: {}",
                                             game_id,
-                                            "Failed to process game event",
-                                            "ws:parse_error",
-                                        )
-                                        .await;
+                                            e
+                                        );
+                                        manager
+                                            .send_error(
+                                                game_id,
+                                                "Failed to process game event",
+                                                "ws:parse_error",
+                                            )
+                                            .await;
+                                    }
                                 }
                             }
-                        }
-                    } else if let Some(room_id) = Self::extract_room_id_from_channel(&channel) {
-                        if Self::shard_for_game(room_id, shard_count) == shard {
-                            match serde_json::from_str::<RoomEvent>(&payload) {
-                                Ok(event) => {
-                                    manager.route_room_event(room_id, event).await;
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to parse room event for room {}: {}",
-                                        room_id,
-                                        e
-                                    );
-                                    manager.broadcast_to_room(room_id, &payload).await;
+                        } else if let Some(room_id) = Self::extract_room_id_from_channel(&channel) {
+                            if Self::shard_for_game(room_id, shard_count) == shard {
+                                match serde_json::from_str::<RoomEvent>(&payload) {
+                                    Ok(event) => {
+                                        manager.route_room_event(room_id, event).await;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to parse room event for room {}: {}",
+                                            room_id,
+                                            e
+                                        );
+                                        manager.broadcast_to_room(room_id, &payload).await;
+                                    }
                                 }
                             }
+                        } else {
+                            tracing::warn!("Received message on unexpected channel: {}", channel);
                         }
-                    } else {
-                        tracing::warn!("Received message on unexpected channel: {}", channel);
                     }
+
+                    crate::observability::metrics::REDIS_SUBSCRIBER_SHARDS_ACTIVE.dec();
+                    tracing::warn!(
+                        "Redis subscriber shard {} disconnected, reconnecting...",
+                        shard
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
-                tracing::info!("Redis subscriber shard {} ended", shard);
             });
         }
         Ok(())

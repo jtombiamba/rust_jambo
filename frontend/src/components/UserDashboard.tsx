@@ -65,6 +65,8 @@ interface Props {
   onViewLobby: (gameId: string) => void
   starting: boolean
   error: string | null
+  stepByStep: boolean
+  onStepByStepChange: (value: boolean) => void
 }
 
 interface InvitationItem {
@@ -91,7 +93,7 @@ const STATUS_OPTIONS = [
   { label: 'Cancelled', value: 'cancelled' },
 ]
 
-export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onResumeGame, onViewLobby, starting, error }: Props) {
+export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onResumeGame, onViewLobby, starting, error, stepByStep, onStepByStepChange }: Props) {
   const { user, logout } = useAuthStore()
   const { t } = useTranslation()
   const [profile, setProfile] = useState<ProfileData | null>(null)
@@ -115,7 +117,6 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [freezeRemainingSec, setFreezeRemainingSec] = useState(0)
   const [unfreezing, setUnfreezing] = useState(false)
   const [toppingUp, setToppingUp] = useState(false)
-  const [stepByStep, setStepByStep] = useState(false)
   const freezeTimerRef = useRef<ReturnType<typeof setInterval>>()
 
   const [statusFilter, setStatusFilter] = useState('')
@@ -566,7 +567,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                   <input
                     type="checkbox"
                     checked={stepByStep}
-                    onChange={(e) => setStepByStep(e.target.checked)}
+                    onChange={(e) => onStepByStepChange(e.target.checked)}
                     className="w-4 h-4 text-blue-600 rounded"
                   />
                   <span className="text-sm text-gray-700">{t('game.stepByStep')}</span>

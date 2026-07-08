@@ -90,6 +90,7 @@ impl GameService {
             None => return,
         };
 
+        use crate::observability::metrics::EMAIL_SEND_ERRORS_TOTAL;
         use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
         let profile = match crate::database::models::player_profile::Entity::find()
             .filter(crate::database::models::player_profile::Column::UserId.eq(user_id))
@@ -97,7 +98,27 @@ impl GameService {
             .await
         {
             Ok(Some(p)) => p,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!(
+                    "No profile found for user {}, skipping unfreeze email",
+                    user_id
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["unfreeze"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up profile for unfreeze email to {}: {}",
+                    user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["unfreeze"])
+                    .inc();
+                return;
+            }
         };
 
         let user = match crate::database::models::user::Entity::find_by_id(profile.user_id)
@@ -105,7 +126,24 @@ impl GameService {
             .await
         {
             Ok(Some(u)) => u,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!("User {} not found for unfreeze email", profile.user_id);
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["unfreeze"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up user {} for unfreeze email: {}",
+                    profile.user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["unfreeze"])
+                    .inc();
+                return;
+            }
         };
 
         if let Err(e) = mailer
@@ -117,6 +155,9 @@ impl GameService {
             .await
         {
             tracing::error!("Failed to send unfreeze email to {}: {}", user.email, e);
+            EMAIL_SEND_ERRORS_TOTAL
+                .with_label_values(&["unfreeze"])
+                .inc();
         }
     }
 }

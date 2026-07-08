@@ -12,6 +12,7 @@ use crate::database::models::{
 use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
 use crate::game::service::types::{GameCreationTimer, GameServiceError};
 use crate::messaging::events::GameEvent;
+use crate::messaging::redis::PublishResult;
 
 use super::GameService;
 
@@ -76,8 +77,13 @@ impl GameService {
                 game_id,
                 reason: "Not enough players joined before timeout".to_string(),
             };
-            if let Err(e) = redis.clone().publish_game_event(&event).await {
-                error!("Failed to publish GameCancelled event: {}", e);
+            if let PublishResult::RetryExhausted(e) =
+                redis.clone().publish_game_event_with_retry(&event).await
+            {
+                error!(
+                    "CRITICAL: Failed to publish GameCancelled event after retries: {}",
+                    e
+                );
             }
         }
 
@@ -157,7 +163,7 @@ impl GameService {
                     player_id: kicked_player.id,
                     player_name: kicked_player.name.clone(),
                 };
-                let _ = redis.clone().publish_game_event(&pk_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&pk_event).await;
 
                 let gf_event = GameEvent::GameFinished {
                     game_id,
@@ -169,7 +175,7 @@ impl GameService {
                     rounds_played: game_model.roll,
                     correlation_id: None,
                 };
-                let _ = redis.clone().publish_game_event(&gf_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&gf_event).await;
             }
 
             self.invalidate_game_state_cache(game_id).await;
@@ -232,14 +238,14 @@ impl GameService {
                     player_id: kicked_player.id,
                     player_name: kicked_player.name.clone(),
                 };
-                let _ = redis.clone().publish_game_event(&pk_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&pk_event).await;
 
                 let fw_event = GameEvent::PlayerForfeitWin {
                     game_id,
                     winner_id: winner.id,
                     winner_name: winner.name.clone(),
                 };
-                let _ = redis.clone().publish_game_event(&fw_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&fw_event).await;
 
                 let final_score = if winner.user_id.is_some() {
                     Some(winner.credits + game_model.bet)
@@ -257,7 +263,7 @@ impl GameService {
                     rounds_played: game_model.roll,
                     correlation_id: None,
                 };
-                let _ = redis.clone().publish_game_event(&gf_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&gf_event).await;
             }
 
             self.invalidate_game_state_cache(game_id).await;
@@ -335,13 +341,13 @@ impl GameService {
                 player_id: kicked_player.id,
                 player_name: kicked_player.name.clone(),
             };
-            let _ = redis.clone().publish_game_event(&pk_event).await;
+            let _ = redis.clone().publish_game_event_with_retry(&pk_event).await;
 
             let rs_event = GameEvent::GameReshuffled {
                 game_id,
                 remaining_players: active_players.len() as u32,
             };
-            let _ = redis.clone().publish_game_event(&rs_event).await;
+            let _ = redis.clone().publish_game_event_with_retry(&rs_event).await;
         }
 
         self.invalidate_game_state_cache(game_id).await;
@@ -496,7 +502,9 @@ impl GameService {
                     player_id: pid,
                     cards: player_cards,
                 };
-                if let Err(e) = redis.clone().publish_game_event(&event).await {
+                if let PublishResult::RetryExhausted(e) =
+                    redis.clone().publish_game_event_with_retry(&event).await
+                {
                     error!("Failed to publish CardsDealt event: {}", e);
                 }
             }
@@ -525,8 +533,11 @@ impl GameService {
                 current_turn: first_player_id,
                 correlation_id: None,
             };
-            if let Err(e) = redis.clone().publish_game_event(&event).await {
-                error!("Failed to publish GameStarted event: {}", e);
+            match redis.clone().publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!("Failed to publish GameStarted event: {}", e);
+                }
             }
         }
 

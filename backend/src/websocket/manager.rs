@@ -46,6 +46,8 @@ struct TrackedConnection {
     last_activity: Instant,
     player_id: Option<Uuid>,
     player_position: Option<i32>,
+    disconnected: bool,
+    last_pong: Instant,
 }
 
 /// Inner shared state for the WebSocket manager.
@@ -109,6 +111,8 @@ impl WebSocketManager {
                 last_activity: Instant::now(),
                 player_id: None,
                 player_position: None,
+                disconnected: false,
+                last_pong: Instant::now(),
             });
         tracing::info!(
             "New WebSocket connection {} for game {} (correlation_id={})",
@@ -181,16 +185,83 @@ impl WebSocketManager {
         }
     }
 
-    /// Remove a WebSocket connection from a game using its connection ID.
+    pub async fn update_pong(&self, game_id: Uuid, connection_id: ConnectionId) {
+        let mut inner = self.inner.write().await;
+        if let Some(connections) = inner.connections.get_mut(&game_id) {
+            for connection in connections.iter_mut() {
+                if connection.id == connection_id {
+                    connection.last_pong = Instant::now();
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Force-disconnect a connection, always publishing PlayerDisconnected if player
+    /// identity was set. Safe to call from the forwarding task even after the stream
+    /// handler has already cleaned up.
+    pub async fn force_disconnect(&self, game_id: Uuid, connection_id: ConnectionId) {
+        let (player_id, position, was_disconnected) = {
+            let mut inner = self.inner.write().await;
+            let result = if let Some(connections) = inner.connections.get_mut(&game_id) {
+                let idx = connections.iter().position(|c| c.id == connection_id);
+                match idx {
+                    Some(i) => {
+                        let conn = &connections[i];
+                        if conn.disconnected {
+                            (conn.player_id, conn.player_position, true)
+                        } else {
+                            let (pid, pos) = (conn.player_id, conn.player_position);
+                            connections[i].disconnected = true;
+                            // Still mark as disconnected but don't remove yet
+                            (pid, pos, false)
+                        }
+                    }
+                    None => (None, None, true),
+                }
+            } else {
+                (None, None, true)
+            };
+            result
+        };
+
+        if was_disconnected {
+            return;
+        }
+
+        // Now do the actual removal
+        {
+            let mut inner = self.inner.write().await;
+            if let Some(connections) = inner.connections.get_mut(&game_id) {
+                connections.retain(|c| c.id != connection_id);
+                if connections.is_empty() {
+                    inner.connections.remove(&game_id);
+                }
+            }
+        }
+
+        metrics::WS_CONNECTIONS_ACTIVE.dec();
+        metrics::WS_DISCONNECTS_TOTAL.inc();
+
+        if let (Some(pid), Some(pos)) = (player_id, position) {
+            let event = GameEvent::PlayerDisconnected {
+                game_id,
+                player_id: pid,
+                player_position: pos,
+                disconnected_at: Some(Utc::now().to_rfc3339()),
+            };
+            self.broadcast_to_game(game_id, &event.to_json()).await;
+        }
+    }
     pub async fn remove_connection(&self, game_id: Uuid, connection_id: ConnectionId) {
-        let (removed_player_id, removed_position) = {
+        let (removed_player_id, removed_position, already_disconnected) = {
             let mut inner = self.inner.write().await;
             if let Some(connections) = inner.connections.get_mut(&game_id) {
                 let before = connections.len();
-                let player_info = connections
+                let conn_info = connections
                     .iter()
                     .find(|c| c.id == connection_id)
-                    .map(|c| (c.player_id, c.player_position));
+                    .map(|c| (c.player_id, c.player_position, c.disconnected));
                 connections.retain(|c| c.id != connection_id);
                 let after = connections.len();
                 tracing::debug!(
@@ -204,19 +275,23 @@ impl WebSocketManager {
                     inner.connections.remove(&game_id);
                     tracing::info!("No more connections for game {}, removed from map", game_id);
                 }
-                player_info.unwrap_or((None, None))
+                conn_info.unwrap_or((None, None, true))
             } else {
                 tracing::warn!(
                     "Attempted to remove connection {} for game {} but no connections found",
                     connection_id.uuid(),
                     game_id
                 );
-                (None, None)
+                (None, None, true)
             }
         };
 
         metrics::WS_CONNECTIONS_ACTIVE.dec();
         metrics::WS_DISCONNECTS_TOTAL.inc();
+
+        if already_disconnected {
+            return;
+        }
 
         if let (Some(player_id), Some(position)) = (removed_player_id, removed_position) {
             let event = GameEvent::PlayerDisconnected {
@@ -450,6 +525,8 @@ impl WebSocketManager {
                 last_activity: Instant::now(),
                 player_id: None,
                 player_position: None,
+                disconnected: false,
+                last_pong: Instant::now(),
             });
 
         metrics::WS_CONNECTIONS_ACTIVE.inc();

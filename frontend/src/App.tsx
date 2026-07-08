@@ -200,6 +200,7 @@ function AppContent() {
 
   const startGame = (stepByStepParam = false) => {
     const useStepByStep = stepByStepParam || stepByStepToggle
+    console.log("use step by step = ", useStepByStep);
     setStartingGame(true)
     setError(null)
     if (isAuthenticated) {
@@ -649,6 +650,8 @@ function AppContent() {
             onViewLobby={handleViewLobby}
             starting={startingGame}
             error={error}
+            stepByStep={stepByStepToggle}
+            onStepByStepChange={setStepByStepToggle}
           />
           <div className="container mx-auto px-4 sm:px-8">
             <RoomList

@@ -1,6 +1,6 @@
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use serde_json;
-use tracing::error;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::database::models::{game, game_card, player, PlayerType};
@@ -8,6 +8,7 @@ use crate::game::service::types::{
     CachedCard, CachedGameState, CachedPlayer, GameServiceError, GAME_STATE_CACHE_TTL_SECS,
 };
 use crate::game::turn_order::next_player;
+use crate::observability::metrics::GAME_STATE_CACHE_WRITE_ERRORS_TOTAL;
 
 use super::GameService;
 
@@ -19,14 +20,25 @@ impl GameService {
         };
         if let Ok(state) = self.build_cached_game_state(game_id).await {
             if let Ok(data) = serde_json::to_string(&state) {
-                let _ = redis
+                match redis
                     .set_ex(
                         &format!("game:state:{game_id}"),
                         &data,
                         GAME_STATE_CACHE_TTL_SECS,
                     )
-                    .await;
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        warn!("Failed to cache game state for {}: {}", game_id, e);
+                        GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
+                    }
+                }
+            } else {
+                warn!("Failed to serialize game state for cache: {}", game_id);
             }
+        } else {
+            warn!("Failed to build cached game state for {}", game_id);
         }
     }
 
@@ -35,7 +47,16 @@ impl GameService {
             Some(r) => r,
             None => return,
         };
-        let _ = redis.del(&format!("game:state:{game_id}")).await;
+        match redis.del(&format!("game:state:{game_id}")).await {
+            Ok(()) => {}
+            Err(e) => {
+                warn!(
+                    "Failed to invalidate game state cache for {}: {}",
+                    game_id, e
+                );
+                GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
+            }
+        }
     }
 
     pub(crate) async fn invalidate_dashboard_caches(&self, user_ids: &[Uuid]) {
@@ -48,11 +69,13 @@ impl GameService {
             let profile_key = format!("dashboard:profile:{user_id}");
             if let Err(e) = redis.del(&profile_key).await {
                 error!("Failed to invalidate profile cache for {}: {}", user_id, e);
+                GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
             }
 
             let games_pattern = format!("dashboard:games:{user_id}:*");
             if let Err(e) = redis.del_pattern(&games_pattern).await {
                 error!("Failed to invalidate games cache for {}: {}", user_id, e);
+                GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
             }
         }
     }

@@ -6,8 +6,10 @@ use crate::database::models::{game, player, GameStatus, PlayerType};
 use crate::database::repositories::PlayerRepository;
 use crate::i18n::Lang;
 use crate::messaging::events::GameEvent;
+use crate::messaging::redis::PublishResult;
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
+use crate::observability::metrics::EMAIL_SEND_ERRORS_TOTAL;
 
 use super::GameService;
 
@@ -146,7 +148,9 @@ impl GameService {
                         player_name: current_player.name.clone(),
                         kicked_after_seconds: remaining_seconds,
                     };
-                    if let Err(e) = redis.clone().publish_game_event(&event).await {
+                    if let PublishResult::RetryExhausted(e) =
+                        redis.clone().publish_game_event_with_retry(&event).await
+                    {
                         error!("Failed to publish StalenessWarning event: {}", e);
                     }
                 }
@@ -266,7 +270,24 @@ impl GameService {
             .await
         {
             Ok(Some(u)) => u,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!("User {} not found for staleness warning email", user_id);
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_warning"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up user {} for staleness warning email: {}",
+                    user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_warning"])
+                    .inc();
+                return;
+            }
         };
 
         let lang = Lang::parse(&user.language).unwrap_or_default();
@@ -287,6 +308,9 @@ impl GameService {
                 user.email,
                 e
             );
+            EMAIL_SEND_ERRORS_TOTAL
+                .with_label_values(&["stall_warning"])
+                .inc();
         }
     }
 
@@ -306,7 +330,24 @@ impl GameService {
             .await
         {
             Ok(Some(u)) => u,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!("User {} not found for kicked email", user_id);
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_kicked"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up user {} for kicked email: {}",
+                    user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_kicked"])
+                    .inc();
+                return;
+            }
         };
 
         let lang = Lang::parse(&user.language).unwrap_or_default();
@@ -317,6 +358,9 @@ impl GameService {
             .await
         {
             tracing::error!("Failed to send stall kicked email to {}: {}", user.email, e);
+            EMAIL_SEND_ERRORS_TOTAL
+                .with_label_values(&["stall_kicked"])
+                .inc();
         }
     }
 }
