@@ -2,9 +2,10 @@ use chrono::Utc;
 use sea_orm::sea_query;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
-    QueryOrder,
+    QueryOrder, TransactionTrait,
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
 
@@ -16,6 +17,7 @@ use crate::game::constants::{
 use crate::game::payment::calculate_payment;
 use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
 use crate::game::service::types::{GameServiceError, RoundEvalTimer, RoundEvaluationResult};
+use crate::observability::metrics;
 
 use super::GameService;
 
@@ -52,7 +54,7 @@ impl GameService {
     /// Evaluate a completed round inside an active transaction.
     /// All DB writes use the transaction connection for atomicity.
     /// Returns RoundEvaluationResult for post-transaction event publishing.
-    pub(crate) async fn evaluate_round_in_txn(
+    pub async fn evaluate_round_in_txn(
         &self,
         txn: &DatabaseTransaction,
         game_id: Uuid,
@@ -344,5 +346,81 @@ impl GameService {
         }
 
         Ok(())
+    }
+
+    pub async fn evaluate_round(
+        &self,
+        game_id: Uuid,
+    ) -> Result<RoundEvaluationResult, GameServiceError> {
+        let max_retries = 3u32;
+        let mut attempt = 0u32;
+
+        'retry: loop {
+            let txn = self.db.begin().await?;
+
+            let game = game::Entity::find_by_id(game_id)
+                .one(&txn)
+                .await?
+                .ok_or(GameServiceError::GameNotFound)?;
+
+            let round = game.roll;
+
+            let result = match self.evaluate_round_in_txn(&txn, game_id, round).await {
+                Ok(result) => result,
+                Err(GameServiceError::VersionConflict) => {
+                    txn.rollback().await.ok();
+                    attempt += 1;
+                    if attempt >= max_retries {
+                        return Err(GameServiceError::Internal(
+                            "Optimistic lock conflict after max retries".to_string(),
+                        ));
+                    }
+                    sleep(Duration::from_millis(10 * 2u64.pow(attempt))).await;
+                    continue 'retry;
+                }
+                Err(e) => {
+                    txn.rollback().await.ok();
+                    return Err(e);
+                }
+            };
+
+            if result.game_ended {
+                self.process_payment_in_txn(&txn, game_id, &result).await?;
+            }
+
+            txn.commit().await?;
+
+            let players = player::Entity::find()
+                .filter(player::Column::GameId.eq(game_id))
+                .order_by_asc(player::Column::Position)
+                .all(&self.db)
+                .await?;
+
+            self.publish_round_completed(game_id, &result, &players, None)
+                .await;
+
+            if !result.game_ended {
+                self.publish_turn_changed(game_id, result.winner_id, None)
+                    .await;
+            }
+
+            if result.game_ended {
+                metrics::GAMES_FINISHED_TOTAL
+                    .with_label_values(&[&result.final_status.to_string()])
+                    .inc();
+                self.publish_game_finished(game_id, &result, None).await;
+                self.invalidate_game_state_cache(game_id).await;
+
+                let user_ids: Vec<uuid::Uuid> =
+                    result.players.iter().filter_map(|p| p.user_id).collect();
+                if !user_ids.is_empty() {
+                    self.invalidate_dashboard_caches(&user_ids).await;
+                }
+            } else {
+                self.cache_game_state(game_id).await;
+            }
+
+            return Ok(result);
+        }
     }
 }

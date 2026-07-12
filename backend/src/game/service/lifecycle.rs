@@ -12,6 +12,7 @@ use crate::database::models::{
 use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
 use crate::game::service::types::{GameCreationTimer, GameServiceError};
 use crate::messaging::events::GameEvent;
+use crate::messaging::redis::PublishResult;
 
 use super::GameService;
 
@@ -76,8 +77,13 @@ impl GameService {
                 game_id,
                 reason: "Not enough players joined before timeout".to_string(),
             };
-            if let Err(e) = redis.clone().publish_game_event(&event).await {
-                error!("Failed to publish GameCancelled event: {}", e);
+            if let PublishResult::RetryExhausted(e) =
+                redis.clone().publish_game_event_with_retry(&event).await
+            {
+                error!(
+                    "CRITICAL: Failed to publish GameCancelled event after retries: {}",
+                    e
+                );
             }
         }
 
@@ -118,14 +124,66 @@ impl GameService {
         kicked_active.kicked_at = ActiveValue::Set(Some(chrono::Utc::now()));
         kicked_active.update(&txn).await?;
 
-        // Rebuild player_positions: keep only non-kicked players
-        let active_players: Vec<&player::Model> =
-            all_players.iter().filter(|p| !p.kicked).collect();
-
         let old_rank = game_model.rank.unwrap_or(0) as usize;
 
+        // Build list of players that remain after this kick.
+        // IMPORTANT: filter by ID, NOT by `p.kicked`, because `all_players` contains
+        // the original models where `kicked=false` for the player being kicked now.
+        let active_players: Vec<&player::Model> = all_players
+            .iter()
+            .filter(|p| p.id != kicked_player_id)
+            .collect();
+
+        let has_human_remaining = active_players
+            .iter()
+            .any(|p| matches!(p.player_type, PlayerType::Human));
+        let is_solo_game = matches!(game_model.game_mode, GameMode::Solo);
+
+        // ── Solo game: only bots remain → kill the game, no credit to refund ──
+        if is_solo_game && !has_human_remaining {
+            info!(
+                "Solo game {} has only bots remaining after kick, finishing game without credit processing",
+                game_id
+            );
+
+            let mut game_active: game::ActiveModel = game_model.clone().into();
+            game_active.status = ActiveValue::Set(GameStatus::Finished);
+            game_active.winner_id = ActiveValue::Set(None);
+            game_active.finished_at = ActiveValue::Set(Some(chrono::Utc::now()));
+            game_active.updated_at = ActiveValue::Set(chrono::Utc::now());
+            game_active.player_positions = ActiveValue::Set(serde_json::json!({}));
+            game_active.stall_warning_sent_at = ActiveValue::Set(None);
+            game_active.update(&txn).await?;
+
+            txn.commit().await?;
+
+            if let Some(ref redis) = self.redis_client {
+                let pk_event = GameEvent::PlayerKicked {
+                    game_id,
+                    player_id: kicked_player.id,
+                    player_name: kicked_player.name.clone(),
+                };
+                let _ = redis.clone().publish_game_event_with_retry(&pk_event).await;
+
+                let gf_event = GameEvent::GameFinished {
+                    game_id,
+                    winner_id: None,
+                    winner_name: None,
+                    winner_position: None,
+                    status: "finished".to_string(),
+                    final_score: None,
+                    rounds_played: game_model.roll,
+                    correlation_id: None,
+                };
+                let _ = redis.clone().publish_game_event_with_retry(&gf_event).await;
+            }
+
+            self.invalidate_game_state_cache(game_id).await;
+            return Ok(());
+        }
+
+        // ── 0 or 1 player remains: game ends, remaining player wins ──
         if active_players.len() <= 1 {
-            // Only 1 player remains: game ends, remaining player wins immediately
             let winner = active_players
                 .first()
                 .ok_or_else(|| GameServiceError::Internal("No remaining players".to_string()))?;
@@ -147,11 +205,13 @@ impl GameService {
             game_active.stall_warning_sent_at = ActiveValue::Set(None);
             game_active.update(&txn).await?;
 
-            // Process payment: remaining player gets kicked player's bet
-            let bet = game_model.bet;
-            let mut winner_active: player::ActiveModel = (**winner).clone().into();
-            winner_active.credits = ActiveValue::Set(winner.credits + bet);
-            winner_active.update(&txn).await?;
+            // Process payment only if the winner has a user_id (authenticated player)
+            if winner.user_id.is_some() {
+                let bet = game_model.bet;
+                let mut winner_active: player::ActiveModel = (**winner).clone().into();
+                winner_active.credits = ActiveValue::Set(winner.credits + bet);
+                winner_active.update(&txn).await?;
+            }
 
             txn.commit().await?;
 
@@ -163,8 +223,14 @@ impl GameService {
                 winner.id
             );
 
-            self.send_kicked_email(kicked_player.user_id, game_id, game_model.bet)
-                .await;
+            // Fire-and-forget the kick email so it doesn't block the caller
+            let mailer = self.mailer.clone();
+            let db = self.db.clone();
+            let kicked_user_id = kicked_player.user_id;
+            let bet = game_model.bet;
+            tokio::spawn(async move {
+                Self::send_kicked_email_impl(mailer, db, kicked_user_id, game_id, bet).await;
+            });
 
             if let Some(ref redis) = self.redis_client {
                 let pk_event = GameEvent::PlayerKicked {
@@ -172,14 +238,20 @@ impl GameService {
                     player_id: kicked_player.id,
                     player_name: kicked_player.name.clone(),
                 };
-                let _ = redis.clone().publish_game_event(&pk_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&pk_event).await;
 
                 let fw_event = GameEvent::PlayerForfeitWin {
                     game_id,
                     winner_id: winner.id,
                     winner_name: winner.name.clone(),
                 };
-                let _ = redis.clone().publish_game_event(&fw_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&fw_event).await;
+
+                let final_score = if winner.user_id.is_some() {
+                    Some(winner.credits + game_model.bet)
+                } else {
+                    None
+                };
 
                 let gf_event = GameEvent::GameFinished {
                     game_id,
@@ -187,11 +259,11 @@ impl GameService {
                     winner_name: Some(winner.name.clone()),
                     winner_position: Some(winner.position),
                     status: "finished".to_string(),
-                    final_score: Some(winner.credits + bet),
+                    final_score,
                     rounds_played: game_model.roll,
                     correlation_id: None,
                 };
-                let _ = redis.clone().publish_game_event(&gf_event).await;
+                let _ = redis.clone().publish_game_event_with_retry(&gf_event).await;
             }
 
             self.invalidate_game_state_cache(game_id).await;
@@ -204,7 +276,7 @@ impl GameService {
             return Ok(());
         }
 
-        // 2+ players remain: reseat positions
+        // ── 2+ players remain: reseat positions ──
         let new_positions: std::collections::HashMap<i32, Uuid> = active_players
             .iter()
             .enumerate()
@@ -269,13 +341,13 @@ impl GameService {
                 player_id: kicked_player.id,
                 player_name: kicked_player.name.clone(),
             };
-            let _ = redis.clone().publish_game_event(&pk_event).await;
+            let _ = redis.clone().publish_game_event_with_retry(&pk_event).await;
 
             let rs_event = GameEvent::GameReshuffled {
                 game_id,
                 remaining_players: active_players.len() as u32,
             };
-            let _ = redis.clone().publish_game_event(&rs_event).await;
+            let _ = redis.clone().publish_game_event_with_retry(&rs_event).await;
         }
 
         self.invalidate_game_state_cache(game_id).await;
@@ -430,7 +502,9 @@ impl GameService {
                     player_id: pid,
                     cards: player_cards,
                 };
-                if let Err(e) = redis.clone().publish_game_event(&event).await {
+                if let PublishResult::RetryExhausted(e) =
+                    redis.clone().publish_game_event_with_retry(&event).await
+                {
                     error!("Failed to publish CardsDealt event: {}", e);
                 }
             }
@@ -459,8 +533,11 @@ impl GameService {
                 current_turn: first_player_id,
                 correlation_id: None,
             };
-            if let Err(e) = redis.clone().publish_game_event(&event).await {
-                error!("Failed to publish GameStarted event: {}", e);
+            match redis.clone().publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!("Failed to publish GameStarted event: {}", e);
+                }
             }
         }
 

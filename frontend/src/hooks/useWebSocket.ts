@@ -14,6 +14,19 @@ export interface GameStartedPlayer {
   player_type: string;
 }
 
+export interface GameStatePlayer {
+  id: string;
+  name: string;
+  position: number;
+  display_position: number;
+  player_type: string;
+}
+
+export interface GameStateCard {
+  player_id: string;
+  card_index: number;
+}
+
 export type GameEvent =
   | { type: 'card_played'; game_id: string; player_id: string; card_index: number; next_turn?: string }
   | { type: 'round_completed'; game_id: string; round_number: number; winner_id: string; winner_position: number; win_type?: string; deck_slots: (number | null)[] }
@@ -24,6 +37,7 @@ export type GameEvent =
   | { type: 'game_ready'; game_id: string }
   | { type: 'cards_dealt'; game_id: string; player_id: string; cards: number[] }
   | { type: 'game_started'; game_id: string; players: GameStartedPlayer[]; current_turn: string }
+  | { type: 'game_state_snapshot'; game_id: string; roll: number; rank: number | null; status: string; current_winning_card: number | null; current_winning_player_position: number | null; players: GameStatePlayer[]; played_cards: GameStateCard[]; step_by_step?: boolean }
   | { type: 'player_disconnected'; game_id: string; player_id: string; player_position: number; disconnected_at?: string }
   | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string }
   | { type: 'staleness_warning'; game_id: string; player_id: string; player_name: string; kicked_after_seconds: number }
@@ -204,7 +218,7 @@ class WebSocketManager {
       ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed', 'player_joined', 'game_cancelled', 'game_ready', 'cards_dealt', 'game_started', 'player_disconnected', 'player_reconnected'].includes(data.type)) {
+        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed', 'player_joined', 'game_cancelled', 'game_ready', 'cards_dealt', 'game_started', 'game_state_snapshot', 'player_disconnected', 'player_reconnected', 'staleness_warning', 'player_kicked', 'game_reshuffled', 'player_forfeit_win'].includes(data.type)) {
           log('Received GameEvent:', data);
           this.subscribers.forEach(callback => callback(data as GameEvent));
         } else {

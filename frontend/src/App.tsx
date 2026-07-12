@@ -43,6 +43,7 @@ interface QuickGameResponse {
   max_players: number
   deck_slots?: (number | null)[]
   ws_token?: string
+  step_by_step?: boolean
 }
 
 interface MultiplayerGameResponse {
@@ -65,7 +66,7 @@ function AppContent() {
   const [lobbyGameId, setLobbyGameId] = useState<string | null>(null)
   const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
   const [wsToken, setWsToken] = useState<string | null>(null)
-  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver } = useGameStore()
+  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver, setStepByStep } = useGameStore()
   const isMultiplayer = players.length > 0 && players.every(p => p.type === 'human')
   const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite, user } = useAuthStore()
   const { isConnected } = useWebSocket({ gameId: gameId || '' })
@@ -76,6 +77,7 @@ function AppContent() {
   const [roomId, setRoomId] = useState<string | null>(null)
   const [showCreateRun, setShowCreateRun] = useState(false)
   const [createRunRoomId, setCreateRunRoomId] = useState<string | null>(null)
+  const [stepByStepToggle, setStepByStepToggle] = useState(false)
   const [runGameIndex, setRunGameIndex] = useState(0)
   const [runTotalGames, setRunTotalGames] = useState(0)
   const [runId, setRunId] = useState<string | null>(null)
@@ -196,13 +198,16 @@ function AppContent() {
       })
   }, [isAuthenticated, showToast, t])
 
-  const startGame = () => {
+  const startGame = (stepByStepParam = false) => {
+    const useStepByStep = stepByStepParam || stepByStepToggle
+    console.log("use step by step = ", useStepByStep);
     setStartingGame(true)
     setError(null)
     if (isAuthenticated) {
-      axios.post<QuickGameResponse>('/api/me/games', { game_mode: 'solo' })
+      axios.post<QuickGameResponse>('/api/me/games', { game_mode: 'solo', step_by_step: useStepByStep })
         .then(response => {
           setGameStore(response.data.game_id, response.data.players, response.data.status, response.data.current_turn, response.data.bet)
+          setStepByStep(response.data.step_by_step ?? useStepByStep)
           setStartingGame(false)
         })
         .catch(err => {
@@ -213,9 +218,11 @@ function AppContent() {
           setStartingGame(false)
         })
     } else {
-      axios.post<QuickGameResponse>('/api/quickie')
+      const url = useStepByStep ? '/api/quickie?step_by_step=true' : '/api/quickie'
+      axios.post<QuickGameResponse>(url)
         .then(response => {
           setGameStore(response.data.game_id, response.data.players, response.data.status, response.data.current_turn, response.data.bet)
+          setStepByStep(response.data.step_by_step ?? useStepByStep)
           // Store the one-time game token for WebSocket authentication
           if (response.data.ws_token) {
             setWsToken(response.data.ws_token)
@@ -262,10 +269,51 @@ function AppContent() {
         console.error('Failed to play card', err);
         const error = extractApiError(err);
         setCardError(error.message);
-        showToast(error.message, 'error', error.requestId);
+        showToast(error.message, 'error');// , error.requestId);
       })
       .finally(() => setPlayingCard(null));
   };
+
+  const handleAdvanceBot = () => {
+    if (!gameId) return;
+    const humanPlayer = players.find(p => p.type === 'human');
+    if (!humanPlayer) return;
+    setPlayingCard(-1);
+    const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    axios.post(`/api/game/${gameId}/advance-bot${tokenParam}`, {
+      player_id: humanPlayer.id,
+    })
+      .catch(err => {
+        console.error('Failed to advance bot', err);
+        const error = extractApiError(err);
+        showToast(error.message, 'error');
+      })
+      .finally(() => setPlayingCard(null));
+  };
+
+  const handleEvaluateRound = () => {
+    if (!gameId) return;
+    const humanPlayer = players.find(p => p.type === 'human');
+    if (!humanPlayer) return;
+    setPlayingCard(-1);
+    const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    axios.post(`/api/game/${gameId}/evaluate-round${tokenParam}`, {
+      player_id: humanPlayer.id,
+    })
+      .catch(err => {
+        console.error('Failed to evaluate round', err);
+        const error = extractApiError(err);
+        showToast(error.message, 'error');
+      })
+      .finally(() => setPlayingCard(null));
+  };
+
+  const handleLocalStats = () => {
+   const storedStats = getStoredStats()
+    if (storedStats) {
+      setStats(storedStats)
+    }
+  }
 
   const handleViewLobby = (gameId: string) => {
     setLobbyGameId(gameId)
@@ -390,12 +438,15 @@ function AppContent() {
             showPlayAgain={!isMultiplayer && !runId}
             onPlayAgain={runId ? handlePlayNextInRun : startGame}
             onReturnToLobby={() => {
+              handleLocalStats()
               resetGame()
               setWsToken(null)
               setRunId(null)
               setAutoStartCountdown(0)
             }}
             onCloseGameOver={clearGameOver}
+            onAdvanceBot={handleAdvanceBot}
+            onEvaluateRound={handleEvaluateRound}
           />
           {gameOver?.isGameOver && runId && (
             <div className="container mx-auto px-4 sm:px-8">
@@ -462,6 +513,7 @@ function AppContent() {
             <button
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
               onClick={() => {
+                handleLocalStats()
                 resetGame()
                 setWsToken(null)
                 setRunId(null)
@@ -566,6 +618,7 @@ function AppContent() {
       setLobbyGameId(data.game_id)
     } else {
       setGameStore(data.game_id, data.players, data.status, data.current_turn, data.bet, data.deck_slots || null)
+      setStepByStep(data.step_by_step ?? false)
     }
   }
 
@@ -600,6 +653,8 @@ function AppContent() {
             onViewLobby={handleViewLobby}
             starting={startingGame}
             error={error}
+            stepByStep={stepByStepToggle}
+            onStepByStepChange={setStepByStepToggle}
           />
           <div className="container mx-auto px-4 sm:px-8">
             <RoomList
@@ -710,10 +765,21 @@ function AppContent() {
               <button
                 className="px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 disabled={startingGame}
-                onClick={startGame}
+                onClick={() => startGame()}
               >
                 {startingGame ? t('dashboard.startingGame') : t('dashboard.startQuickGame')}
               </button>
+            )}
+            {!anonymousOutOfCredits && (
+              <label className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                <input
+                  type="checkbox"
+                  checked={stepByStepToggle}
+                  onChange={(e) => setStepByStepToggle(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded"
+                />
+                <span className="text-sm text-gray-700">{t('game.stepByStep')}</span>
+              </label>
             )}
           </div>
           {error && (

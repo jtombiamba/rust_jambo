@@ -16,7 +16,7 @@ actix-http = "3"
 actix-ws = "0.3"
 actix-rt = "2.9"
 migration = { path = "migration" }
-sea-orm = { version = "2.0.0-rc.38", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "debug-print"] }
+sea-orm = { version = "2.0.0-rc", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "debug-print"] }
 lapin = { version = "4.0", features = ["tokio"] }
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -42,6 +42,11 @@ sha2 = "0.10"
 hex = "0.4"
 prometheus = "0.13"
 once_cell = "1"
+opentelemetry = { version = "0.32", features = ["trace", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.32", features = ["trace", "metrics", "logs", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace", "metrics", "logs"] }
+opentelemetry-appender-tracing = "0.32"
+tracing-opentelemetry = "0.33"
 lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
 handlebars = "6"
 clap = { version = "4", features = ["derive"] }

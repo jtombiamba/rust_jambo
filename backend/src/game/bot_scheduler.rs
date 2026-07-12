@@ -8,10 +8,13 @@ use uuid::Uuid;
 use crate::database::models::{GameStatus, PlayerType};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::constants::BOT_THINKING_DELAY_MS;
+use crate::game::service::types::BotMoveOutcome;
 use crate::game::service::GameService;
 use crate::game::strategy::compute_strategy;
 use crate::messaging::{AITask, RabbitMQClient, RedisClient};
-use crate::observability::metrics::{BOT_ERRORS_TOTAL, BOT_MOVE_DURATION_SECONDS};
+use crate::observability::metrics::{
+    BOT_CHAIN_BREAKS_TOTAL, BOT_CHAIN_RETRIES_TOTAL, BOT_ERRORS_TOTAL, BOT_MOVE_DURATION_SECONDS,
+};
 use crate::observability::CorrelationId;
 
 static SYNC_CHAIN_SEMAPHORE: LazyLock<Arc<Semaphore>> =
@@ -118,6 +121,70 @@ impl BotScheduler {
         }
     }
 
+    pub async fn execute_one_bot_move(
+        db: &DatabaseConnection,
+        redis: &Option<RedisClient>,
+        game_id: Uuid,
+        bot_player_id: Uuid,
+    ) -> Result<BotMoveOutcome, crate::game::service::GameServiceError> {
+        let service = GameService::new_with_redis(db.clone(), redis.clone());
+        let game_repo = GameRepository::new(db.clone());
+        let game_card_repo = GameCardRepository::new(db.clone());
+
+        let game = game_repo
+            .find_by_id(game_id)
+            .await?
+            .ok_or(crate::game::service::GameServiceError::GameNotFound)?;
+        if game.status == GameStatus::Finished
+            || game.status == GameStatus::Kora
+            || game.status == GameStatus::DoubleKora
+        {
+            return Err(crate::game::service::GameServiceError::GameFinished);
+        }
+
+        let bot_cards: Vec<i32> = game_card_repo
+            .list_by_player(bot_player_id)
+            .await?
+            .into_iter()
+            .filter(|gc| gc.round.is_none())
+            .map(|gc| gc.card_index)
+            .collect();
+
+        let round_cards: Vec<i32> = game_card_repo
+            .list_by_game_and_round(game_id, game.roll)
+            .await?
+            .into_iter()
+            .map(|gc| gc.card_index)
+            .collect();
+
+        let chosen = compute_strategy(&bot_cards, &round_cards, game.current_winning_card);
+        info!(
+            "Executing synchronous bot move for player {} in game {}: chose card {}",
+            bot_player_id, game_id, chosen
+        );
+
+        let move_start = Instant::now();
+        let result = service
+            .update_card_play(game_id, bot_player_id, chosen, None)
+            .await?;
+
+        BOT_MOVE_DURATION_SECONDS
+            .with_label_values(&["sync_chain"])
+            .observe(move_start.elapsed().as_secs_f64());
+
+        let player_repo = PlayerRepository::new(db.clone());
+        let players = player_repo.list_by_game(game_id).await?;
+        let next_player_id = service.next_player(game_id).await?;
+
+        Ok(BotMoveOutcome {
+            card_played: chosen,
+            next_player_id,
+            round_complete: result.round_completed,
+            game_ended: result.game_ended,
+            players,
+        })
+    }
+
     /// Synchronous bot chain — each bot in turn plays a card, then the next
     /// bot continues the loop. Stops when the next player is human or the
     /// game ends. Limited to 10 concurrent chains via a global semaphore.
@@ -143,122 +210,48 @@ impl BotScheduler {
 
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(*BOT_THINKING_DELAY_MS)).await;
-            info!(
-                "Executing synchronous bot move for player {} in game {}",
-                current_player, game_id
-            );
 
-            let service = GameService::new_with_redis(db.clone(), redis.clone());
-            let game_repo = GameRepository::new(db.clone());
-            let player_repo = PlayerRepository::new(db.clone());
-            let game_card_repo = GameCardRepository::new(db.clone());
-
-            // Fetch game and check if still active
-            let game = match game_repo.find_by_id(game_id).await {
-                Ok(Some(g)) => g,
-                _ => {
-                    error!("Failed to fetch game {} for bot move", game_id);
-                    break;
-                }
-            };
-
-            if game.status == GameStatus::Finished
-                || game.status == GameStatus::Kora
-                || game.status == GameStatus::DoubleKora
-            {
-                info!(
-                    "Game {} has ended (status: {:?}), stopping bot chain",
-                    game_id, game.status
-                );
-                break;
-            }
-
-            let round = game.roll;
-
-            // Fetch bot's unplayed cards
-            let bot_cards: Vec<i32> = match game_card_repo.list_by_player(current_player).await {
-                Ok(cards) => cards
-                    .into_iter()
-                    .filter(|gc| gc.round.is_none())
-                    .map(|gc| gc.card_index)
-                    .collect(),
-                Err(_) => {
-                    error!("Failed to fetch bot cards for player {}", current_player);
-                    break;
-                }
-            };
-
-            if bot_cards.is_empty() {
-                info!(
-                    "Bot {} has no cards left, stopping bot chain for game {}",
-                    current_player, game_id
-                );
-                break;
-            }
-
-            // Fetch played cards this round
-            let round_cards: Vec<i32> =
-                match game_card_repo.list_by_game_and_round(game_id, round).await {
-                    Ok(cards) => cards.into_iter().map(|gc| gc.card_index).collect(),
-                    Err(_) => {
-                        error!("Failed to fetch round cards for game {}", game_id);
-                        break;
-                    }
-                };
-
-            let chosen = compute_strategy(&bot_cards, &round_cards, game.current_winning_card);
-            info!("Bot {} selected card index {}", current_player, chosen);
-
-            let move_start = Instant::now();
-            match service
-                .update_card_play(game_id, current_player, chosen, None)
-                .await
-            {
-                Ok(_) => {
-                    info!("Bot {} played card {}", current_player, chosen);
-                    BOT_MOVE_DURATION_SECONDS
-                        .with_label_values(&["sync_chain"])
-                        .observe(move_start.elapsed().as_secs_f64());
-                }
-                Err(e) => {
-                    error!("Bot {} failed to play card: {}", current_player, e);
-                    BOT_ERRORS_TOTAL.with_label_values(&["execution"]).inc();
-                    BOT_MOVE_DURATION_SECONDS
-                        .with_label_values(&["sync_chain"])
-                        .observe(move_start.elapsed().as_secs_f64());
-                    break;
-                }
-            }
-
-            // Determine next player after this bot's move
-            let players = match player_repo.list_by_game(game_id).await {
-                Ok(list) => list,
-                Err(e) => {
-                    error!("Failed to fetch players for game {}: {}", game_id, e);
-                    break;
-                }
-            };
-
-            match service.next_player(game_id).await {
-                Ok(next_player) => {
-                    let next_is_bot = players
-                        .iter()
-                        .find(|p| p.id == next_player)
-                        .map(|p| matches!(p.player_type, PlayerType::Bot))
-                        .unwrap_or(false);
-
-                    if next_is_bot {
-                        current_player = next_player;
-                        continue;
-                    } else {
-                        info!("Next player {} is human, stopping bot chain", next_player);
-                        break;
+            let outcome = {
+                let mut retries = 0u32;
+                loop {
+                    match Self::execute_one_bot_move(&db, &redis, game_id, current_player).await {
+                        Ok(o) => break o,
+                        Err(e) => {
+                            retries += 1;
+                            if retries > 3 {
+                                error!(
+                                    "Bot {} failed after {} retries in game {}: {}",
+                                    current_player, retries, game_id, e
+                                );
+                                BOT_CHAIN_BREAKS_TOTAL.inc();
+                                BOT_ERRORS_TOTAL.with_label_values(&["execution"]).inc();
+                                return;
+                            }
+                            BOT_CHAIN_RETRIES_TOTAL.inc();
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                500 * retries as u64,
+                            ))
+                            .await;
+                        }
                     }
                 }
-                Err(e) => {
-                    error!("Failed to determine next player after bot move: {}", e);
-                    break;
-                }
+            };
+
+            let next_is_bot = outcome
+                .players
+                .iter()
+                .find(|p| p.id == outcome.next_player_id)
+                .map(|p| matches!(p.player_type, PlayerType::Bot))
+                .unwrap_or(false);
+
+            if next_is_bot {
+                current_player = outcome.next_player_id;
+            } else {
+                info!(
+                    "Next player {} is human, stopping bot chain",
+                    outcome.next_player_id
+                );
+                break;
             }
         }
     }

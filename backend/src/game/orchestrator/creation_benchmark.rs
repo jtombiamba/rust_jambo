@@ -112,6 +112,7 @@ impl GameOrchestrator {
             invite_expires_at: ActiveValue::NotSet,
             stall_warning_sent_at: ActiveValue::NotSet,
             game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
             kicked_players: Set(serde_json::json!([])),
         };
         game::Entity::insert(game_active)

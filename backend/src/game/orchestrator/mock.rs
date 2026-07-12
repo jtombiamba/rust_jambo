@@ -57,6 +57,7 @@ impl MockGameOrchestrator {
             invite_expires_at: None,
             deck_slots: None,
             ws_token: None,
+            step_by_step: false,
         };
         Self::new(Ok(play_outcome), Ok(quick_outcome))
     }
@@ -86,6 +87,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
     async fn create_quick_game(
         &self,
         _correlation_id: Option<CorrelationId>,
+        _step_by_step: bool,
     ) -> Result<QuickGameOutcome, GameError> {
         self.create_quick_game_result
             .lock()
@@ -112,6 +114,17 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .unwrap()
             .take()
             .expect("mock orchestrator create_quick_game_for_user called more than once")
+    }
+
+    async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        _user_id: Uuid,
+        _db: &DatabaseConnection,
+        _step_by_step: bool,
+    ) -> Result<QuickGameOutcome, GameError> {
+        self.create_quick_game_result.lock().unwrap().take().expect(
+            "mock orchestrator create_quick_game_for_user_with_step_by_step called more than once",
+        )
     }
 
     async fn create_multiplayer_game(
@@ -192,5 +205,42 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .unwrap()
             .take()
             .expect("mock orchestrator cancel_game called more than once")
+    }
+
+    async fn advance_bot(
+        &self,
+        _game_id: Uuid,
+        _human_player_id: Uuid,
+    ) -> Result<AdvanceBotOutcome, GameError> {
+        Ok(AdvanceBotOutcome {
+            card_played: 0,
+            next_player_id: Uuid::new_v4(),
+            next_is_bot: false,
+            round_complete: false,
+            game_ended: false,
+        })
+    }
+
+    async fn evaluate_round(
+        &self,
+        _game_id: Uuid,
+        _human_player_id: Uuid,
+        _idempotency_key: Option<String>,
+    ) -> Result<EvaluateRoundOutcome, GameError> {
+        Ok(EvaluateRoundOutcome {
+            round_number: 1,
+            winner_id: Some(Uuid::new_v4()),
+            winner_position: 0,
+            game_ended: false,
+        })
+    }
+
+    async fn verify_player_ownership(
+        &self,
+        _game_id: Uuid,
+        _player_id: Uuid,
+        _user_id: Uuid,
+    ) -> Result<bool, GameError> {
+        Ok(true)
     }
 }

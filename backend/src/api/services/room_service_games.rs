@@ -164,6 +164,7 @@ impl RoomService {
             invite_expires_at: ActiveValue::NotSet,
             stall_warning_sent_at: ActiveValue::NotSet,
             game_run_id: Set(Some(run_id)),
+            step_by_step: Set(false),
             kicked_players: Set(json!([])),
         };
         game::Entity::insert(game_active).exec(&txn).await?;

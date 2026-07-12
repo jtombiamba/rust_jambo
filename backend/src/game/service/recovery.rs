@@ -1,13 +1,15 @@
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
-use tracing::{error, info};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::database::models::{game, player, GameStatus, PlayerType};
 use crate::database::repositories::PlayerRepository;
 use crate::i18n::Lang;
 use crate::messaging::events::GameEvent;
+use crate::messaging::redis::PublishResult;
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
+use crate::observability::metrics::EMAIL_SEND_ERRORS_TOTAL;
 
 use super::GameService;
 
@@ -21,8 +23,23 @@ impl GameService {
         let now = chrono::Utc::now();
         let cutoff = now - staleness_threshold;
 
+        // Count total active games (including step_by_step) for diagnostics
+        let total_active = game::Entity::find()
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .count(&db)
+            .await
+            .unwrap_or_default();
+
+        let step_by_step_active = game::Entity::find()
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(true))
+            .count(&db)
+            .await
+            .unwrap_or_default();
+
         let stalled_games = match game::Entity::find()
             .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(false))
             .filter(game::Column::UpdatedAt.lt(cutoff))
             .all(&db)
             .await
@@ -33,6 +50,14 @@ impl GameService {
                 return 0;
             }
         };
+
+        debug!(
+            "detect_and_recover_stalled_games: total_active={}, step_by_step_active={}, stalled_non_step_by_step={}, cutoff={:?}",
+            total_active,
+            step_by_step_active,
+            stalled_games.len(),
+            cutoff
+        );
 
         let mut recovered = 0u64;
         for g in stalled_games {
@@ -96,11 +121,19 @@ impl GameService {
 
         let stalled_games = match game::Entity::find()
             .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(false))
             .filter(game::Column::UpdatedAt.lt(alert_cutoff))
             .all(&self.db)
             .await
         {
-            Ok(games) => games,
+            Ok(games) => {
+                debug!(
+                    "check_human_staleness: found {} stalled games (step_by_step excluded), alert_cutoff={:?}",
+                    games.len(),
+                    alert_cutoff
+                );
+                games
+            }
             Err(e) => {
                 error!("Failed to query human-stalled games: {}", e);
                 return 0;
@@ -146,20 +179,30 @@ impl GameService {
                         player_name: current_player.name.clone(),
                         kicked_after_seconds: remaining_seconds,
                     };
-                    if let Err(e) = redis.clone().publish_game_event(&event).await {
+                    if let PublishResult::RetryExhausted(e) =
+                        redis.clone().publish_game_event_with_retry(&event).await
+                    {
                         error!("Failed to publish StalenessWarning event: {}", e);
                     }
                 }
 
-                if let (Some(user_id), Some(ref mailer)) = (current_player.user_id, &self.mailer) {
-                    self.send_staleness_email(
-                        mailer.clone(),
-                        user_id,
-                        g.id,
-                        inactive_minutes,
-                        remaining_minutes,
-                    )
-                    .await;
+                // Fire-and-forget the staleness email so it doesn't block the scheduler loop
+                if let Some(user_id) = current_player.user_id {
+                    let mailer = self.mailer.clone();
+                    let db = self.db.clone();
+                    // let user_id = current_player.user_id.unwrap();
+                    let game_id = g.id;
+                    tokio::spawn(async move {
+                        Self::send_staleness_email_impl(
+                            mailer,
+                            db,
+                            user_id,
+                            game_id,
+                            inactive_minutes,
+                            remaining_minutes,
+                        )
+                        .await;
+                    });
                 }
 
                 match game::Entity::update_many()
@@ -242,20 +285,40 @@ impl GameService {
         processed
     }
 
-    async fn send_staleness_email(
-        &self,
-        mailer: std::sync::Arc<dyn crate::mailer::Mailer>,
+    /// Fire-and-forget helper: sends a staleness warning email without blocking the caller.
+    pub(crate) async fn send_staleness_email_impl(
+        mailer: Option<std::sync::Arc<dyn crate::mailer::Mailer>>,
+        db: sea_orm::DatabaseConnection,
         user_id: Uuid,
         game_id: Uuid,
         inactive_minutes: i64,
         remaining_minutes: i64,
     ) {
+        let Some(mailer) = mailer else { return };
+
         let user = match crate::database::models::user::Entity::find_by_id(user_id)
-            .one(&self.db)
+            .one(&db)
             .await
         {
             Ok(Some(u)) => u,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!("User {} not found for staleness warning email", user_id);
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_warning"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up user {} for staleness warning email: {}",
+                    user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_warning"])
+                    .inc();
+                return;
+            }
         };
 
         let lang = Lang::parse(&user.language).unwrap_or_default();
@@ -276,21 +339,46 @@ impl GameService {
                 user.email,
                 e
             );
+            EMAIL_SEND_ERRORS_TOTAL
+                .with_label_values(&["stall_warning"])
+                .inc();
         }
     }
 
-    pub(crate) async fn send_kicked_email(&self, user_id: Option<Uuid>, game_id: Uuid, bet: i32) {
+    /// Fire-and-forget helper: sends a kicked email without blocking the caller.
+    pub(crate) async fn send_kicked_email_impl(
+        mailer: Option<std::sync::Arc<dyn crate::mailer::Mailer>>,
+        db: sea_orm::DatabaseConnection,
+        user_id: Option<Uuid>,
+        game_id: Uuid,
+        bet: i32,
+    ) {
         let Some(user_id) = user_id else { return };
-        let Some(ref mailer) = self.mailer else {
-            return;
-        };
+        let Some(mailer) = mailer else { return };
 
         let user = match crate::database::models::user::Entity::find_by_id(user_id)
-            .one(&self.db)
+            .one(&db)
             .await
         {
             Ok(Some(u)) => u,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!("User {} not found for kicked email", user_id);
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_kicked"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up user {} for kicked email: {}",
+                    user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_kicked"])
+                    .inc();
+                return;
+            }
         };
 
         let lang = Lang::parse(&user.language).unwrap_or_default();
@@ -301,6 +389,9 @@ impl GameService {
             .await
         {
             tracing::error!("Failed to send stall kicked email to {}: {}", user.email, e);
+            EMAIL_SEND_ERRORS_TOTAL
+                .with_label_values(&["stall_kicked"])
+                .inc();
         }
     }
 }

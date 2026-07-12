@@ -28,6 +28,8 @@ export interface GameOverData {
   result: GameResult;
 }
 
+export type StepByStepPhase = 'idle' | 'human_turn' | 'bot_turn' | 'evaluate_round';
+
 export interface GameState {
   gameId: string | null;
   players: Player[];
@@ -38,6 +40,7 @@ export interface GameState {
   remainingCards: Record<string, number>;
   roundWinner: RoundWinner | null;
   gameOver: GameOverData | null;
+  stepByStep: boolean;
   setGame: (gameId: string, players: Player[], status: string, currentTurn: number, bet: number, deckSlots?: (number | null)[] | null) => void;
   resetGame: () => void;
   updatePlayerCards: (playerId: string, cards: number[]) => void;
@@ -53,6 +56,8 @@ export interface GameState {
   clearGameOver: () => void;
   // Helper to apply a CardPlayed event
   applyCardPlayed: (playerId: string, cardIndex: number, nextTurn?: string) => void;
+  // Step-by-step mode
+  setStepByStep: (active: boolean) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -65,6 +70,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   remainingCards: {},
   roundWinner: null,
   gameOver: null,
+  stepByStep: false,
   setGame: (gameId, players, status, currentTurn, bet, deckSlots?) => {
     const remainingCards: Record<string, number> = {};
     const playersWithDisplay = players.map((p) => ({
@@ -90,6 +96,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       remainingCards: {},
       roundWinner: null,
       gameOver: null,
+      stepByStep: false,
     }),
   updatePlayerCards: (playerId, cards) =>
     set((state) => ({
@@ -154,4 +161,24 @@ export const useGameStore = create<GameState>((set, get) => ({
       remainingCards: updatedRemaining,
     });
   },
+  setStepByStep: (active) =>
+    set({ stepByStep: active }),
 }));
+
+export const useStepByStepPhase = (): StepByStepPhase => {
+  return useGameStore((state) => {
+    if (!state.stepByStep) return 'idle';
+    if (state.gameOver?.isGameOver) return 'idle';
+
+    const allSlotsFilled = state.deckSlots.length > 0
+      && state.deckSlots.every(slot => slot !== null);
+    if (allSlotsFilled) return 'evaluate_round';
+
+    const currentPlayer = state.players.find(
+      p => p.display_position === state.currentTurn
+    );
+    if (!currentPlayer) return 'idle';
+
+    return currentPlayer.type === 'bot' ? 'bot_turn' : 'human_turn';
+  });
+};

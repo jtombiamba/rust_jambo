@@ -69,6 +69,7 @@ where
             http.path = %path,
             http.status_code = tracing::field::Empty,
             http.duration_ms = tracing::field::Empty,
+            http.error_message = tracing::field::Empty,
         );
 
         let fut = self.service.call(req);
@@ -90,7 +91,12 @@ where
                             resp.status().as_u16()
                         }
                         Err(e) => {
-                            tracing::debug!("Some Error {}", e.error_response().status().as_u16());
+                            tracing::info!(
+                                "[DEBUG] Some Error status_code: {}, error message: {}",
+                                e.error_response().status().as_u16(),
+                                e.as_response_error().to_string()
+                            );
+                            span.record("http.error_message", e.as_response_error().to_string());
                             e.error_response().status().as_u16()
                         }
                     };

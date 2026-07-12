@@ -249,6 +249,55 @@ services:
       - "coolify.service.name=jambo-scheduler-worker"
       - "coolify.service.port=0"
 
+  # ── LGTM Stack ──────────────────────────────────────────────
+
+  loki:
+    image: ghcr.io/jtombiamba/rust_jambo-loki:latest
+    volumes:
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-loki"
+    restart: unless-stopped
+
+  promtail:
+    image: ghcr.io/jtombiamba/rust_jambo-promtail:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/promtail-config.yml
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-promtail"
+    restart: unless-stopped
+
+  tempo:
+    image: ghcr.io/jtombiamba/rust_jambo-tempo:latest
+    volumes:
+      - tempo_data:/tmp/tempo
+    command: -config.file=/etc/tempo/tempo-config.yml
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-tempo"
+    restart: unless-stopped
+
+  grafana:
+    image: ghcr.io/jtombiamba/rust_jambo-grafana:latest
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SERVER_HTTP_PORT: 3000
+      GF_SERVER_ROOT_URL: /grafana
+      GF_SERVER_SERVE_FROM_SUB_PATH: true
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_BASIC_ENABLED: "true"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-changeme}
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-grafana"
+    restart: unless-stopped
+
   prometheus:
     image: ghcr.io/jtombiamba/rust_jambo-prometheus:latest
     volumes:
@@ -263,6 +312,33 @@ services:
     labels:
       - "traefik.enable=true"
       - "coolify.service.name=jambo-prometheus"
+
+  alertmanager:
+    image: ghcr.io/jtombiamba/rust_jambo-alertmanager:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL}
+      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL}
+      SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-#alerts-critical}
+      SLACK_WARNING_CHANNEL: ${SLACK_WARNING_CHANNEL:-#alerts-warning}
+      SMTP_SMARTHOST: ${SMTP_SMARTHOST:-mailhog:1025}
+      SMTP_FROM: ${SMTP_FROM:-alerts@jambo.local}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-false}
+      EMAIL_ONCALL: ${EMAIL_ONCALL:-oncall@jambo.local}
+      EMAIL_TEAM: ${EMAIL_TEAM:-team@jambo.local}
+      RESOLVE_TIMEOUT: ${RESOLVE_TIMEOUT:-5m}
+      ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.route-prefix=/alertmanager"
+      - "--web.external-url=http://localhost:9093/alertmanager"
+    volumes:
+      - alertmanager_data:/alertmanager
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-alertmanager"
 
   dozzle:
     image: amir20/dozzle:latest
@@ -289,6 +365,8 @@ services:
       PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?PROMETHEUS_PASSWORD must be set}
       DOZZLE_USER: ${DOZZLE_USER:-admin}
       DOZZLE_PASSWORD: ${DOZZLE_PASSWORD:?DOZZLE_PASSWORD must be set}
+      GRAFANA_USER: ${GRAFANA_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_PASSWORD:-changeme}
     # networks:
     #   - internal
     labels:
@@ -299,10 +377,15 @@ services:
     depends_on:
       - prometheus
       - dozzle
+      - grafana
 
 volumes:
   postgres_data:
   prometheus_data:
+  alertmanager_data:
+  loki_data:
+  tempo_data:
+  grafana_data:
 
 # networks:
 #   internal:

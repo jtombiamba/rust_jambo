@@ -22,6 +22,16 @@ impl GameOrchestrator {
         user_id: Uuid,
         _db: &DatabaseConnection,
     ) -> Result<QuickGameOutcome, GameError> {
+        self.create_quick_game_for_user_with_step_by_step(user_id, _db, false)
+            .await
+    }
+
+    pub async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        user_id: Uuid,
+        _db: &DatabaseConnection,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, GameError> {
         let game_repo = GameRepository::new(self.db.clone());
         let player_repo = PlayerRepository::new(self.db.clone());
         let card_repo = GameCardRepository::new(self.db.clone());
@@ -77,10 +87,13 @@ impl GameOrchestrator {
             let _ = self.game_service.send_unfreeze_email(user_id).await;
         }
 
-        let game = game_repo.create(10, false).await.map_err(|e| {
-            tracing::error!("Failed to create game: {}", e);
-            GameError::Database(e)
-        })?;
+        let game = game_repo
+            .create(10, false, step_by_step)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create game: {}", e);
+                GameError::Database(e)
+            })?;
 
         let human_player = player_repo
             .create_with_user(game.id, PlayerType::Human, "You", 0, user_id)
@@ -192,15 +205,17 @@ impl GameOrchestrator {
             })
             .collect();
 
-        if let Some(first_player) = all_players.iter().find(|p| p.position == initial_rank) {
-            if matches!(first_player.player_type, PlayerType::Bot) {
-                tracing::info!(
-                    "First player is bot (position {}), scheduling initial move",
-                    initial_rank
-                );
-                self.bot_scheduler
-                    .schedule_if_next_bot(game.id, first_player.id, None)
-                    .await;
+        if !step_by_step {
+            if let Some(first_player) = all_players.iter().find(|p| p.position == initial_rank) {
+                if matches!(first_player.player_type, PlayerType::Bot) {
+                    tracing::info!(
+                        "First player is bot (position {}), scheduling initial move",
+                        initial_rank
+                    );
+                    self.bot_scheduler
+                        .schedule_if_next_bot(game.id, first_player.id, None)
+                        .await;
+                }
             }
         }
 
@@ -214,12 +229,14 @@ impl GameOrchestrator {
             invite_expires_at: None,
             deck_slots: None,
             ws_token: None,
+            step_by_step,
         })
     }
 
     pub async fn create_quick_game(
         &self,
         correlation_id: Option<CorrelationId>,
+        step_by_step: bool,
     ) -> Result<QuickGameOutcome, GameError> {
         let cid_str = correlation_id.map(|c| c.to_string()).unwrap_or_default();
         let span = tracing::info_span!(
@@ -232,10 +249,13 @@ impl GameOrchestrator {
         let player_repo = PlayerRepository::new(self.db.clone());
         let card_repo = GameCardRepository::new(self.db.clone());
 
-        let game = game_repo.create(10, false).await.map_err(|e| {
-            tracing::error!("Failed to create game: {}", e);
-            GameError::Database(e)
-        })?;
+        let game = game_repo
+            .create(10, false, step_by_step)
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to create game: {}", e);
+                GameError::Database(e)
+            })?;
 
         let human_player = player_repo
             .create(game.id, PlayerType::Human, "You", 0)
@@ -339,15 +359,17 @@ impl GameOrchestrator {
             })
             .collect();
 
-        if let Some(first_player) = all_players.iter().find(|p| p.position == initial_rank) {
-            if matches!(first_player.player_type, PlayerType::Bot) {
-                tracing::info!(
-                    "First player is bot (position {}), scheduling initial move",
-                    initial_rank
-                );
-                self.bot_scheduler
-                    .schedule_if_next_bot(game.id, first_player.id, correlation_id)
-                    .await;
+        if !step_by_step {
+            if let Some(first_player) = all_players.iter().find(|p| p.position == initial_rank) {
+                if matches!(first_player.player_type, PlayerType::Bot) {
+                    tracing::info!(
+                        "First player is bot (position {}), scheduling initial move",
+                        initial_rank
+                    );
+                    self.bot_scheduler
+                        .schedule_if_next_bot(game.id, first_player.id, correlation_id)
+                        .await;
+                }
             }
         }
 
@@ -361,6 +383,7 @@ impl GameOrchestrator {
             invite_expires_at: None,
             deck_slots: None,
             ws_token: None,
+            step_by_step,
         })
     }
 
@@ -372,7 +395,7 @@ impl GameOrchestrator {
         let player_repo = PlayerRepository::new(self.db.clone());
         let card_repo = GameCardRepository::new(self.db.clone());
 
-        let game = game_repo.create(10, false).await.map_err(|e| {
+        let game = game_repo.create(10, false, false).await.map_err(|e| {
             tracing::error!("Failed to create game: {}", e);
             GameError::Database(e)
         })?;
@@ -472,6 +495,7 @@ impl GameOrchestrator {
             invite_expires_at: None,
             deck_slots: None,
             ws_token: None,
+            step_by_step: false,
         })
     }
 }

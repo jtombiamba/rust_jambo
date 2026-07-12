@@ -6,8 +6,9 @@ pub mod mock;
 mod types;
 
 pub use types::{
-    AcceptInviteOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome, BenchmarkPlayerOutcome,
-    GameOrchestratorTrait, MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
+    AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
+    BenchmarkPlayerOutcome, EvaluateRoundOutcome, GameOrchestratorTrait,
+    MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
 };
 
 use async_trait::async_trait;
@@ -139,11 +140,22 @@ impl GameOrchestrator {
             }
         }
 
-        let result: CardPlayResult = self
+        let result: CardPlayResult = match self
             .game_service
             .update_card_play(game_id, player_id, card_index, correlation_id.map(|c| c.0))
             .await
-            .map_err(map_service_error)?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Clean up "pending" idempotency key on error so retries aren't blocked
+                if let Some(ref idem_key) = idem_redis_key {
+                    if let Some(mut redis) = self.game_service.redis_client() {
+                        let _ = redis.del(idem_key).await;
+                    }
+                }
+                return Err(map_service_error(e));
+            }
+        };
 
         let next_is_bot = result
             .players
@@ -152,7 +164,7 @@ impl GameOrchestrator {
             .map(|p| matches!(p.player_type, PlayerType::Bot))
             .unwrap_or(false);
 
-        if !result.game_ended && next_is_bot {
+        if !result.game_ended && next_is_bot && !result.step_by_step {
             self.bot_scheduler
                 .schedule_if_next_bot(game_id, result.next_player_id, correlation_id)
                 .await;
@@ -172,6 +184,165 @@ impl GameOrchestrator {
             current_round: result.current_round,
         };
 
+        if let Some(ref idem_key) = idem_redis_key {
+            if let Some(mut redis) = self.game_service.redis_client() {
+                if let Ok(outcome_json) = serde_json::to_string(&outcome) {
+                    let _ = redis.set_ex(idem_key, &outcome_json, 300).await;
+                }
+            }
+        }
+
+        Ok(outcome)
+    }
+
+    pub async fn advance_bot(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<AdvanceBotOutcome, GameError> {
+        let game = GameRepository::new(self.db.clone())
+            .find_by_id(game_id)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or(GameError::GameNotFound)?;
+
+        let players = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await
+            .map_err(GameError::Database)?;
+
+        if !players.iter().any(|p| p.id == human_player_id) {
+            return Err(GameError::PlayerNotFound);
+        }
+
+        if !game.step_by_step {
+            return Err(GameError::Internal(Box::new(std::io::Error::other(
+                "advance_bot is only available in step-by-step mode",
+            ))));
+        }
+
+        let current_player_id = self
+            .game_service
+            .next_player(game_id)
+            .await
+            .map_err(map_service_error)?;
+        let current_is_bot = players
+            .iter()
+            .find(|p| p.id == current_player_id)
+            .map(|p| matches!(p.player_type, PlayerType::Bot))
+            .unwrap_or(false);
+
+        if !current_is_bot {
+            return Err(GameError::NotYourTurn);
+        }
+
+        let outcome = BotScheduler::execute_one_bot_move(
+            &self.db,
+            &self.game_service.redis_client(),
+            game_id,
+            current_player_id,
+        )
+        .await
+        .map_err(map_service_error)?;
+
+        let next_is_bot = outcome
+            .players
+            .iter()
+            .find(|p| p.id == outcome.next_player_id)
+            .map(|p| matches!(p.player_type, PlayerType::Bot))
+            .unwrap_or(false);
+
+        Ok(AdvanceBotOutcome {
+            card_played: outcome.card_played,
+            next_player_id: outcome.next_player_id,
+            next_is_bot,
+            round_complete: outcome.round_complete,
+            game_ended: outcome.game_ended,
+        })
+    }
+
+    pub async fn evaluate_round(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+        idempotency_key: Option<String>,
+    ) -> Result<EvaluateRoundOutcome, GameError> {
+        // Idempotency guard: evaluate_round has financial side effects (credit transfers)
+        let idem_redis_key = idempotency_key
+            .as_ref()
+            .map(|k| format!("idem:eval:{}:{}", game_id, k));
+
+        if let Some(ref idem_key) = idem_redis_key {
+            if let Some(mut redis) = self.game_service.redis_client() {
+                match redis.set_nx_ex(idem_key, "pending", 300).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        match redis.get(idem_key).await {
+                            Ok(Some(val)) if val != "pending" => {
+                                if let Ok(cached) =
+                                    serde_json::from_str::<EvaluateRoundOutcome>(&val)
+                                {
+                                    return Ok(cached);
+                                }
+                            }
+                            _ => {}
+                        }
+                        return Err(GameError::Internal(Box::new(std::io::Error::other(
+                            "A request with this idempotency key is already in progress",
+                        ))));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Redis error on evaluate-round idempotency check: {}, proceeding without",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        let game = GameRepository::new(self.db.clone())
+            .find_by_id(game_id)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or(GameError::GameNotFound)?;
+
+        let players = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await
+            .map_err(GameError::Database)?;
+
+        if !players.iter().any(|p| p.id == human_player_id) {
+            return Err(GameError::PlayerNotFound);
+        }
+
+        if !game.step_by_step {
+            return Err(GameError::Internal(Box::new(std::io::Error::other(
+                "evaluate_round is only available in step-by-step mode",
+            ))));
+        }
+
+        let result = match self.game_service.evaluate_round(game_id).await {
+            Ok(r) => r,
+            Err(e) => {
+                // Clean up "pending" idempotency key on error so retries aren't blocked
+                if let Some(ref idem_key) = idem_redis_key {
+                    if let Some(mut redis) = self.game_service.redis_client() {
+                        let _ = redis.del(idem_key).await;
+                    }
+                }
+                return Err(map_service_error(e));
+            }
+        };
+
+        let outcome = EvaluateRoundOutcome {
+            round_number: result.round,
+            winner_id: Some(result.winner_id),
+            winner_position: result.winner_position as i32,
+            game_ended: result.game_ended,
+        };
+
+        // Cache the outcome for idempotent replay
         if let Some(ref idem_key) = idem_redis_key {
             if let Some(mut redis) = self.game_service.redis_client() {
                 if let Ok(outcome_json) = serde_json::to_string(&outcome) {
@@ -299,8 +470,9 @@ impl GameOrchestratorTrait for GameOrchestrator {
     async fn create_quick_game(
         &self,
         correlation_id: Option<CorrelationId>,
+        step_by_step: bool,
     ) -> Result<QuickGameOutcome, GameError> {
-        self.create_quick_game(correlation_id).await
+        self.create_quick_game(correlation_id, step_by_step).await
     }
 
     async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
@@ -313,6 +485,16 @@ impl GameOrchestratorTrait for GameOrchestrator {
         db: &DatabaseConnection,
     ) -> Result<QuickGameOutcome, GameError> {
         self.create_quick_game_for_user(user_id, db).await
+    }
+
+    async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        user_id: Uuid,
+        db: &DatabaseConnection,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, GameError> {
+        self.create_quick_game_for_user_with_step_by_step(user_id, db, step_by_step)
+            .await
     }
 
     async fn create_multiplayer_game(
@@ -367,5 +549,48 @@ impl GameOrchestratorTrait for GameOrchestrator {
 
     async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
         self.cancel_game(game_id).await
+    }
+
+    async fn advance_bot(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<AdvanceBotOutcome, GameError> {
+        self.advance_bot(game_id, human_player_id).await
+    }
+
+    async fn evaluate_round(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+        idempotency_key: Option<String>,
+    ) -> Result<EvaluateRoundOutcome, GameError> {
+        self.evaluate_round(game_id, human_player_id, idempotency_key)
+            .await
+    }
+
+    async fn verify_player_ownership(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, GameError> {
+        let players = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await
+            .map_err(GameError::Database)?;
+
+        let player = players
+            .iter()
+            .find(|p| p.id == player_id)
+            .ok_or(GameError::PlayerNotFound)?;
+
+        // Bots can be advanced by any authenticated user in the game
+        if matches!(player.player_type, PlayerType::Bot) {
+            return Ok(true);
+        }
+
+        // For human players, check the user_id matches
+        Ok(player.user_id == Some(user_id))
     }
 }

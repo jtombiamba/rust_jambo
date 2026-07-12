@@ -3,7 +3,7 @@ use crate::messaging::events::GameStartedPlayer;
 use tokio::sync::mpsc;
 
 fn make_manager() -> WebSocketManager {
-    WebSocketManager::new(None)
+    WebSocketManager::new(None, None)
 }
 
 async fn add_player_connection(

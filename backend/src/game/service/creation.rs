@@ -94,6 +94,7 @@ impl GameService {
             invite_expires_at: ActiveValue::Set(Some(expires_at)),
             stall_warning_sent_at: ActiveValue::NotSet,
             game_run_id: ActiveValue::NotSet,
+            step_by_step: ActiveValue::Set(false),
             kicked_players: ActiveValue::Set(serde_json::json!([])),
         };
         let insert_result = game::Entity::insert(game_active).exec(&txn).await?;

@@ -15,6 +15,9 @@ use crate::observability::CorrelationId;
 use manager::WebSocketManager;
 use messages::{IncomingMessage, OutgoingMessage};
 
+mod game_state;
+use game_state::send_game_state_snapshot;
+
 /// WebSocket endpoint for a specific game.
 /// Path parameter: game_id (UUID)
 /// Query parameter: token (optional) — one-time game token for unauthenticated users
@@ -82,6 +85,10 @@ pub async fn ws_handler(
         .copied()
         .unwrap_or_else(CorrelationId::new);
 
+    let db = req
+        .app_data::<web::Data<sea_orm::DatabaseConnection>>()
+        .cloned();
+
     let ws_span = tracing::info_span!(
         "ws_connection",
         correlation_id = %correlation_id,
@@ -92,34 +99,31 @@ pub async fn ws_handler(
 
     let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
 
-    // Create a channel to send messages from the manager to this WebSocket
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    // Register the connection with the manager and get a connection ID
-    let connection_id = manager.add_connection(game_id, tx, correlation_id).await;
-
-    // Send a welcome message immediately to keep connection alive
+    // Send a welcome message BEFORE registering the connection
     match serde_json::to_string(&OutgoingMessage::GameJoined { game_id }) {
         Ok(welcome_message) => {
             if let Err(e) = session.text(welcome_message).await {
                 error!(
-                    "Failed to send welcome message to connection {}: {}",
-                    connection_id.uuid(),
+                    "Failed to send welcome message, not registering connection: {}",
                     e
                 );
-                // Connection might be already closed, but we'll continue anyway
-            } else {
-                info!(
-                    "Sent welcome message to connection {}",
-                    connection_id.uuid()
-                );
+                return Ok(res);
             }
+            info!("Sent welcome message for game {}", game_id);
         }
         Err(e) => {
-            error!("Failed to serialize welcome message: {}", e);
-            // Continue without welcome message
+            error!(
+                "Failed to serialize welcome message, not registering: {}",
+                e
+            );
+            return Ok(res);
         }
     }
+
+    // Register the connection AFTER successful welcome message
+    let connection_id = manager.add_connection(game_id, tx, correlation_id).await;
 
     // Spawn a task that forwards messages from the manager to the WebSocket
     let mut session_clone = session.clone();
@@ -151,7 +155,7 @@ pub async fn ws_handler(
                     e
                 );
                 manager_clone_for_forwarding
-                    .remove_connection(game_id, connection_id_for_forwarding)
+                    .force_disconnect(game_id, connection_id_for_forwarding)
                     .await;
                 break;
             }
@@ -164,6 +168,7 @@ pub async fn ws_handler(
 
     // Spawn a task that handles incoming messages from the client
     let manager_clone = manager.clone();
+    let db_clone = db.clone();
     let cid_for_handler = correlation_id;
     let handler_span = tracing::info_span!(
         "ws_incoming",
@@ -187,8 +192,14 @@ pub async fn ws_handler(
                             connection_id.uuid(),
                             text
                         );
-                        if let Err(e) =
-                            handle_message(&mut session, &text, game_id, &manager_clone).await
+                        if let Err(e) = handle_message(
+                            &mut session,
+                            &text,
+                            game_id,
+                            &manager_clone,
+                            db_clone.clone(),
+                        )
+                        .await
                         {
                             error!(
                                 "Error handling message for connection {}: {}",
@@ -218,6 +229,7 @@ pub async fn ws_handler(
                     }
                     Message::Pong(_) => {
                         trace!("Received pong from connection {}", connection_id.uuid());
+                        manager_clone.update_pong(game_id, connection_id).await;
                     }
                     _ => {}
                 },
@@ -252,6 +264,7 @@ async fn handle_message(
     text: &str,
     game_id: Uuid,
     manager: &web::Data<WebSocketManager>,
+    db: Option<web::Data<sea_orm::DatabaseConnection>>,
 ) -> Result<(), anyhow::Error> {
     let span = tracing::info_span!(
         "ws_message",
@@ -293,6 +306,11 @@ async fn handle_message(
                             pid,
                             pos,
                         ).await;
+                        // Send current game state snapshot to the newly connected player
+                        if let Some(db) = &db {
+                            send_game_state_snapshot(manager.get_ref(), db, game_id, pid, pos)
+                                .await;
+                        }
                     }
                     let response = OutgoingMessage::GameJoined { game_id };
                     session.text(serde_json::to_string(&response)?).await?;
@@ -369,16 +387,18 @@ pub async fn ws_room_handler(
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let connection_id = manager
-        .add_room_connection(room_id, tx, correlation_id)
-        .await;
-
+    // Send welcome BEFORE registering
     if let Err(e) = session
         .text(serde_json::json!({"type": "room_joined", "room_id": room_id}).to_string())
         .await
     {
-        tracing::error!("Failed to send room welcome: {}", e);
+        tracing::error!("Failed to send room welcome, not registering: {}", e);
+        return Ok(res);
     }
+
+    let connection_id = manager
+        .add_room_connection(room_id, tx, correlation_id)
+        .await;
 
     let mut session_clone = session.clone();
     let manager_clone = manager.clone();
@@ -421,7 +441,7 @@ pub async fn ws_room_handler(
     Ok(res)
 }
 
-async fn validate_ws_token(
+pub async fn validate_ws_token(
     token: Option<String>,
     auth_config: Option<web::Data<AuthConfig>>,
     mut redis_client: Option<RedisClient>,
@@ -431,11 +451,21 @@ async fn validate_ws_token(
     let claims = jwt::validate_token(&t, &config).ok()?;
 
     if let Some(ref mut r) = redis_client {
-        if r.exists(&format!("token:blacklist:{}", claims.jti))
-            .await
-            .unwrap_or(false)
-        {
-            return None;
+        match r.exists(&format!("token:blacklist:{}", claims.jti)).await {
+            Ok(true) => {
+                return None;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                // Fail-open: if Redis is unavailable, allow the connection.
+                // The JWT signature and expiry have already been validated;
+                // the Redis check is only for token revocation.
+                tracing::warn!(
+                    "Redis unavailable during blacklist check, allowing connection: {}",
+                    e
+                );
+                crate::observability::metrics::WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL.inc();
+            }
         }
     }
 
@@ -446,7 +476,7 @@ async fn validate_ws_token(
 /// The token must:
 /// 1. Be a valid JWT with purpose "ws:game" and matching game_id
 /// 2. Exist in Redis (single-use enforcement) — consumed on first use
-async fn validate_game_token(
+pub async fn validate_game_token(
     token: &str,
     game_id: Uuid,
     auth_config: Option<web::Data<AuthConfig>>,
@@ -489,9 +519,11 @@ async fn validate_game_token(
                 return None;
             }
             Err(e) => {
+                // Fail-open: if Redis is unavailable, allow the connection.
+                // The JWT signature, expiry, and purpose have already been validated;
+                // the Redis check is only for single-use token enforcement.
                 tracing::error!("Redis error checking game token: {}", e);
-                // If Redis is down, fall back to allowing the connection
-                // (the token JWT is still validated)
+                crate::observability::metrics::WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc();
                 tracing::warn!(
                     "Redis unavailable, allowing game token connection for game {}",
                     game_id

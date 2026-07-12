@@ -41,6 +41,7 @@ pub struct QuickGameResponse {
     /// Present only when the user is not authenticated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ws_token: Option<String>,
+    pub step_by_step: bool,
 }
 
 #[allow(dead_code)]
@@ -147,4 +148,28 @@ pub struct ApiErrorResponse {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdvanceBotResponse {
+    pub success: bool,
+    pub card_played: i32,
+    pub next_player_id: Uuid,
+    pub next_is_bot: bool,
+    pub round_complete: bool,
+    pub game_ended: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EvaluateRoundResponse {
+    pub success: bool,
+    pub round_number: i32,
+    pub winner_id: Uuid,
+    pub winner_position: i32,
+    pub game_ended: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PlayerActionRequest {
+    pub player_id: Uuid,
 }

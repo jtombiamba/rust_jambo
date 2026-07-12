@@ -106,7 +106,11 @@ pub async fn create_game(
         }
         _ => {
             match orchestrator
-                .create_quick_game_for_user(auth_user.user_id, db.get_ref())
+                .create_quick_game_for_user_with_step_by_step(
+                    auth_user.user_id,
+                    db.get_ref(),
+                    body.step_by_step,
+                )
                 .await
             {
                 Ok(outcome) => {

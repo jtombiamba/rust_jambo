@@ -13,6 +13,7 @@ use crate::database::models::{
 use crate::game::constants::KORA_CREDIT_MULTIPLIER;
 use crate::game::service::types::GameServiceError;
 use crate::messaging::events::GameEvent;
+use crate::messaging::redis::PublishResult;
 
 use super::is_unique_violation;
 use super::GameService;
@@ -236,16 +237,22 @@ impl GameService {
                 player_count: (player_count + 1) as i32,
                 max_players: max_players_val as i32,
             };
-            if let Err(e) = redis.clone().publish_game_event(&event).await {
-                error!("Failed to publish PlayerJoined event: {}", e);
+            match redis.clone().publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!("Failed to publish PlayerJoined event: {}", e);
+                }
             }
             if new_status == GameStatus::Ready {
                 let event = GameEvent::GameReady {
                     game_id,
                     correlation_id: None,
                 };
-                if let Err(e) = redis.clone().publish_game_event(&event).await {
-                    error!("Failed to publish GameReady event: {}", e);
+                match redis.clone().publish_game_event_with_retry(&event).await {
+                    PublishResult::Published => {}
+                    PublishResult::RetryExhausted(e) => {
+                        error!("Failed to publish GameReady event: {}", e);
+                    }
                 }
             }
         }
