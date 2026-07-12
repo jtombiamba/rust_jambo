@@ -1,13 +1,15 @@
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
-use tracing::{error, info};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::database::models::{game, player, GameStatus, PlayerType};
 use crate::database::repositories::PlayerRepository;
 use crate::i18n::Lang;
 use crate::messaging::events::GameEvent;
+use crate::messaging::redis::PublishResult;
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
+use crate::observability::metrics::EMAIL_SEND_ERRORS_TOTAL;
 
 use super::GameService;
 
@@ -21,8 +23,23 @@ impl GameService {
         let now = chrono::Utc::now();
         let cutoff = now - staleness_threshold;
 
+        // Count total active games (including step_by_step) for diagnostics
+        let total_active = game::Entity::find()
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .count(&db)
+            .await
+            .unwrap_or_default();
+
+        let step_by_step_active = game::Entity::find()
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(true))
+            .count(&db)
+            .await
+            .unwrap_or_default();
+
         let stalled_games = match game::Entity::find()
             .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(false))
             .filter(game::Column::UpdatedAt.lt(cutoff))
             .all(&db)
             .await
@@ -33,6 +50,14 @@ impl GameService {
                 return 0;
             }
         };
+
+        debug!(
+            "detect_and_recover_stalled_games: total_active={}, step_by_step_active={}, stalled_non_step_by_step={}, cutoff={:?}",
+            total_active,
+            step_by_step_active,
+            stalled_games.len(),
+            cutoff
+        );
 
         let mut recovered = 0u64;
         for g in stalled_games {
@@ -96,11 +121,19 @@ impl GameService {
 
         let stalled_games = match game::Entity::find()
             .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(false))
             .filter(game::Column::UpdatedAt.lt(alert_cutoff))
             .all(&self.db)
             .await
         {
-            Ok(games) => games,
+            Ok(games) => {
+                debug!(
+                    "check_human_staleness: found {} stalled games (step_by_step excluded), alert_cutoff={:?}",
+                    games.len(),
+                    alert_cutoff
+                );
+                games
+            }
             Err(e) => {
                 error!("Failed to query human-stalled games: {}", e);
                 return 0;
@@ -146,7 +179,9 @@ impl GameService {
                         player_name: current_player.name.clone(),
                         kicked_after_seconds: remaining_seconds,
                     };
-                    if let Err(e) = redis.clone().publish_game_event(&event).await {
+                    if let PublishResult::RetryExhausted(e) =
+                        redis.clone().publish_game_event_with_retry(&event).await
+                    {
                         error!("Failed to publish StalenessWarning event: {}", e);
                     }
                 }
@@ -266,7 +301,24 @@ impl GameService {
             .await
         {
             Ok(Some(u)) => u,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!("User {} not found for staleness warning email", user_id);
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_warning"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up user {} for staleness warning email: {}",
+                    user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_warning"])
+                    .inc();
+                return;
+            }
         };
 
         let lang = Lang::parse(&user.language).unwrap_or_default();
@@ -287,6 +339,9 @@ impl GameService {
                 user.email,
                 e
             );
+            EMAIL_SEND_ERRORS_TOTAL
+                .with_label_values(&["stall_warning"])
+                .inc();
         }
     }
 
@@ -306,7 +361,24 @@ impl GameService {
             .await
         {
             Ok(Some(u)) => u,
-            _ => return,
+            Ok(None) => {
+                tracing::warn!("User {} not found for kicked email", user_id);
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_kicked"])
+                    .inc();
+                return;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "DB error looking up user {} for kicked email: {}",
+                    user_id,
+                    e
+                );
+                EMAIL_SEND_ERRORS_TOTAL
+                    .with_label_values(&["stall_kicked"])
+                    .inc();
+                return;
+            }
         };
 
         let lang = Lang::parse(&user.language).unwrap_or_default();
@@ -317,6 +389,9 @@ impl GameService {
             .await
         {
             tracing::error!("Failed to send stall kicked email to {}: {}", user.email, e);
+            EMAIL_SEND_ERRORS_TOTAL
+                .with_label_values(&["stall_kicked"])
+                .inc();
         }
     }
 }

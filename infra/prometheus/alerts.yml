@@ -1,0 +1,447 @@
+# Jambo Game — Prometheus Alerting Rules
+#
+# Three severity tiers:
+#   critical — Pager/Immediate action (page on-call)
+#   warning  — Notification/Investigate (create ticket, notify team)
+#   info     — Dashboard awareness (no notification, visible in UI)
+#
+
+groups:
+  - name: jambo-backend
+    interval: 30s
+    rules:
+
+      # ── CPU & System ──────────────────────────────────────────
+
+      - alert: BackendHighCPU
+        expr: |
+          avg by (instance) (
+            rate(process_cpu_seconds_total{job="jambo-backend"}[1m])
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Backend CPU > 80% for 5 minutes"
+          description: >
+            Backend instance {{ $labels.instance }} is at
+            {{ $value | humanizePercentage }} CPU for 5 minutes.
+            Action: Scale up CPU or add replicas.
+
+      - alert: BackendWarningCPU
+        expr: |
+          avg by (instance) (
+            rate(process_cpu_seconds_total{job="jambo-backend"}[1m])
+          ) > 0.6
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Backend CPU > 60% for 10 minutes"
+          description: >
+            Backend instance {{ $labels.instance }} is at
+            {{ $value | humanizePercentage }} CPU — trending up.
+            Action: Prepare scaling.
+
+      # ── WebSocket Connections ──────────────────────────────────
+
+      - alert: WSConnectionsCritical
+        expr: ws_connections_active > 4000
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "WebSocket connections > 4,000"
+          description: >
+            {{ $value }} active WebSocket connections on
+            {{ $labels.instance }}. Max recommended: 4,000.
+            Action: Add backend replica.
+
+      - alert: WSConnectionsWarning
+        expr: ws_connections_active > 3000
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "WebSocket connections > 3,000"
+          description: >
+            {{ $value }} active WebSocket connections on
+            {{ $labels.instance }}. Plan replica addition.
+
+      - alert: WSHeartbeatTimeouts
+        expr: rate(ws_heartbeat_timeouts_total[1m]) > 0.05 * ws_connections_active
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "WS heartbeat timeouts > 5% of connections"
+          description: >
+            Heartbeat timeout rate is {{ $value | humanizePercentage }}
+            of active connections. Investigate network or scale.
+
+      # ── Database Connection Pool ───────────────────────────────
+
+      - alert: DBPoolBackendCritical
+        expr: |
+          db_pool_active{process="backend"} /
+          db_pool_size{process="backend"} > 0.8
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Backend DB pool > 80% utilized"
+          description: >
+            Backend DB pool is {{ $value | humanizePercentage }} utilized
+            ({{ $labels.instance }}). Action: Increase pool or add DB replica.
+
+      - alert: DBPoolBackendWarning
+        expr: |
+          db_pool_active{process="backend"} /
+          db_pool_size{process="backend"} > 0.6
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Backend DB pool > 60% utilized"
+          description: >
+            Backend DB pool is {{ $value | humanizePercentage }} utilized.
+            Review connection usage.
+
+      - alert: DBPoolAIWorkerCritical
+        expr: |
+          db_pool_active{process="ai_worker"} /
+          db_pool_size{process="ai_worker"} > 0.8
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "AI Worker DB pool > 80% utilized"
+          description: >
+            AI Worker DB pool is {{ $value | humanizePercentage }} utilized.
+            Action: Increase pool or add DB replica.
+
+      # ── RabbitMQ ───────────────────────────────────────────────
+
+      - alert: RabbitMQQueueDepthCritical
+        expr: rabbitmq_queue_length{queue="ai_tasks"} > 1000
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "AI tasks queue depth > 1,000"
+          description: >
+            RabbitMQ ai_tasks queue depth is {{ $value }}.
+            Action: Scale AI worker replicas immediately.
+
+      - alert: RabbitMQQueueDepthWarning
+        expr: rabbitmq_queue_length{queue="ai_tasks"} > 500
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "AI tasks queue depth > 500"
+          description: >
+            RabbitMQ ai_tasks queue depth is {{ $value }}.
+            Investigate AI worker capacity.
+
+      - alert: RabbitMQCircuitBreakerOpen
+        expr: circuit_breaker_state == 1
+        for: 30s
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "RabbitMQ circuit breaker is OPEN"
+          description: >
+            RabbitMQ publish circuit breaker is open on
+            {{ $labels.instance }}. Bot tasks falling back to sync chain.
+            Investigate RabbitMQ health immediately.
+
+      - alert: RabbitMQPublishErrors
+        expr: rate(rabbitmq_publish_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "RabbitMQ publish errors > 5/min"
+          description: >
+            {{ $value | humanize }} RabbitMQ publish errors per minute.
+            Investigate connectivity.
+
+      # ── AI Worker ──────────────────────────────────────────────
+
+      - alert: AITasksInFlightCritical
+        expr: ai_tasks_in_flight > 45
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "AI tasks in-flight > 45 (90% of capacity)"
+          description: >
+            {{ $value }} AI tasks currently in-flight.
+            Max concurrent: 50. Action: Scale AI worker.
+
+      - alert: AITasksInFlightWarning
+        expr: ai_tasks_in_flight > 35
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "AI tasks in-flight > 35 (70% of capacity)"
+          description: >
+            {{ $value }} AI tasks currently in-flight.
+            Plan AI worker scaling.
+
+      - alert: BotChainFallbackActive
+        expr: rate(bot_chain_fallback_total[1m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Bot chain fallback > 10/min"
+          description: >
+            {{ $value | humanize }} bot chain fallbacks per minute.
+            RabbitMQ circuit breaker may be open.
+            Action: Investigate RabbitMQ health.
+
+      - alert: BotMoveLatencyHigh
+        expr: |
+          histogram_quantile(0.99, rate(bot_move_duration_seconds_bucket[5m]))
+          > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Bot move p99 latency > 2s"
+          description: >
+            Bot move p99 latency is {{ $value | humanizeDuration }}.
+            Investigate AI worker performance.
+
+      # ── Redis ──────────────────────────────────────────────────
+
+      - alert: RedisBufferOverflow
+        expr: rate(redis_buffer_overflow_total[1m]) > 0
+        for: 30s
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Redis buffer overflow detected"
+          description: >
+            Redis event buffer overflowed. Events are being dropped.
+            Action: Investigate Redis health immediately.
+
+      - alert: RedisCacheHitRatioLow
+        expr: redis_cache_hit_ratio < 0.8
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Redis cache hit ratio < 0.80"
+          description: >
+            Redis cache hit ratio is {{ $value }}.
+            Review cache strategy.
+
+      - alert: RedisPublishFailures
+        expr: rate(redis_publish_failures_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Redis publish failures detected"
+          description: >
+            {{ $value | humanize }} Redis publish failures per minute.
+            Investigate Redis connectivity.
+
+      # ── Game Processing ────────────────────────────────────────
+
+      - alert: GamesStalled
+        expr: rate(games_stalled_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "Games stalled > 5/min"
+          description: >
+            {{ $value | humanize }} games stalled per minute.
+            Action: Investigate game orchestration.
+
+      - alert: CardPlayLatencyHigh
+        expr: |
+          histogram_quantile(0.99, rate(card_play_duration_seconds_bucket[5m]))
+          > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Card play p99 latency > 1s"
+          description: >
+            Card play p99 latency is {{ $value | humanizeDuration }}.
+            Investigate DB contention.
+
+      - alert: HTTPRequestLatencyHigh
+        expr: |
+          histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
+          > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "HTTP request p99 latency > 500ms"
+          description: >
+            HTTP request p99 latency is {{ $value | humanizeDuration }}.
+            Investigate slow queries.
+
+      # ── Scheduler Worker ───────────────────────────────────────
+
+      - alert: SchedulerTaskTimeouts
+        expr: rate(scheduler_task_timeouts_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Scheduler tasks timing out"
+          description: >
+            {{ $value | humanize }} scheduler task timeouts per minute.
+            Investigate scheduler worker.
+
+      - alert: SchedulerTaskErrors
+        expr: rate(scheduler_task_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Scheduler task errors detected"
+          description: >
+            {{ $value | humanize }} scheduler task errors per minute.
+            Investigate scheduler worker.
+
+      # ── Rate Limiting ──────────────────────────────────────────
+
+      - alert: RateLimitHitsSurge
+        expr: rate(rate_limit_hits_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: info
+          team: backend
+        annotations:
+          summary: "Rate limit hits > 100/min"
+          description: >
+            {{ $value | humanize }} rate limit hits per minute.
+            Possible abuse or misconfigured client.
+
+  - name: jambo-ai-worker
+    interval: 30s
+    rules:
+
+      - alert: AIWorkerHighCPU
+        expr: |
+          avg by (instance) (
+            rate(process_cpu_seconds_total{job="jambo-ai-worker"}[1m])
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: "AI Worker CPU > 80% for 5 minutes"
+          description: >
+            AI Worker instance {{ $labels.instance }} is at
+            {{ $value | humanizePercentage }} CPU.
+            Action: Scale AI worker replicas.
+
+      - alert: AIWorkerTaskErrors
+        expr: |
+          rate(bot_errors_total{job="jambo-ai-worker"}[5m]) /
+          (rate(bot_move_duration_seconds_count{job="jambo-ai-worker"}[5m]) + 1)
+          > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "AI Worker error rate > 10%"
+          description: >
+            AI Worker error rate is {{ $value | humanizePercentage }}.
+            Investigate bot move processing.
+
+  - name: jambo-scheduler
+    interval: 30s
+    rules:
+
+      - alert: SchedulerWorkerHighCPU
+        expr: |
+          avg by (instance) (
+            rate(process_cpu_seconds_total{job="jambo-scheduler-worker"}[1m])
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: "Scheduler Worker CPU > 80%"
+          description: >
+            Scheduler Worker instance {{ $labels.instance }} is at
+            {{ $value | humanizePercentage }} CPU.
+            Investigate background task performance.
+
+  # ── Recording Rules ──────────────────────────────────────────
+  # Reference: docs/SCALING-PLAN.md §3.4
+
+  - name: jambo-recording-rules
+    interval: 15s
+    rules:
+
+      - record: rate:ws_connections_growth
+        expr: deriv(ws_connections_active[5m])
+
+      - record: rate:card_plays_per_second
+        expr: rate(card_play_duration_seconds_count[1m])
+
+      - record: rate:bot_moves_per_second
+        expr: rate(bot_move_duration_seconds_count[1m])
+
+      - record: rate:queue_depth_growth
+        expr: deriv(rabbitmq_queue_length[1m])
+
+      - record: ratio:bot_errors
+        expr: |
+          rate(bot_errors_total[5m]) /
+          (rate(bot_move_duration_seconds_count[5m]) + 1)
+
+      - record: rate:games_finished_per_minute
+        expr: rate(games_finished_total[1m])
+
+      - record: rate:http_requests_per_second
+        expr: rate(http_requests_total[1m])
+
+      - record: rate:ws_messages_per_second
+        expr: rate(ws_messages_sent_total[1m])
+
+      - record: ratio:db_pool_backend_utilization
+        expr: db_pool_active{process="backend"} / db_pool_size{process="backend"}
+
+      - record: ratio:db_pool_ai_worker_utilization
+        expr: db_pool_active{process="ai_worker"} / db_pool_size{process="ai_worker"}

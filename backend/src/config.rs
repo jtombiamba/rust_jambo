@@ -66,6 +66,18 @@ pub struct Config {
     pub rate_limit_reset_password_window_seconds: u64,
     pub room_max_players: i32,
     pub run_staleness_timeout_secs: u64,
+    pub redis_publish_max_retries: u32,
+    pub redis_publish_retry_base_delay_ms: u64,
+    pub redis_publish_retry_max_delay_ms: u64,
+    pub redis_event_buffer_max_size: usize,
+    pub redis_event_buffer_flush_interval_secs: u64,
+    pub ws_heartbeat_interval_secs: u64,
+    pub ws_heartbeat_timeout_secs: u64,
+    pub bot_chain_max_retries: u32,
+    pub bot_chain_retry_base_delay_ms: u64,
+    pub scheduler_task_max_restarts: u32,
+    pub run_completion_max_retries: u32,
+    pub redis_subscriber_retry_max_delay_secs: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -217,6 +229,45 @@ impl std::fmt::Debug for Config {
                 "run_staleness_timeout_secs",
                 &self.run_staleness_timeout_secs,
             )
+            .field("redis_publish_max_retries", &self.redis_publish_max_retries)
+            .field(
+                "redis_publish_retry_base_delay_ms",
+                &self.redis_publish_retry_base_delay_ms,
+            )
+            .field(
+                "redis_publish_retry_max_delay_ms",
+                &self.redis_publish_retry_max_delay_ms,
+            )
+            .field(
+                "redis_event_buffer_max_size",
+                &self.redis_event_buffer_max_size,
+            )
+            .field(
+                "redis_event_buffer_flush_interval_secs",
+                &self.redis_event_buffer_flush_interval_secs,
+            )
+            .field(
+                "ws_heartbeat_interval_secs",
+                &self.ws_heartbeat_interval_secs,
+            )
+            .field("ws_heartbeat_timeout_secs", &self.ws_heartbeat_timeout_secs)
+            .field("bot_chain_max_retries", &self.bot_chain_max_retries)
+            .field(
+                "bot_chain_retry_base_delay_ms",
+                &self.bot_chain_retry_base_delay_ms,
+            )
+            .field(
+                "scheduler_task_max_restarts",
+                &self.scheduler_task_max_restarts,
+            )
+            .field(
+                "run_completion_max_retries",
+                &self.run_completion_max_retries,
+            )
+            .field(
+                "redis_subscriber_retry_max_delay_secs",
+                &self.redis_subscriber_retry_max_delay_secs,
+            )
             .finish()
     }
 }
@@ -291,6 +342,18 @@ impl Config {
             .set_default("rate_limit_reset_password_window_seconds", "60")?
             .set_default("room_max_players", "4")?
             .set_default("run_staleness_timeout_secs", "1800")?
+            .set_default("redis_publish_max_retries", "3")?
+            .set_default("redis_publish_retry_base_delay_ms", "100")?
+            .set_default("redis_publish_retry_max_delay_ms", "1000")?
+            .set_default("redis_event_buffer_max_size", "1000")?
+            .set_default("redis_event_buffer_flush_interval_secs", "5")?
+            .set_default("ws_heartbeat_interval_secs", "30")?
+            .set_default("ws_heartbeat_timeout_secs", "90")?
+            .set_default("bot_chain_max_retries", "3")?
+            .set_default("bot_chain_retry_base_delay_ms", "500")?
+            .set_default("scheduler_task_max_restarts", "3")?
+            .set_default("run_completion_max_retries", "3")?
+            .set_default("redis_subscriber_retry_max_delay_secs", "30")?
             .add_source(Environment::default())
             .build()?;
 
@@ -537,6 +600,58 @@ impl Config {
                 .unwrap_or_else(|_| "1800".to_string())
                 .parse()
                 .unwrap_or(1800),
+            redis_publish_max_retries: env::var("REDIS_PUBLISH_MAX_RETRIES")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .unwrap_or(3),
+            redis_publish_retry_base_delay_ms: env::var("REDIS_PUBLISH_RETRY_BASE_DELAY_MS")
+                .unwrap_or_else(|_| "100".to_string())
+                .parse()
+                .unwrap_or(100),
+            redis_publish_retry_max_delay_ms: env::var("REDIS_PUBLISH_RETRY_MAX_DELAY_MS")
+                .unwrap_or_else(|_| "1000".to_string())
+                .parse()
+                .unwrap_or(1000),
+            redis_event_buffer_max_size: env::var("REDIS_EVENT_BUFFER_MAX_SIZE")
+                .unwrap_or_else(|_| "1000".to_string())
+                .parse()
+                .unwrap_or(1000),
+            redis_event_buffer_flush_interval_secs: env::var(
+                "REDIS_EVENT_BUFFER_FLUSH_INTERVAL_SECS",
+            )
+            .unwrap_or_else(|_| "5".to_string())
+            .parse()
+            .unwrap_or(5),
+            ws_heartbeat_interval_secs: env::var("WS_HEARTBEAT_INTERVAL_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()
+                .unwrap_or(30),
+            ws_heartbeat_timeout_secs: env::var("WS_HEARTBEAT_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "90".to_string())
+                .parse()
+                .unwrap_or(90),
+            bot_chain_max_retries: env::var("BOT_CHAIN_MAX_RETRIES")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .unwrap_or(3),
+            bot_chain_retry_base_delay_ms: env::var("BOT_CHAIN_RETRY_BASE_DELAY_MS")
+                .unwrap_or_else(|_| "500".to_string())
+                .parse()
+                .unwrap_or(500),
+            scheduler_task_max_restarts: env::var("SCHEDULER_TASK_MAX_RESTARTS")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .unwrap_or(3),
+            run_completion_max_retries: env::var("RUN_COMPLETION_MAX_RETRIES")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse()
+                .unwrap_or(3),
+            redis_subscriber_retry_max_delay_secs: env::var(
+                "REDIS_SUBSCRIBER_RETRY_MAX_DELAY_SECS",
+            )
+            .unwrap_or_else(|_| "30".to_string())
+            .parse()
+            .unwrap_or(30),
         }
     }
 }

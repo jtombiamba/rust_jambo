@@ -380,6 +380,105 @@ pub static PAYMENT_UNFREEZE_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| 
     .unwrap()
 });
 
+pub static REDIS_PUBLISH_RETRIES_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "redis_publish_retries_total",
+        "Total number of Redis publish retries",
+        &["channel"]
+    )
+    .unwrap()
+});
+
+pub static REDIS_PUBLISH_FAILURES_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "redis_publish_failures_total",
+        "Total number of Redis publish failures after all retries",
+        &["channel"]
+    )
+    .unwrap()
+});
+
+pub static REDIS_BUFFER_OVERFLOW_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "redis_buffer_overflow_total",
+        "Total number of events dropped due to buffer overflow"
+    )
+    .unwrap()
+});
+
+pub static REDIS_SUBSCRIBER_SHARDS_ACTIVE: Lazy<Gauge> = Lazy::new(|| {
+    register_gauge!(
+        "redis_subscriber_shards_active",
+        "Number of active Redis subscriber shards"
+    )
+    .unwrap()
+});
+
+pub static WS_HEARTBEAT_TIMEOUTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "ws_heartbeat_timeouts_total",
+        "Total number of WebSocket connections timed out on heartbeat"
+    )
+    .unwrap()
+});
+
+pub static BOT_CHAIN_RETRIES_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "bot_chain_retries_total",
+        "Total number of bot chain retry attempts"
+    )
+    .unwrap()
+});
+
+pub static BOT_CHAIN_BREAKS_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "bot_chain_breaks_total",
+        "Total number of bot chain breaks after retries exhausted"
+    )
+    .unwrap()
+});
+
+pub static RUN_COMPLETION_ERRORS_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "run_completion_errors_total",
+        "Total number of run completion failures"
+    )
+    .unwrap()
+});
+
+pub static EMAIL_SEND_ERRORS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+    register_counter_vec!(
+        "email_send_errors_total",
+        "Total number of email send failures",
+        &["email_type"]
+    )
+    .unwrap()
+});
+
+pub static GAME_STATE_CACHE_WRITE_ERRORS_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "game_state_cache_write_errors_total",
+        "Total number of cache write errors"
+    )
+    .unwrap()
+});
+
+pub static WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "ws_token_validation_redis_errors_total",
+        "Total number of Redis errors during WS token validation"
+    )
+    .unwrap()
+});
+
+pub static WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "ws_auth_blacklist_redis_errors_total",
+        "Total number of Redis errors during auth blacklist check"
+    )
+    .unwrap()
+});
+
 pub fn init_all() {
     RABBITMQ_PUBLISH_TOTAL.with_label_values(&["ai_tasks"]);
     RABBITMQ_PUBLISH_ERRORS_TOTAL.with_label_values(&["ai_tasks"]);
@@ -476,4 +575,20 @@ pub fn init_all() {
     PAYMENT_TOPUP_DURATION_SECONDS.with_label_values(&["capture_order"]);
     PAYMENT_UNFREEZE_DURATION_SECONDS.with_label_values(&["create_order"]);
     PAYMENT_UNFREEZE_DURATION_SECONDS.with_label_values(&["capture_order"]);
+    REDIS_PUBLISH_RETRIES_TOTAL.with_label_values(&["game"]);
+    REDIS_PUBLISH_RETRIES_TOTAL.with_label_values(&["room"]);
+    REDIS_PUBLISH_FAILURES_TOTAL.with_label_values(&["game"]);
+    REDIS_PUBLISH_FAILURES_TOTAL.with_label_values(&["room"]);
+    REDIS_BUFFER_OVERFLOW_TOTAL.inc_by(0.0);
+    REDIS_SUBSCRIBER_SHARDS_ACTIVE.set(0.0);
+    WS_HEARTBEAT_TIMEOUTS_TOTAL.inc_by(0.0);
+    BOT_CHAIN_RETRIES_TOTAL.inc_by(0.0);
+    BOT_CHAIN_BREAKS_TOTAL.inc_by(0.0);
+    RUN_COMPLETION_ERRORS_TOTAL.inc_by(0.0);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["unfreeze"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["stall_warning"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["stall_kicked"]);
+    GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc_by(0.0);
+    WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc_by(0.0);
+    WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL.inc_by(0.0);
 }

@@ -16,6 +16,7 @@ use crate::game::constants::KORA_CREDIT_MULTIPLIER;
 use crate::i18n::Lang;
 use crate::mailer::Mailer;
 use crate::messaging::events::RoomEvent;
+use crate::messaging::redis::PublishResult;
 use crate::messaging::RedisClient;
 
 const EMAIL_CHANNEL_CAPACITY: usize = 256;
@@ -243,8 +244,11 @@ impl RoomService {
 
     async fn publish_event(&self, event: &RoomEvent) {
         if let Some(mut redis) = self.redis_client.clone() {
-            if let Err(e) = redis.publish_room_event(event).await {
-                tracing::error!("Failed to publish room event: {}", e);
+            match redis.publish_room_event_with_retry(event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    tracing::error!("Failed to publish room event after retries: {}", e);
+                }
             }
         }
     }

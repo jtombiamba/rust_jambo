@@ -1,5 +1,5 @@
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::database::models::{game, game_card, player, PlayerType};
@@ -17,8 +17,26 @@ pub(super) async fn send_game_state_snapshot(
 ) {
     let game_model = match game::Entity::find_by_id(game_id).one(db).await {
         Ok(Some(g)) => g,
-        _ => {
-            debug!("Game {} not found for state snapshot", game_id);
+        Ok(None) => {
+            tracing::warn!("Game {} not found for state snapshot", game_id);
+            let error_msg = OutgoingMessage::Error {
+                message: "Game not found".to_string(),
+                source: "ws:game_not_found".to_string(),
+            };
+            if let Ok(json) = serde_json::to_string(&error_msg) {
+                manager.send_to_player(game_id, player_id, &json).await;
+            }
+            return;
+        }
+        Err(e) => {
+            tracing::error!("DB error fetching game {} for snapshot: {}", game_id, e);
+            let error_msg = OutgoingMessage::Error {
+                message: "Failed to load game state".to_string(),
+                source: "ws:db_error".to_string(),
+            };
+            if let Ok(json) = serde_json::to_string(&error_msg) {
+                manager.send_to_player(game_id, player_id, &json).await;
+            }
             return;
         }
     };
@@ -115,8 +133,16 @@ pub(super) async fn send_snapshots_to_all_players(
 ) {
     let game_model = match game::Entity::find_by_id(game_id).one(db).await {
         Ok(Some(g)) => g,
-        _ => {
-            debug!("Game {} not found for state snapshot", game_id);
+        Ok(None) => {
+            tracing::warn!("Game {} not found for state snapshot (broadcast)", game_id);
+            return;
+        }
+        Err(e) => {
+            tracing::error!(
+                "DB error fetching game {} for broadcast snapshot: {}",
+                game_id,
+                e
+            );
             return;
         }
     };

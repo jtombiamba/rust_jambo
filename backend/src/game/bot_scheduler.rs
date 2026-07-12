@@ -12,7 +12,9 @@ use crate::game::service::types::BotMoveOutcome;
 use crate::game::service::GameService;
 use crate::game::strategy::compute_strategy;
 use crate::messaging::{AITask, RabbitMQClient, RedisClient};
-use crate::observability::metrics::{BOT_ERRORS_TOTAL, BOT_MOVE_DURATION_SECONDS};
+use crate::observability::metrics::{
+    BOT_CHAIN_BREAKS_TOTAL, BOT_CHAIN_RETRIES_TOTAL, BOT_ERRORS_TOTAL, BOT_MOVE_DURATION_SECONDS,
+};
 use crate::observability::CorrelationId;
 
 static SYNC_CHAIN_SEMAPHORE: LazyLock<Arc<Semaphore>> =
@@ -209,18 +211,31 @@ impl BotScheduler {
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(*BOT_THINKING_DELAY_MS)).await;
 
-            let outcome =
-                match Self::execute_one_bot_move(&db, &redis, game_id, current_player).await {
-                    Ok(o) => o,
-                    Err(e) => {
-                        error!(
-                            "Bot {} failed to play in game {}: {}",
-                            current_player, game_id, e
-                        );
-                        BOT_ERRORS_TOTAL.with_label_values(&["execution"]).inc();
-                        break;
+            let outcome = {
+                let mut retries = 0u32;
+                loop {
+                    match Self::execute_one_bot_move(&db, &redis, game_id, current_player).await {
+                        Ok(o) => break o,
+                        Err(e) => {
+                            retries += 1;
+                            if retries > 3 {
+                                error!(
+                                    "Bot {} failed after {} retries in game {}: {}",
+                                    current_player, retries, game_id, e
+                                );
+                                BOT_CHAIN_BREAKS_TOTAL.inc();
+                                BOT_ERRORS_TOTAL.with_label_values(&["execution"]).inc();
+                                return;
+                            }
+                            BOT_CHAIN_RETRIES_TOTAL.inc();
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                500 * retries as u64,
+                            ))
+                            .await;
+                        }
                     }
-                };
+                }
+            };
 
             let next_is_bot = outcome
                 .players

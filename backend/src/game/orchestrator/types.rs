@@ -48,10 +48,10 @@ pub struct AdvanceBotOutcome {
 }
 
 /// Outcome of an evaluate_round operation in step-by-step mode.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EvaluateRoundOutcome {
     pub round_number: i32,
-    pub winner_id: Uuid,
+    pub winner_id: Option<Uuid>,
     pub winner_position: i32,
     pub game_ended: bool,
 }
@@ -231,5 +231,16 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
         &self,
         game_id: Uuid,
         human_player_id: Uuid,
+        idempotency_key: Option<String>,
     ) -> Result<EvaluateRoundOutcome, GameError>;
+
+    /// Verify that the given user_id owns the specified player in the game.
+    /// Returns Ok(true) if the player belongs to the user or the player is a bot,
+    /// Ok(false) if the player belongs to a different user, or Err if game/player not found.
+    async fn verify_player_ownership(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, GameError>;
 }

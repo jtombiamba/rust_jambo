@@ -225,12 +225,22 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
         &self,
         _game_id: Uuid,
         _human_player_id: Uuid,
+        _idempotency_key: Option<String>,
     ) -> Result<EvaluateRoundOutcome, GameError> {
         Ok(EvaluateRoundOutcome {
             round_number: 1,
-            winner_id: Uuid::new_v4(),
+            winner_id: Some(Uuid::new_v4()),
             winner_position: 0,
             game_ended: false,
         })
+    }
+
+    async fn verify_player_ownership(
+        &self,
+        _game_id: Uuid,
+        _player_id: Uuid,
+        _user_id: Uuid,
+    ) -> Result<bool, GameError> {
+        Ok(true)
     }
 }

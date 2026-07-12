@@ -140,11 +140,22 @@ impl GameOrchestrator {
             }
         }
 
-        let result: CardPlayResult = self
+        let result: CardPlayResult = match self
             .game_service
             .update_card_play(game_id, player_id, card_index, correlation_id.map(|c| c.0))
             .await
-            .map_err(map_service_error)?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // Clean up "pending" idempotency key on error so retries aren't blocked
+                if let Some(ref idem_key) = idem_redis_key {
+                    if let Some(mut redis) = self.game_service.redis_client() {
+                        let _ = redis.del(idem_key).await;
+                    }
+                }
+                return Err(map_service_error(e));
+            }
+        };
 
         let next_is_bot = result
             .players
@@ -254,7 +265,42 @@ impl GameOrchestrator {
         &self,
         game_id: Uuid,
         human_player_id: Uuid,
+        idempotency_key: Option<String>,
     ) -> Result<EvaluateRoundOutcome, GameError> {
+        // Idempotency guard: evaluate_round has financial side effects (credit transfers)
+        let idem_redis_key = idempotency_key
+            .as_ref()
+            .map(|k| format!("idem:eval:{}:{}", game_id, k));
+
+        if let Some(ref idem_key) = idem_redis_key {
+            if let Some(mut redis) = self.game_service.redis_client() {
+                match redis.set_nx_ex(idem_key, "pending", 300).await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        match redis.get(idem_key).await {
+                            Ok(Some(val)) if val != "pending" => {
+                                if let Ok(cached) =
+                                    serde_json::from_str::<EvaluateRoundOutcome>(&val)
+                                {
+                                    return Ok(cached);
+                                }
+                            }
+                            _ => {}
+                        }
+                        return Err(GameError::Internal(Box::new(std::io::Error::other(
+                            "A request with this idempotency key is already in progress",
+                        ))));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Redis error on evaluate-round idempotency check: {}, proceeding without",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
         let game = GameRepository::new(self.db.clone())
             .find_by_id(game_id)
             .await
@@ -276,18 +322,36 @@ impl GameOrchestrator {
             ))));
         }
 
-        let result = self
-            .game_service
-            .evaluate_round(game_id)
-            .await
-            .map_err(map_service_error)?;
+        let result = match self.game_service.evaluate_round(game_id).await {
+            Ok(r) => r,
+            Err(e) => {
+                // Clean up "pending" idempotency key on error so retries aren't blocked
+                if let Some(ref idem_key) = idem_redis_key {
+                    if let Some(mut redis) = self.game_service.redis_client() {
+                        let _ = redis.del(idem_key).await;
+                    }
+                }
+                return Err(map_service_error(e));
+            }
+        };
 
-        Ok(EvaluateRoundOutcome {
+        let outcome = EvaluateRoundOutcome {
             round_number: result.round,
-            winner_id: result.winner_id,
+            winner_id: Some(result.winner_id),
             winner_position: result.winner_position as i32,
             game_ended: result.game_ended,
-        })
+        };
+
+        // Cache the outcome for idempotent replay
+        if let Some(ref idem_key) = idem_redis_key {
+            if let Some(mut redis) = self.game_service.redis_client() {
+                if let Ok(outcome_json) = serde_json::to_string(&outcome) {
+                    let _ = redis.set_ex(idem_key, &outcome_json, 300).await;
+                }
+            }
+        }
+
+        Ok(outcome)
     }
 
     pub async fn create_multiplayer_game(
@@ -499,7 +563,34 @@ impl GameOrchestratorTrait for GameOrchestrator {
         &self,
         game_id: Uuid,
         human_player_id: Uuid,
+        idempotency_key: Option<String>,
     ) -> Result<EvaluateRoundOutcome, GameError> {
-        self.evaluate_round(game_id, human_player_id).await
+        self.evaluate_round(game_id, human_player_id, idempotency_key)
+            .await
+    }
+
+    async fn verify_player_ownership(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, GameError> {
+        let players = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await
+            .map_err(GameError::Database)?;
+
+        let player = players
+            .iter()
+            .find(|p| p.id == player_id)
+            .ok_or(GameError::PlayerNotFound)?;
+
+        // Bots can be advanced by any authenticated user in the game
+        if matches!(player.player_type, PlayerType::Bot) {
+            return Ok(true);
+        }
+
+        // For human players, check the user_id matches
+        Ok(player.user_id == Some(user_id))
     }
 }

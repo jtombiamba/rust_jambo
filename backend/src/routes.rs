@@ -72,8 +72,8 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                 .service(crate::api::config::client_config)
                 .service(create_quick_game)
                 .service(play_card)
-                .service(advance_bot)
-                .service(evaluate_round)
+                .service(web::resource("/game/{id}/advance-bot").to(advance_bot))
+                .service(web::resource("/game/{id}/evaluate-round").to(evaluate_round))
                 .route(
                     "/lang",
                     web::post().to(crate::i18n::lang_endpoint::set_language),

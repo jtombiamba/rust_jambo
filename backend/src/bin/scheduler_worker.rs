@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         Some(url) => match RedisClient::new(url).await {
             Ok(client) => {
                 info!("Connected to Redis");
-                Some(client)
+                Some(client.with_config(&config))
             }
             Err(e) => {
                 warn!(
@@ -88,25 +88,18 @@ async fn main() -> Result<()> {
     info!("All scheduler tasks started");
 
     tokio::select! {
-        result = tasks.join_next() => {
-            match result {
-                Some(Ok(())) => {
-                    error!("A scheduler task exited — restarting worker");
-                    eprintln!("FATAL: A scheduler task exited unexpectedly");
-                    let _ = shutdown_tx.send(true);
-                    std::process::exit(1);
+        Some(task_result) = tasks.join_next() => {
+            match task_result {
+                Ok(()) => {
+                    warn!("A scheduler task exited unexpectedly");
                 }
-                Some(Err(e)) => {
-                    error!(
-                        panic = %e,
-                        "A scheduler task panicked, initiating shutdown"
-                    );
-                    eprintln!("FATAL: A scheduler task panicked: {}", e);
-                    let _ = shutdown_tx.send(true);
+                Err(e) => {
+                    if e.is_panic() {
+                        error!("Scheduler task panicked: {}", e);
+                    } else {
+                        error!("Scheduler task cancelled: {}", e);
+                    }
                     std::process::exit(1);
-                }
-                None => {
-                    info!("All scheduler tasks completed normally");
                 }
             }
         }
