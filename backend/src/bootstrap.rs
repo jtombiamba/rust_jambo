@@ -51,7 +51,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
 
     let redis_client = match &config.redis_url {
         Some(url) => match RedisClient::new(url).await {
-            Ok(client) => Some(client),
+            Ok(client) => Some(client.with_config(config)),
             Err(e) => {
                 tracing::warn!(
                     "Failed to connect to Redis: {}, proceeding without Redis",
@@ -148,7 +148,11 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         tracing::warn!("Failed to start Redis subscriber: {}", e);
     }
     ws_manager
-        .start_connection_cleanup_task(Duration::from_secs(5 * 60), Duration::from_secs(10 * 60))
+        .start_connection_cleanup_task(
+            Duration::from_secs(5 * 60),
+            Duration::from_secs(10 * 60),
+            Duration::from_secs(config.ws_heartbeat_timeout_secs),
+        )
         .await;
 
     let auth_middleware = AuthMiddleware::new(redis_client.clone(), translator.clone());

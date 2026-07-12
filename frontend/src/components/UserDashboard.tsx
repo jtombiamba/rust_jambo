@@ -59,12 +59,14 @@ interface QuickGameResponse {
 }
 
 interface Props {
-  onStartGame: () => void
+  onStartGame: (stepByStep?: boolean) => void
   onStartMultiplayerGame: (bet: number, maxPlayers: number) => Promise<{ gameId: string; error: string | null }>
   onResumeGame: (data: QuickGameResponse) => void
   onViewLobby: (gameId: string) => void
   starting: boolean
   error: string | null
+  stepByStep: boolean
+  onStepByStepChange: (value: boolean) => void
 }
 
 interface InvitationItem {
@@ -91,7 +93,7 @@ const STATUS_OPTIONS = [
   { label: 'Cancelled', value: 'cancelled' },
 ]
 
-export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onResumeGame, onViewLobby, starting, error }: Props) {
+export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onResumeGame, onViewLobby, starting, error, stepByStep, onStepByStepChange }: Props) {
   const { user, logout } = useAuthStore()
   const { t } = useTranslation()
   const [profile, setProfile] = useState<ProfileData | null>(null)
@@ -557,10 +559,19 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 <button
                   className="px-4 sm:px-6 py-2 sm:py-3 bg-blue-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   disabled={starting}
-                  onClick={onStartGame}
+                  onClick={() => onStartGame(stepByStep)}
                 >
                   {starting ? t('dashboard.startGameLoading') : t('dashboard.soloGame')}
                 </button>
+                <label className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                  <input
+                    type="checkbox"
+                    checked={stepByStep}
+                    onChange={(e) => onStepByStepChange(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 rounded"
+                  />
+                  <span className="text-sm text-gray-700">{t('game.stepByStep')}</span>
+                </label>
                 <button
                   className="px-4 sm:px-6 py-2 sm:py-3 bg-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-purple-700 disabled:opacity-50"
                   disabled={starting}

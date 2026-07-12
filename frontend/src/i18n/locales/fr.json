@@ -138,7 +138,13 @@
     "autoCloseNotice": "Cette fenêtre se fermera automatiquement dans 10 secondes",
     "winnerLabel": "Gagnant !",
     "winnerKora": "KORA !",
-    "winnerDoubleKora": "DOUBLE KORA !"
+    "winnerDoubleKora": "DOUBLE KORA !",
+    "stepByStep": "Mode Pas à Pas",
+    "stepByStepDescription": "Contrôlez chaque mouvement des bots manuellement",
+    "playNextBot": "Jouer le Bot Suivant",
+    "evaluateRound": "Évaluer le Tour",
+    "waitingForBot": "En attente du bot...",
+    "allCardsPlayed": "Toutes les cartes jouées ! Évaluez le tour."
   },
   "lobby": {
     "gameLobby": "Salon de jeu",

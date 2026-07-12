@@ -18,7 +18,7 @@ impl GameRepository {
         Self { connection }
     }
 
-    pub async fn create(&self, bet: i32, auto: bool) -> Result<Game, DbErr> {
+    pub async fn create(&self, bet: i32, auto: bool, step_by_step: bool) -> Result<Game, DbErr> {
         let id = Uuid::now_v7();
         let now = chrono::Utc::now();
 
@@ -42,6 +42,7 @@ impl GameRepository {
             invite_expires_at: ActiveValue::NotSet,
             stall_warning_sent_at: ActiveValue::NotSet,
             game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(step_by_step),
             kicked_players: Set(json!([])),
         };
         let insert_result = game::Entity::insert(game_active)
@@ -85,6 +86,7 @@ impl GameRepository {
             invite_expires_at: ActiveValue::NotSet,
             stall_warning_sent_at: ActiveValue::NotSet,
             game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
             kicked_players: Set(json!([])),
         };
         let insert_result = game::Entity::insert(game_active)
@@ -129,6 +131,7 @@ impl GameRepository {
             invite_expires_at: ActiveValue::NotSet,
             stall_warning_sent_at: ActiveValue::NotSet,
             game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
             kicked_players: Set(json!([])),
         };
         let insert_result = game::Entity::insert(game_active)
@@ -215,8 +218,8 @@ impl GameRepository {
 #[async_trait]
 #[allow(dead_code)]
 impl GameRepoTrait for GameRepository {
-    async fn create(&self, bet: i32, auto: bool) -> Result<Game, DbErr> {
-        self.create(bet, auto).await
+    async fn create(&self, bet: i32, auto: bool, step_by_step: bool) -> Result<Game, DbErr> {
+        self.create(bet, auto, step_by_step).await
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {

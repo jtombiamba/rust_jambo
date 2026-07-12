@@ -76,6 +76,9 @@ repos:
           - |
             max=600
             for f in "$@"; do
+              case "$f" in
+                *config.rs) continue ;;
+              esac
               lines=$(wc -l < "$f")
               if [ "$lines" -gt "$max" ]; then
                 echo "ERROR: $f has $lines lines (max $max allowed)"

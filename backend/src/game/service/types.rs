@@ -179,6 +179,15 @@ pub struct CardPlayResult {
     pub game_ended: bool,
     pub round_completed: bool,
     pub current_round: i32,
+    pub step_by_step: bool,
+}
+
+pub struct BotMoveOutcome {
+    pub card_played: i32,
+    pub next_player_id: Uuid,
+    pub round_complete: bool,
+    pub game_ended: bool,
+    pub players: Vec<player::Model>,
 }
 
 /// Result of creating a multiplayer game.
@@ -193,7 +202,7 @@ pub struct MultiplayerGameOutcome {
 }
 
 /// Result of evaluating a completed round inside a transaction.
-pub(crate) struct RoundEvaluationResult {
+pub struct RoundEvaluationResult {
     pub(crate) round: i32,
     pub(crate) winner_id: Uuid,
     pub(crate) winner_position: usize,

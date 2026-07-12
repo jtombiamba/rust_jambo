@@ -34,6 +34,26 @@ pub struct QuickGameOutcome {
     /// One-time WebSocket authentication token for anonymous users.
     /// Present only when the user is not authenticated.
     pub ws_token: Option<String>,
+    pub step_by_step: bool,
+}
+
+/// Outcome of an advance_bot operation in step-by-step mode.
+#[derive(Debug, Clone)]
+pub struct AdvanceBotOutcome {
+    pub card_played: i32,
+    pub next_player_id: Uuid,
+    pub next_is_bot: bool,
+    pub round_complete: bool,
+    pub game_ended: bool,
+}
+
+/// Outcome of an evaluate_round operation in step-by-step mode.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EvaluateRoundOutcome {
+    pub round_number: i32,
+    pub winner_id: Option<Uuid>,
+    pub winner_position: i32,
+    pub game_ended: bool,
 }
 
 /// Outcome of a create_multiplayer_game operation.
@@ -124,6 +144,7 @@ impl From<QuickGameOutcome> for QuickGameResponse {
             invite_expires_at: o.invite_expires_at,
             deck_slots: o.deck_slots,
             ws_token: o.ws_token,
+            step_by_step: o.step_by_step,
         }
     }
 }
@@ -145,6 +166,7 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
     async fn create_quick_game(
         &self,
         correlation_id: Option<CorrelationId>,
+        step_by_step: bool,
     ) -> Result<QuickGameOutcome, GameError>;
 
     async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError>;
@@ -153,6 +175,13 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
         &self,
         user_id: Uuid,
         db: &DatabaseConnection,
+    ) -> Result<QuickGameOutcome, GameError>;
+
+    async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        user_id: Uuid,
+        db: &DatabaseConnection,
+        step_by_step: bool,
     ) -> Result<QuickGameOutcome, GameError>;
 
     async fn create_multiplayer_game(
@@ -191,4 +220,27 @@ pub trait GameOrchestratorTrait: Send + Sync + 'static {
 
     #[allow(dead_code)]
     async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError>;
+
+    async fn advance_bot(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<AdvanceBotOutcome, GameError>;
+
+    async fn evaluate_round(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+        idempotency_key: Option<String>,
+    ) -> Result<EvaluateRoundOutcome, GameError>;
+
+    /// Verify that the given user_id owns the specified player in the game.
+    /// Returns Ok(true) if the player belongs to the user or the player is a bot,
+    /// Ok(false) if the player belongs to a different user, or Err if game/player not found.
+    async fn verify_player_ownership(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, GameError>;
 }

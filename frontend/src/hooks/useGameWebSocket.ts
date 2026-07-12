@@ -170,6 +170,9 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           }
 
           store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, deckSlots);
+          if (event.step_by_step !== undefined) {
+            store.setStepByStep(event.step_by_step);
+          }
           clearRoundWinner();
           break;
         }

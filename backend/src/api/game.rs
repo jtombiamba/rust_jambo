@@ -4,9 +4,13 @@ use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, Re
 use uuid::Uuid;
 
 use crate::api::dto::requests::PlayCardRequest;
-use crate::api::dto::responses::PlayCardResponse;
+use crate::api::dto::responses::{
+    AdvanceBotResponse, EvaluateRoundResponse, PlayCardResponse, PlayerActionRequest,
+};
+use crate::auth::config::AuthConfig;
 use crate::error::AppError;
 use crate::game::orchestrator::GameOrchestratorTrait;
+use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 
 #[post("/game/{id}/play")]
@@ -47,393 +51,222 @@ pub async fn play_card(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::error::GameError;
-    use crate::game::orchestrator::mock::MockGameOrchestrator;
-    use crate::game::orchestrator::QuickGameOutcome;
-    use actix_web::{test, web, App};
-    use std::sync::Arc;
+pub async fn advance_bot(
+    req: HttpRequest,
+    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    id: web::Path<Uuid>,
+    payload: web::Json<PlayerActionRequest>,
+) -> impl Responder {
+    let game_id = id.into_inner();
+    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let redis_client = req
+        .app_data::<web::Data<Option<RedisClient>>>()
+        .cloned()
+        .and_then(|r| r.get_ref().clone());
 
-    async fn make_app(
-        mock: Arc<dyn GameOrchestratorTrait>,
-    ) -> impl actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    > {
-        test::init_service(App::new().app_data(web::Data::new(mock)).service(play_card)).await
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let has_cookie = token.is_some();
+    let mut auth_user_id =
+        crate::websocket::validate_ws_token(token, auth_config.clone(), redis_client.clone()).await;
+
+    tracing::debug!(
+        "[advance_bot] game_id={}, auth_user_id={:?}, has_cookie={}",
+        game_id,
+        auth_user_id,
+        has_cookie
+    );
+
+    // Track whether auth came from a game token (anonymous) vs a real user session
+    let mut is_game_token_auth = false;
+
+    if auth_user_id.is_none() {
+        let game_token = req
+            .query_string()
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| *k == "token")
+            .map(|(_, v)| v.to_string());
+        tracing::debug!(
+            "[advance_bot] game_token in query: {:?}",
+            game_token.as_ref().map(|_| "present")
+        );
+        if let Some(ref gt) = game_token {
+            auth_user_id =
+                crate::websocket::validate_game_token(gt, game_id, auth_config, redis_client).await;
+            tracing::debug!(
+                "[advance_bot] validate_game_token returned: {:?}",
+                auth_user_id
+            );
+            if auth_user_id.is_some() {
+                is_game_token_auth = true;
+            }
+        }
     }
 
-    // ── validation tests ──
+    tracing::debug!(
+        "[advance_bot] is_game_token_auth={}, final auth_user_id={:?}",
+        is_game_token_auth,
+        auth_user_id
+    );
 
-    #[actix_web::test]
-    async fn play_card_valid_payload() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let payload = serde_json::json!({ "player_id": player_id, "card_index": 15 });
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(&payload)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], true);
-        assert_eq!(body["message"], "Card played successfully");
+    // Validate that the authenticated user (or token holder) owns the player_id.
+    // For game token auth (anonymous), the returned "user_id" is the game_id, which
+    // won't match any player's user_id. Skip the ownership check in that case —
+    // possession of a valid game token for this game is sufficient authorization.
+    if let Some(user_id) = auth_user_id {
+        if !is_game_token_auth {
+            // Real user session — verify ownership
+            match orchestrator
+                .verify_player_ownership(game_id, payload.player_id, user_id)
+                .await
+            {
+                Ok(false) => {
+                    tracing::warn!(
+                        "[advance_bot] ownership check failed for user_id={}, player_id={}",
+                        user_id,
+                        payload.player_id
+                    );
+                    return AppError::from(crate::error::GameError::NotYourTurn).error_response();
+                }
+                Err(_) => {
+                    // User ID not found in game — reject
+                    return AppError::from(crate::error::GameError::NotYourTurn).error_response();
+                }
+                Ok(true) => {} // ownership confirmed
+            }
+        } else {
+            tracing::debug!(
+                "[advance_bot] game token auth — skipping ownership check for player_id={}",
+                payload.player_id
+            );
+        }
+        // Game token auth: skip ownership check, the token itself is proof of authorization
     }
 
-    #[actix_web::test]
-    async fn play_card_negative_index() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let payload = serde_json::json!({ "player_id": player_id, "card_index": -1 });
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(&payload)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], false);
-        assert!(body["error"]
-            .as_str()
-            .unwrap()
-            .contains("out of valid range"));
-    }
-
-    #[actix_web::test]
-    async fn play_card_index_out_of_range() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let payload = serde_json::json!({ "player_id": player_id, "card_index": 32 });
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(&payload)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], false);
-    }
-
-    #[actix_web::test]
-    async fn play_card_missing_player_id() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let payload = serde_json::json!({ "card_index": 0 });
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(&payload)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-    }
-
-    #[actix_web::test]
-    async fn play_card_missing_card_index() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let payload = serde_json::json!({ "player_id": player_id });
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(&payload)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-    }
-
-    #[actix_web::test]
-    async fn play_card_invalid_player_id_uuid() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let payload = serde_json::json!({ "player_id": "not-a-uuid", "card_index": 0 });
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(&payload)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-    }
-
-    #[actix_web::test]
-    async fn play_card_non_uuid_path() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let player_id = Uuid::new_v4();
-        let payload = serde_json::json!({ "player_id": player_id, "card_index": 0 });
-
-        let req = test::TestRequest::post()
-            .uri("/game/not-a-uuid/play")
-            .set_json(&payload)
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 404);
-    }
-
-    // ── error mapping tests ──
-
-    #[actix_web::test]
-    async fn play_card_game_not_found() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::GameNotFound),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 404);
-    }
-
-    #[actix_web::test]
-    async fn play_card_player_not_found() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::PlayerNotFound),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 404);
-    }
-
-    #[actix_web::test]
-    async fn play_card_card_not_found() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::CardNotFound),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 404);
-    }
-
-    #[actix_web::test]
-    async fn play_card_not_your_turn() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::NotYourTurn),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 403);
-    }
-
-    #[actix_web::test]
-    async fn play_card_invalid_card() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::InvalidCard),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 403);
-    }
-
-    #[actix_web::test]
-    async fn play_card_game_finished() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::GameFinished),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 409);
-    }
-
-    #[actix_web::test]
-    async fn play_card_round_not_complete() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::RoundNotComplete),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-    }
-
-    #[actix_web::test]
-    async fn play_card_database_error() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::Database(sea_orm::DbErr::Custom(
-                "db down".into(),
-            ))),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 500);
-    }
-
-    #[actix_web::test]
-    async fn play_card_internal_error() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::Internal(Box::new(std::io::Error::other(
-                "internal kaboom",
-            )))),
-            Ok(QuickGameOutcome {
-                game_id: Uuid::new_v4(),
-                players: vec![],
-                status: "active".into(),
-                current_turn: 0,
-                bet: 10,
-                max_players: 4,
-                invite_expires_at: None,
-                deck_slots: None,
-                ws_token: None,
-            }),
-        ));
-        let app = make_app(mock).await;
-        let game_id = Uuid::new_v4();
-        let player_id = Uuid::new_v4();
-        let req = test::TestRequest::post()
-            .uri(&format!("/game/{}/play", game_id))
-            .set_json(serde_json::json!({ "player_id": player_id, "card_index": 0 }))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 500);
+    match orchestrator.advance_bot(game_id, payload.player_id).await {
+        Ok(outcome) => {
+            let response = AdvanceBotResponse {
+                success: true,
+                card_played: outcome.card_played,
+                next_player_id: outcome.next_player_id,
+                next_is_bot: outcome.next_is_bot,
+                round_complete: outcome.round_complete,
+                game_ended: outcome.game_ended,
+            };
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => AppError::from(e).error_response(),
     }
 }
+
+pub async fn evaluate_round(
+    req: HttpRequest,
+    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    id: web::Path<Uuid>,
+    payload: web::Json<PlayerActionRequest>,
+) -> impl Responder {
+    let game_id = id.into_inner();
+    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let redis_client = req
+        .app_data::<web::Data<Option<RedisClient>>>()
+        .cloned()
+        .and_then(|r| r.get_ref().clone());
+
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let has_cookie = token.is_some();
+    let mut auth_user_id =
+        crate::websocket::validate_ws_token(token, auth_config.clone(), redis_client.clone()).await;
+
+    tracing::debug!(
+        "[evaluate_round] game_id={}, auth_user_id={:?}, has_cookie={}",
+        game_id,
+        auth_user_id,
+        has_cookie
+    );
+
+    // Track whether auth came from a game token (anonymous) vs a real user session
+    let mut is_game_token_auth = false;
+
+    if auth_user_id.is_none() {
+        let game_token = req
+            .query_string()
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| *k == "token")
+            .map(|(_, v)| v.to_string());
+        tracing::debug!(
+            "[evaluate_round] game_token in query: {:?}",
+            game_token.as_ref().map(|_| "present")
+        );
+        if let Some(ref gt) = game_token {
+            auth_user_id =
+                crate::websocket::validate_game_token(gt, game_id, auth_config, redis_client).await;
+            tracing::debug!(
+                "[evaluate_round] validate_game_token returned: {:?}",
+                auth_user_id
+            );
+            if auth_user_id.is_some() {
+                is_game_token_auth = true;
+            }
+        }
+    }
+
+    tracing::debug!(
+        "[evaluate_round] is_game_token_auth={}, final auth_user_id={:?}",
+        is_game_token_auth,
+        auth_user_id
+    );
+
+    // Idempotency guard: evaluate-round has financial side effects (credit transfers)
+    let idempotency_key = req
+        .headers()
+        .get("X-Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Validate that the authenticated user (or token holder) owns the player_id.
+    // For game token auth (anonymous), the returned "user_id" is the game_id, which
+    // won't match any player's user_id. Skip the ownership check in that case —
+    // possession of a valid game token for this game is sufficient authorization.
+    if let Some(user_id) = auth_user_id {
+        if !is_game_token_auth {
+            // Real user session — verify ownership
+            match orchestrator
+                .verify_player_ownership(game_id, payload.player_id, user_id)
+                .await
+            {
+                Ok(false) | Err(_) => {
+                    return AppError::from(crate::error::GameError::NotYourTurn).error_response();
+                }
+                Ok(true) => {}
+            }
+        } else {
+            tracing::debug!(
+                "[evaluate_round] game token auth — skipping ownership check for player_id={}",
+                payload.player_id
+            );
+        }
+        // Game token auth: skip ownership check, the token itself is proof of authorization
+    }
+
+    match orchestrator
+        .evaluate_round(game_id, payload.player_id, idempotency_key)
+        .await
+    {
+        Ok(outcome) => {
+            let response = EvaluateRoundResponse {
+                success: true,
+                round_number: outcome.round_number,
+                winner_id: outcome.winner_id.unwrap_or_default(),
+                winner_position: outcome.winner_position,
+                game_ended: outcome.game_ended,
+            };
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+#[cfg(test)]
+#[path = "game_tests.rs"]
+mod game_tests;

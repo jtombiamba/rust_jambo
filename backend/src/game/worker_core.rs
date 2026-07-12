@@ -10,6 +10,7 @@ use crate::game::bot::execute_bot_move_from_task;
 use crate::game::bot_scheduler::BotScheduler;
 use crate::game::constants::BOT_THINKING_DELAY_MS;
 use crate::game::service::GameService;
+use crate::messaging::redis::PublishResult;
 use crate::messaging::{AITask, RabbitMQClient, RedisClient};
 use crate::observability::metrics;
 
@@ -215,7 +216,9 @@ async fn process_bot_move_with_db(
                     next_turn: result.next_player,
                     correlation_id,
                 };
-                if let Err(e) = client.publish_game_event(&event).await {
+                if let PublishResult::RetryExhausted(e) =
+                    client.publish_game_event_with_retry(&event).await
+                {
                     error!("Failed to publish bot game event: {}", e);
                 }
             }
