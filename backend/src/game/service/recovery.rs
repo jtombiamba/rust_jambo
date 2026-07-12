@@ -1,5 +1,5 @@
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
-use tracing::{error, info};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::database::models::{game, player, GameStatus, PlayerType};
@@ -23,8 +23,23 @@ impl GameService {
         let now = chrono::Utc::now();
         let cutoff = now - staleness_threshold;
 
+        // Count total active games (including step_by_step) for diagnostics
+        let total_active = game::Entity::find()
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .count(&db)
+            .await
+            .unwrap_or_default();
+
+        let step_by_step_active = game::Entity::find()
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(true))
+            .count(&db)
+            .await
+            .unwrap_or_default();
+
         let stalled_games = match game::Entity::find()
             .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(false))
             .filter(game::Column::UpdatedAt.lt(cutoff))
             .all(&db)
             .await
@@ -35,6 +50,14 @@ impl GameService {
                 return 0;
             }
         };
+
+        debug!(
+            "detect_and_recover_stalled_games: total_active={}, step_by_step_active={}, stalled_non_step_by_step={}, cutoff={:?}",
+            total_active,
+            step_by_step_active,
+            stalled_games.len(),
+            cutoff
+        );
 
         let mut recovered = 0u64;
         for g in stalled_games {
@@ -98,11 +121,19 @@ impl GameService {
 
         let stalled_games = match game::Entity::find()
             .filter(game::Column::Status.eq(GameStatus::Active))
+            .filter(game::Column::StepByStep.eq(false))
             .filter(game::Column::UpdatedAt.lt(alert_cutoff))
             .all(&self.db)
             .await
         {
-            Ok(games) => games,
+            Ok(games) => {
+                debug!(
+                    "check_human_staleness: found {} stalled games (step_by_step excluded), alert_cutoff={:?}",
+                    games.len(),
+                    alert_cutoff
+                );
+                games
+            }
             Err(e) => {
                 error!("Failed to query human-stalled games: {}", e);
                 return 0;

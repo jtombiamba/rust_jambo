@@ -156,7 +156,11 @@ impl GameService {
             .all(db)
             .await?;
 
+        // Skip kicked players — they should not block round completion
         for player_model in players {
+            if player_model.kicked {
+                continue;
+            }
             let cards = game_card::Entity::find()
                 .filter(game_card::Column::PlayerId.eq(player_model.id))
                 .all(db)
@@ -176,9 +180,13 @@ impl GameService {
         players: &[player::Model],
     ) -> Result<Uuid, GameServiceError> {
         let current_rank = game_model.rank.unwrap_or(0) as usize;
-        let next_rank = next_player(current_rank, players.len());
+        // Use active player count (exclude kicked) for correct modular arithmetic
+        let active_count = players.iter().filter(|p| !p.kicked).count();
+        let next_rank = next_player(current_rank, active_count);
         players
-            .get(next_rank)
+            .iter()
+            .filter(|p| !p.kicked)
+            .nth(next_rank)
             .map(|p| p.id)
             .ok_or_else(|| GameServiceError::Internal("No player at computed rank".to_string()))
     }

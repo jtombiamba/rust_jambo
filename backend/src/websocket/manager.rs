@@ -200,6 +200,7 @@ impl WebSocketManager {
     /// Force-disconnect a connection, always publishing PlayerDisconnected if player
     /// identity was set. Safe to call from the forwarding task even after the stream
     /// handler has already cleaned up.
+    /// Delegates to `remove_connection` for actual removal and metric handling.
     pub async fn force_disconnect(&self, game_id: Uuid, connection_id: ConnectionId) {
         let (player_id, position, was_disconnected) = {
             let mut inner = self.inner.write().await;
@@ -213,7 +214,6 @@ impl WebSocketManager {
                         } else {
                             let (pid, pos) = (conn.player_id, conn.player_position);
                             connections[i].disconnected = true;
-                            // Still mark as disconnected but don't remove yet
                             (pid, pos, false)
                         }
                     }
@@ -229,19 +229,8 @@ impl WebSocketManager {
             return;
         }
 
-        // Now do the actual removal
-        {
-            let mut inner = self.inner.write().await;
-            if let Some(connections) = inner.connections.get_mut(&game_id) {
-                connections.retain(|c| c.id != connection_id);
-                if connections.is_empty() {
-                    inner.connections.remove(&game_id);
-                }
-            }
-        }
-
-        metrics::WS_CONNECTIONS_ACTIVE.dec();
-        metrics::WS_DISCONNECTS_TOTAL.inc();
+        // Delegate removal and metric decrement to remove_connection to avoid double-decrement
+        self.remove_connection(game_id, connection_id).await;
 
         if let (Some(pid), Some(pos)) = (player_id, position) {
             let event = GameEvent::PlayerDisconnected {

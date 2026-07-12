@@ -441,7 +441,7 @@ pub async fn ws_room_handler(
     Ok(res)
 }
 
-async fn validate_ws_token(
+pub async fn validate_ws_token(
     token: Option<String>,
     auth_config: Option<web::Data<AuthConfig>>,
     mut redis_client: Option<RedisClient>,
@@ -457,9 +457,14 @@ async fn validate_ws_token(
             }
             Ok(false) => {}
             Err(e) => {
-                tracing::warn!("Redis error during token blacklist check: {}", e);
+                // Fail-open: if Redis is unavailable, allow the connection.
+                // The JWT signature and expiry have already been validated;
+                // the Redis check is only for token revocation.
+                tracing::warn!(
+                    "Redis unavailable during blacklist check, allowing connection: {}",
+                    e
+                );
                 crate::observability::metrics::WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL.inc();
-                return None;
             }
         }
     }
@@ -471,7 +476,7 @@ async fn validate_ws_token(
 /// The token must:
 /// 1. Be a valid JWT with purpose "ws:game" and matching game_id
 /// 2. Exist in Redis (single-use enforcement) — consumed on first use
-async fn validate_game_token(
+pub async fn validate_game_token(
     token: &str,
     game_id: Uuid,
     auth_config: Option<web::Data<AuthConfig>>,
@@ -514,9 +519,15 @@ async fn validate_game_token(
                 return None;
             }
             Err(e) => {
+                // Fail-open: if Redis is unavailable, allow the connection.
+                // The JWT signature, expiry, and purpose have already been validated;
+                // the Redis check is only for single-use token enforcement.
                 tracing::error!("Redis error checking game token: {}", e);
                 crate::observability::metrics::WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc();
-                return None;
+                tracing::warn!(
+                    "Redis unavailable, allowing game token connection for game {}",
+                    game_id
+                );
             }
         }
     }

@@ -279,7 +279,8 @@ function AppContent() {
     const humanPlayer = players.find(p => p.type === 'human');
     if (!humanPlayer) return;
     setPlayingCard(-1);
-    axios.post(`/api/game/${gameId}/advance-bot`, {
+    const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    axios.post(`/api/game/${gameId}/advance-bot${tokenParam}`, {
       player_id: humanPlayer.id,
     })
       .catch(err => {
@@ -295,7 +296,8 @@ function AppContent() {
     const humanPlayer = players.find(p => p.type === 'human');
     if (!humanPlayer) return;
     setPlayingCard(-1);
-    axios.post(`/api/game/${gameId}/evaluate-round`, {
+    const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    axios.post(`/api/game/${gameId}/evaluate-round${tokenParam}`, {
       player_id: humanPlayer.id,
     })
       .catch(err => {
@@ -616,6 +618,7 @@ function AppContent() {
       setLobbyGameId(data.game_id)
     } else {
       setGameStore(data.game_id, data.players, data.status, data.current_turn, data.bet, data.deck_slots || null)
+      setStepByStep(data.step_by_step ?? false)
     }
   }
 

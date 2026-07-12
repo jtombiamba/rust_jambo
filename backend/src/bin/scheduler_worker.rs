@@ -5,7 +5,7 @@ use actix_web::{web, App, HttpServer};
 use anyhow::{Context, Result};
 use prometheus::TextEncoder;
 use sea_orm::DatabaseConnection;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use jambo_backend::cache::UserCache;
 use jambo_backend::config::Config;
@@ -88,6 +88,21 @@ async fn main() -> Result<()> {
     info!("All scheduler tasks started");
 
     tokio::select! {
+        Some(task_result) = tasks.join_next() => {
+            match task_result {
+                Ok(()) => {
+                    warn!("A scheduler task exited unexpectedly");
+                }
+                Err(e) => {
+                    if e.is_panic() {
+                        error!("Scheduler task panicked: {}", e);
+                    } else {
+                        error!("Scheduler task cancelled: {}", e);
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
         _ = tokio::signal::ctrl_c() => {
             info!("Received shutdown signal, draining...");
             let _ = shutdown_tx.send(true);

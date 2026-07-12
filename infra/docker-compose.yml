@@ -320,6 +320,34 @@ services:
       - loki
       - tempo
 
+  alertmanager:
+    build:
+      context: ./alertmanager
+      dockerfile: Dockerfile
+    container_name: jambo-alertmanager
+    expose:
+      - "9093"
+    volumes:
+      - alertmanager_data:/alertmanager
+    environment:
+      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL}
+      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL}
+      SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-#alerts-critical}
+      SLACK_WARNING_CHANNEL: ${SLACK_WARNING_CHANNEL:-#alerts-warning}
+      SMTP_SMARTHOST: ${SMTP_SMARTHOST:-mailhog:1025}
+      SMTP_FROM: ${SMTP_FROM:-alerts@jambo.local}
+      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-false}
+      EMAIL_ONCALL: ${EMAIL_ONCALL:-oncall@jambo.local}
+      EMAIL_TEAM: ${EMAIL_TEAM:-team@jambo.local}
+      RESOLVE_TIMEOUT: ${RESOLVE_TIMEOUT:-5m}
+      ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.route-prefix=/alertmanager"
+      - "--web.external-url=http://localhost:9093/alertmanager"
+    restart: unless-stopped
+
   prometheus:
     build:
       context: ./prometheus
@@ -328,12 +356,15 @@ services:
       - "9090"
     volumes:
       - prometheus_data:/prometheus
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.route-prefix=/prometheus"
       - "--web.external-url=/prometheus"
       - "--web.enable-remote-write-receiver"
+    depends_on:
+      - alertmanager
 
   monitoring-nginx:
     build:
@@ -359,3 +390,4 @@ volumes:
   loki_data:
   tempo_data:
   grafana_data:
+  alertmanager_data:
