@@ -16,11 +16,13 @@ impl PlayerProfileRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn list_all(&self) -> Result<Vec<PlayerProfile>, DbErr> {
         player_profile::Entity::find().all(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_user_id(&self, user_id: Uuid) -> Result<Option<PlayerProfile>, DbErr> {
         player_profile::Entity::find()
             .filter(player_profile::Column::UserId.eq(user_id))
@@ -28,6 +30,7 @@ impl PlayerProfileRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_user_ids(&self, user_ids: &[Uuid]) -> Result<Vec<PlayerProfile>, DbErr> {
         if user_ids.is_empty() {
             return Ok(vec![]);
@@ -38,6 +41,7 @@ impl PlayerProfileRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_stats(
         &self,
         user_id: Uuid,
@@ -58,6 +62,7 @@ impl PlayerProfileRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_credit_and_frozen_until(
         &self,
         user_id: Uuid,

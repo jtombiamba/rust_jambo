@@ -17,6 +17,7 @@ impl GameInviteRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create_invite(
         &self,
         game_id: Uuid,
@@ -42,6 +43,7 @@ impl GameInviteRepository {
             .ok_or_else(|| DbErr::Custom("GameInvite not found after insertion".to_string()))
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_invite(
         &self,
         game_id: Uuid,
@@ -54,6 +56,7 @@ impl GameInviteRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_invite_status(
         &self,
         invite_id: Uuid,
@@ -68,12 +71,14 @@ impl GameInviteRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_id(&self, invite_id: Uuid) -> Result<Option<game_invite::Model>, DbErr> {
         game_invite::Entity::find_by_id(invite_id)
             .one(&self.connection)
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_pending_invites_for_user(
         &self,
         user_id: Uuid,

@@ -7,8 +7,8 @@ use uuid::Uuid;
 
 use crate::api::dto::dashboard::GameFilter;
 use crate::database::models::{
-    game, game_card, game_invite, player, player_profile, user, Game, GameCard, GameStatus,
-    InviteStatus, Player, PlayerProfile, User,
+    game, game_invite, player, player_profile, user, Game, GameStatus, InviteStatus, Player,
+    PlayerProfile, User,
 };
 use crate::database::traits::DashboardRepoTrait;
 
@@ -21,6 +21,7 @@ impl DashboardRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_profile_by_user_id(
         &self,
         user_id: Uuid,
@@ -31,6 +32,7 @@ impl DashboardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_players_for_user(&self, user_id: Uuid) -> Result<Vec<Player>, DbErr> {
         player::Entity::find()
             .filter(player::Column::UserId.eq(user_id))
@@ -39,6 +41,7 @@ impl DashboardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_player_by_game_and_user(
         &self,
         game_id: Uuid,
@@ -51,12 +54,14 @@ impl DashboardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_game_by_id(&self, game_id: Uuid) -> Result<Option<Game>, DbErr> {
         game::Entity::find_by_id(game_id)
             .one(&self.connection)
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_players_by_game_ordered(&self, game_id: Uuid) -> Result<Vec<Player>, DbErr> {
         player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
@@ -65,27 +70,7 @@ impl DashboardRepository {
             .await
     }
 
-    pub async fn find_cards_for_player(
-        &self,
-        player_id: Uuid,
-        unplayed_only: bool,
-    ) -> Result<Vec<GameCard>, DbErr> {
-        let mut query = game_card::Entity::find()
-            .filter(game_card::Column::PlayerId.eq(player_id))
-            .order_by_asc(game_card::Column::CardIndex);
-        if unplayed_only {
-            query = query.filter(game_card::Column::Played.eq(false));
-        }
-        query.all(&self.connection).await
-    }
-
-    pub async fn find_all_cards_for_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
-        game_card::Entity::find()
-            .filter(game_card::Column::GameId.eq(game_id))
-            .all(&self.connection)
-            .await
-    }
-
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_players_for_user_filtered(
         &self,
         user_id: Uuid,
@@ -194,18 +179,6 @@ impl DashboardRepoTrait for DashboardRepository {
         self.list_players_by_game_ordered(game_id).await
     }
 
-    async fn find_cards_for_player(
-        &self,
-        player_id: Uuid,
-        unplayed_only: bool,
-    ) -> Result<Vec<GameCard>, DbErr> {
-        self.find_cards_for_player(player_id, unplayed_only).await
-    }
-
-    async fn find_all_cards_for_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
-        self.find_all_cards_for_game(game_id).await
-    }
-
     async fn list_players_for_user_filtered(
         &self,
         user_id: Uuid,
@@ -217,10 +190,12 @@ impl DashboardRepoTrait for DashboardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, DbErr> {
         user::Entity::find_by_id(id).one(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     async fn find_user_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr> {
         user::Entity::find()
             .filter(user::Column::Pseudo.eq(pseudo))
@@ -228,6 +203,7 @@ impl DashboardRepoTrait for DashboardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     async fn find_users_by_pseudo_prefix(
         &self,
         prefix: &str,
@@ -240,6 +216,7 @@ impl DashboardRepoTrait for DashboardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     async fn list_pending_invites_for_user(
         &self,
         user_id: Uuid,

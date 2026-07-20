@@ -17,8 +17,8 @@ env:
 jobs:
   # ── Backend (Rust) ──────────────────────────────────────────────
 
-  backend:
-    name: Backend tests & lint
+  backend-lint:
+    name: Backend lint & format
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,11 +40,40 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy (lint)
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (lib + bins, no test binaries)
+        run: cargo clippy --lib --bins -- -D warnings
 
-      - name: Run tests
-        run: cargo test
+      - name: Clippy (test code only)
+        run: cargo clippy --tests -- -D warnings
+
+  backend-test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Run lib tests (fast — no test binaries)
+        run: cargo test --lib
+
+      - name: Run doc tests
+        run: cargo test --doc
+
+      - name: Run integration tests (no test binaries)
+        run: cargo test --tests
 
   # ── Frontend (TypeScript) ───────────────────────────────────────
 

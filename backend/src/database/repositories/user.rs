@@ -21,6 +21,7 @@ impl UserRepository {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, DbErr> {
         user::Entity::find()
             .filter(user::Column::Email.eq(email))
@@ -28,10 +29,12 @@ impl UserRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<User>, DbErr> {
         user::Entity::find_by_id(id).one(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_ids(&self, ids: &[Uuid]) -> Result<Vec<User>, DbErr> {
         if ids.is_empty() {
             return Ok(vec![]);
@@ -42,6 +45,7 @@ impl UserRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr> {
         user::Entity::find()
             .filter(user::Column::Pseudo.eq(pseudo))
@@ -49,6 +53,7 @@ impl UserRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_pseudo_prefix(
         &self,
         prefix: &str,
@@ -61,6 +66,7 @@ impl UserRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create_user_with_profile(
         &self,
         pseudo: &str,
@@ -120,6 +126,7 @@ impl UserRepository {
             })
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_password_hash(&self, id: Uuid, hash: &str) -> Result<User, DbErr> {
         let user_model = user::Entity::find_by_id(id)
             .one(&self.connection)
@@ -131,6 +138,7 @@ impl UserRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_last_ip_hash(&self, id: Uuid, hash: &str) -> Result<User, DbErr> {
         let user_model = user::Entity::find_by_id(id)
             .one(&self.connection)
@@ -142,6 +150,7 @@ impl UserRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_language(&self, id: Uuid, language: &str) -> Result<User, DbErr> {
         let user_model = user::Entity::find_by_id(id)
             .one(&self.connection)

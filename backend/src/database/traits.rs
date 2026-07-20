@@ -98,6 +98,7 @@ pub trait GameCardRepoTrait: Send + Sync {
         game_id: Uuid,
         round: i32,
     ) -> Result<Vec<GameCard>, DbErr>;
+    async fn list_by_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr>;
 }
 
 #[async_trait]
@@ -111,12 +112,6 @@ pub trait DashboardRepoTrait: Send + Sync {
     ) -> Result<Option<Player>, DbErr>;
     async fn find_game_by_id(&self, game_id: Uuid) -> Result<Option<Game>, DbErr>;
     async fn list_players_by_game_ordered(&self, game_id: Uuid) -> Result<Vec<Player>, DbErr>;
-    async fn find_cards_for_player(
-        &self,
-        player_id: Uuid,
-        unplayed_only: bool,
-    ) -> Result<Vec<GameCard>, DbErr>;
-    async fn find_all_cards_for_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr>;
     async fn list_players_for_user_filtered(
         &self,
         user_id: Uuid,

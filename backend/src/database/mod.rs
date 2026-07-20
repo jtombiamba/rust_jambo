@@ -2,6 +2,7 @@ use crate::config::Config;
 use migration::{Migrator, MigratorTrait};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr};
 use std::time::Duration;
+use tracing::log::LevelFilter;
 
 pub async fn create_connection(config: &Config) -> Result<DatabaseConnection, DbErr> {
     let mut opt = ConnectOptions::new(&config.database_url);
@@ -11,7 +12,8 @@ pub async fn create_connection(config: &Config) -> Result<DatabaseConnection, Db
         .acquire_timeout(Duration::from_secs(config.db_pool_acquire_timeout_secs))
         .idle_timeout(Duration::from_secs(config.db_pool_idle_timeout_secs))
         .max_lifetime(Duration::from_secs(config.db_pool_max_lifetime_secs))
-        .sqlx_logging(false);
+        .sqlx_logging(true)
+        .sqlx_logging_level(LevelFilter::Debug);
     Database::connect(opt).await
 }
 
@@ -27,7 +29,8 @@ pub async fn create_connection_with_pool_size(
         .acquire_timeout(Duration::from_secs(config.db_pool_acquire_timeout_secs))
         .idle_timeout(Duration::from_secs(config.db_pool_idle_timeout_secs))
         .max_lifetime(Duration::from_secs(config.db_pool_max_lifetime_secs))
-        .sqlx_logging(false);
+        .sqlx_logging(true)
+        .sqlx_logging_level(LevelFilter::Debug);
     Database::connect(opt).await
 }
 

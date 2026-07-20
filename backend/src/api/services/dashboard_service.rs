@@ -15,7 +15,7 @@ use crate::api::dto::responses::{
 };
 use crate::cache::UserCache;
 use crate::database::models::{GameStatus, PlayerType, User};
-use crate::database::traits::DashboardRepoTrait;
+use crate::database::traits::{DashboardRepoTrait, GameCardRepoTrait, GameRepoTrait};
 use crate::error::AppError;
 use crate::game::service::compute_display_position;
 use crate::messaging::RedisClient;
@@ -25,6 +25,8 @@ const GAMES_CACHE_TTL_SECS: u64 = 30;
 
 pub struct DashboardService<R: DashboardRepoTrait> {
     repo: Arc<R>,
+    game_repo: Arc<dyn GameRepoTrait>,
+    card_repo: Arc<dyn GameCardRepoTrait>,
     user_cache: Arc<UserCache>,
     redis_client: Option<RedisClient>,
     default_credit: i32,
@@ -37,9 +39,17 @@ pub struct SendInvitesParams {
 }
 
 impl<R: DashboardRepoTrait> DashboardService<R> {
-    pub fn new(repo: Arc<R>, user_cache: Arc<UserCache>, default_credit: i32) -> Self {
+    pub fn new(
+        repo: Arc<R>,
+        game_repo: Arc<dyn GameRepoTrait>,
+        card_repo: Arc<dyn GameCardRepoTrait>,
+        user_cache: Arc<UserCache>,
+        default_credit: i32,
+    ) -> Self {
         Self {
             repo,
+            game_repo,
+            card_repo,
             user_cache,
             redis_client: None,
             default_credit,
@@ -48,12 +58,16 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
 
     pub fn new_with_redis(
         repo: Arc<R>,
+        game_repo: Arc<dyn GameRepoTrait>,
+        card_repo: Arc<dyn GameCardRepoTrait>,
         user_cache: Arc<UserCache>,
         redis_client: RedisClient,
         default_credit: i32,
     ) -> Self {
         Self {
             repo,
+            game_repo,
+            card_repo,
             user_cache,
             redis_client: Some(redis_client),
             default_credit,
@@ -221,7 +235,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             }
         }
 
-        build_game_state_response(&*self.repo, &game, user_id).await
+        build_game_state_response(&*self.game_repo, &*self.card_repo, &game, user_id).await
     }
 
     pub async fn get_active_game(&self, user_id: Uuid) -> Result<QuickGameResponse, AppError> {
@@ -243,7 +257,13 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 .map_err(AppError::Database)
             {
                 if game.status == GameStatus::Active {
-                    return build_game_state_response(&*self.repo, &game, user_id).await;
+                    return build_game_state_response(
+                        &*self.game_repo,
+                        &*self.card_repo,
+                        &game,
+                        user_id,
+                    )
+                    .await;
                 }
             }
         }
@@ -401,13 +421,13 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
 }
 
 async fn build_game_state_response(
-    repo: &dyn DashboardRepoTrait,
+    game_repo: &dyn GameRepoTrait,
+    card_repo: &dyn GameCardRepoTrait,
     game: &crate::database::models::Game,
     user_id: Uuid,
 ) -> Result<QuickGameResponse, AppError> {
-    // TODO: quite shitty function, why using dashboardRepoTrait instead of just going straight with game_id, and use GameRepository?
-    let all_players = repo
-        .list_players_by_game_ordered(game.id)
+    let all_players = game_repo
+        .list_players(game.id)
         .await
         .map_err(AppError::Database)?;
 
@@ -417,19 +437,19 @@ async fn build_game_state_response(
     let my_position = my_player.map(|p| p.position as usize).unwrap_or(0);
 
     let my_cards: Vec<i32> = if let Some(mp) = my_player {
-        match repo.find_cards_for_player(mp.id, true).await {
-            Ok(cards) => cards.iter().map(|c| c.card_index).collect(),
+        match card_repo.list_by_player(mp.id).await {
+            Ok(cards) => cards
+                .into_iter()
+                .filter(|c| !c.played)
+                .map(|c| c.card_index)
+                .collect(),
             Err(_) => Vec::new(),
         }
     } else {
         Vec::new()
     };
 
-    // TODO: why not going directly with GameCardRepository?
-    let all_game_cards = repo
-        .find_all_cards_for_game(game.id)
-        .await
-        .unwrap_or_default();
+    let all_game_cards = card_repo.list_by_game(game.id).await.unwrap_or_default();
 
     let mut remaining_counts: HashMap<Uuid, usize> = HashMap::new();
     for player in &all_players {
