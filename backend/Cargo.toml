@@ -57,7 +57,7 @@ handlebars = "6"
 clap = { version = "4", features = ["derive"] }
 sysinfo = "0.31"
 reqwest = { version = "0.12", features = ["json", "cookies"] }
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
 http = "1"
 
 [[bin]]
