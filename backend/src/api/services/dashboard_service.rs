@@ -405,6 +405,7 @@ async fn build_game_state_response(
     game: &crate::database::models::Game,
     user_id: Uuid,
 ) -> Result<QuickGameResponse, AppError> {
+    // TODO: quite shitty function, why using dashboardRepoTrait instead of just going straight with game_id, and use GameRepository?
     let all_players = repo
         .list_players_by_game_ordered(game.id)
         .await
@@ -424,6 +425,7 @@ async fn build_game_state_response(
         Vec::new()
     };
 
+    // TODO: why not going directly with GameCardRepository?
     let all_game_cards = repo
         .find_all_cards_for_game(game.id)
         .await
@@ -439,17 +441,31 @@ async fn build_game_state_response(
     }
 
     let current_round = game.roll;
-    let mut deck_slots: Vec<Option<i32>> = vec![None; num_players];
+    let mut played_pairs: Vec<(i32, usize)> = Vec::new();
     for card in &all_game_cards {
         if card.played && card.round == Some(current_round) {
             if let Some(pid) = card.player_id {
                 if let Some(pos) = all_players.iter().position(|p| p.id == pid) {
-                    let display_pos = compute_display_position(pos, num_players, my_position);
-                    deck_slots[display_pos] = Some(card.card_index);
+                    played_pairs.push((card.card_index, pos));
                 }
             }
         }
     }
+
+    let deck_slots: Vec<Option<i32>> = if played_pairs.is_empty() {
+        vec![None; num_players]
+    } else {
+        let winner_pos = game.current_winning_player_position.unwrap_or(0) as usize;
+        played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
+        let mut slots: Vec<Option<i32>> = played_pairs
+            .into_iter()
+            .map(|(card_idx, _)| Some(card_idx))
+            .collect();
+        if slots.len() < 4 {
+            slots.resize(4, None);
+        }
+        slots
+    };
 
     let players_json: Vec<PlayerInfoDto> = all_players
         .iter()

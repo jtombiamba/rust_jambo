@@ -291,6 +291,7 @@ services:
     container_name: jambo-tempo
     volumes:
       - tempo_data:/tmp/tempo
+      - tempo_generator_data:/var/tempo/generator
     command: -config.file=/etc/tempo/tempo-config.yml
     expose:
       - "3200"
@@ -344,8 +345,6 @@ services:
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
-      - "--web.route-prefix=/alertmanager"
-      - "--web.external-url=http://localhost:9093/alertmanager"
     restart: unless-stopped
 
   prometheus:
@@ -389,5 +388,6 @@ volumes:
   prometheus_data:
   loki_data:
   tempo_data:
+  tempo_generator_data:
   grafana_data:
   alertmanager_data:

@@ -332,8 +332,6 @@ services:
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
-      - "--web.route-prefix=/alertmanager"
-      - "--web.external-url=http://localhost:9093/alertmanager"
     volumes:
       - alertmanager_data:/alertmanager
     labels:

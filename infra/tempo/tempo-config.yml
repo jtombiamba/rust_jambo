@@ -33,22 +33,22 @@ storage:
     wal:
       path: /var/tempo/wal
 
-# # Optional: Metrics generator
-# metrics_generator:
-#   registry:
-#     collection_interval: 15s
-#   processor:
-#     service_graphs: {} # Enable service graph metrics
-#     span_metrics:      # Enable RED metrics
-#       enable_target_info: true
-#       histogram_buckets: [0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
-#   storage:
-#     path: /var/tempo/generator/wal
-#     remote_write:
-#       - url: http://prometheus:9090/api/v1/write
-#         send_exemplars: true
+# Metrics generator
+metrics_generator:
+  registry:
+    collection_interval: 15s
+  processor:
+    service_graphs: {} # Enable service graph metrics
+    span_metrics:      # Enable RED metrics
+      enable_target_info: true
+      histogram_buckets: [0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+  storage:
+    path: /var/tempo/generator
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
 
-# overrides:
-#   defaults:
-#     metrics_generator:
-#       processors: [service-graphs, span-metrics]
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]

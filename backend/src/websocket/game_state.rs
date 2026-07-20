@@ -1,12 +1,12 @@
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::database::models::{game, game_card, player, PlayerType};
+use crate::database::models::PlayerType;
+use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::service::compute_display_position;
 
 use super::manager::WebSocketManager;
-use super::messages::{GameStateCard, GameStatePlayer, OutgoingMessage};
+use super::messages::{GameStatePlayer, OutgoingMessage};
 
 pub(super) async fn send_game_state_snapshot(
     manager: &WebSocketManager,
@@ -15,7 +15,11 @@ pub(super) async fn send_game_state_snapshot(
     player_id: Uuid,
     player_position: i32,
 ) {
-    let game_model = match game::Entity::find_by_id(game_id).one(db).await {
+    let game_repo = GameRepository::new(db.clone());
+    let player_repo = PlayerRepository::new(db.clone());
+    let game_card_repo = GameCardRepository::new(db.clone());
+
+    let game_model = match game_repo.find_by_id(game_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
             tracing::warn!("Game {} not found for state snapshot", game_id);
@@ -41,12 +45,7 @@ pub(super) async fn send_game_state_snapshot(
         }
     };
 
-    let players = match player::Entity::find()
-        .filter(player::Column::GameId.eq(game_id))
-        .order_by_asc(player::Column::Position)
-        .all(db)
-        .await
-    {
+    let players = match player_repo.list_by_game(game_id).await {
         Ok(p) => p,
         Err(e) => {
             error!("Failed to fetch players for game {}: {}", game_id, e);
@@ -75,22 +74,31 @@ pub(super) async fn send_game_state_snapshot(
         })
         .collect();
 
-    let played_cards: Vec<GameStateCard> = match game_card::Entity::find()
-        .filter(game_card::Column::GameId.eq(game_id))
-        .filter(game_card::Column::Played.eq(true))
-        .filter(game_card::Column::Round.eq(game_model.roll))
-        .all(db)
+    let played_cards: Vec<Option<i32>> = match game_card_repo
+        .list_by_game_and_round(game_id, game_model.roll)
         .await
     {
-        Ok(cards) => cards
-            .into_iter()
-            .filter_map(|c| {
-                c.player_id.map(|pid| GameStateCard {
-                    player_id: pid,
-                    card_index: c.card_index,
-                })
-            })
-            .collect(),
+        Ok(cards) => {
+            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
+            let winner_pos = game_model.current_winning_player_position.unwrap_or(0) as usize;
+
+            for card in cards {
+                if let Some(pid) = card.player_id {
+                    if let Some(pos) = players.iter().position(|p| p.id == pid) {
+                        played_pairs.push((card.card_index, pos));
+                    }
+                }
+            }
+            played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
+            let mut slots: Vec<Option<i32>> = played_pairs
+                .into_iter()
+                .map(|(card_idx, _)| Some(card_idx))
+                .collect();
+            if slots.len() < 4 {
+                slots.resize(4, None);
+            }
+            slots
+        }
         Err(e) => {
             error!("Failed to fetch played cards for game {}: {}", game_id, e);
             vec![]
@@ -131,7 +139,11 @@ pub(super) async fn send_snapshots_to_all_players(
     db: &sea_orm::DatabaseConnection,
     game_id: Uuid,
 ) {
-    let game_model = match game::Entity::find_by_id(game_id).one(db).await {
+    let game_repo = GameRepository::new(db.clone());
+    let player_repo = PlayerRepository::new(db.clone());
+    let game_card_repo = GameCardRepository::new(db.clone());
+
+    let game_model = match game_repo.find_by_id(game_id).await {
         Ok(Some(g)) => g,
         Ok(None) => {
             tracing::warn!("Game {} not found for state snapshot (broadcast)", game_id);
@@ -147,12 +159,7 @@ pub(super) async fn send_snapshots_to_all_players(
         }
     };
 
-    let players = match player::Entity::find()
-        .filter(player::Column::GameId.eq(game_id))
-        .order_by_asc(player::Column::Position)
-        .all(db)
-        .await
-    {
+    let players = match player_repo.list_by_game(game_id).await {
         Ok(p) => p,
         Err(e) => {
             error!("Failed to fetch players for game {}: {}", game_id, e);
@@ -165,22 +172,31 @@ pub(super) async fn send_snapshots_to_all_players(
     }
 
     let num_players = players.len();
-    let played_cards: Vec<GameStateCard> = match game_card::Entity::find()
-        .filter(game_card::Column::GameId.eq(game_id))
-        .filter(game_card::Column::Played.eq(true))
-        .filter(game_card::Column::Round.eq(game_model.roll))
-        .all(db)
+    let played_cards: Vec<Option<i32>> = match game_card_repo
+        .list_by_game_and_round(game_id, game_model.roll)
         .await
     {
-        Ok(cards) => cards
-            .into_iter()
-            .filter_map(|c| {
-                c.player_id.map(|pid| GameStateCard {
-                    player_id: pid,
-                    card_index: c.card_index,
-                })
-            })
-            .collect(),
+        Ok(cards) => {
+            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
+            let winner_pos = game_model.current_winning_player_position.unwrap_or(0) as usize;
+
+            for card in cards {
+                if let Some(pid) = card.player_id {
+                    if let Some(pos) = players.iter().position(|p| p.id == pid) {
+                        played_pairs.push((card.card_index, pos));
+                    }
+                }
+            }
+            played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
+            let mut slots: Vec<Option<i32>> = played_pairs
+                .into_iter()
+                .map(|(card_idx, _)| Some(card_idx))
+                .collect();
+            if slots.len() < 4 {
+                slots.resize(4, None);
+            }
+            slots
+        }
         Err(e) => {
             error!("Failed to fetch played cards for game {}: {}", game_id, e);
             vec![]

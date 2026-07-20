@@ -153,13 +153,7 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             remainingCards[p.id] = existingRemaining[p.id] ?? p.cards.length;
           });
 
-          const deckSlots: (number | null)[] = new Array(snapshotPlayers.length).fill(null);
-          event.played_cards.forEach((card) => {
-            const player = snapshotPlayers.find((p) => p.id === card.player_id);
-            if (player) {
-              deckSlots[player.display_position] = card.card_index;
-            }
-          });
+          const deckSlots: (number | null)[] = event.played_cards;
 
           let currentTurn = store.currentTurn;
           if (event.rank !== null && event.rank !== undefined) {

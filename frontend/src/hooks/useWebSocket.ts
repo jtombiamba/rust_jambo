@@ -23,7 +23,7 @@ export interface GameStatePlayer {
 }
 
 export interface GameStateCard {
-  player_id: string;
+  player_id: number;
   card_index: number;
 }
 
@@ -37,7 +37,7 @@ export type GameEvent =
   | { type: 'game_ready'; game_id: string }
   | { type: 'cards_dealt'; game_id: string; player_id: string; cards: number[] }
   | { type: 'game_started'; game_id: string; players: GameStartedPlayer[]; current_turn: string }
-  | { type: 'game_state_snapshot'; game_id: string; roll: number; rank: number | null; status: string; current_winning_card: number | null; current_winning_player_position: number | null; players: GameStatePlayer[]; played_cards: GameStateCard[]; step_by_step?: boolean }
+  | { type: 'game_state_snapshot'; game_id: string; roll: number; rank: number | null; status: string; current_winning_card: number | null; current_winning_player_position: number | null; players: GameStatePlayer[]; played_cards: number[]; step_by_step?: boolean }
   | { type: 'player_disconnected'; game_id: string; player_id: string; player_position: number; disconnected_at?: string }
   | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string }
   | { type: 'staleness_warning'; game_id: string; player_id: string; player_name: string; kicked_after_seconds: number }
