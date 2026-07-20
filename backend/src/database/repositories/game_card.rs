@@ -16,6 +16,7 @@ impl GameCardRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(
         &self,
         game_id: Uuid,
@@ -47,6 +48,7 @@ impl GameCardRepository {
         Ok(card)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn bulk_insert(&self, cards: Vec<(Uuid, Option<Uuid>, i32)>) -> Result<(), DbErr> {
         let now = chrono::Utc::now();
@@ -71,6 +73,7 @@ impl GameCardRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_player(&self, player_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
         game_card::Entity::find()
             .filter(game_card::Column::PlayerId.eq(player_id))
@@ -79,6 +82,7 @@ impl GameCardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_game_and_round(
         &self,
         game_id: Uuid,
@@ -93,6 +97,15 @@ impl GameCardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn list_by_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::GameId.eq(game_id))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn list_by_player_and_round(
         &self,
@@ -135,5 +148,9 @@ impl GameCardRepoTrait for GameCardRepository {
         round: i32,
     ) -> Result<Vec<GameCard>, DbErr> {
         self.list_by_game_and_round(game_id, round).await
+    }
+
+    async fn list_by_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
+        self.list_by_game(game_id).await
     }
 }

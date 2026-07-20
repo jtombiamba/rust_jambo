@@ -12,7 +12,10 @@ use crate::auth::config::AuthConfig;
 use crate::auth::middleware::AuthMiddleware;
 use crate::cache::UserCache;
 use crate::config::Config;
-use crate::database::repositories::{DashboardRepository, UserRepository};
+use crate::database::repositories::{
+    DashboardRepository, GameCardRepository, GameRepository, UserRepository,
+};
+use crate::database::traits::{GameCardRepoTrait, GameRepoTrait};
 use crate::game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
 use crate::i18n::Translator;
 use crate::mailer::{self, Mailer, MailerConfig};
@@ -104,6 +107,9 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         config.default_credit,
     ));
     let dashboard_repo = Arc::new(DashboardRepository::new(db_connection.clone()));
+    let game_repo: Arc<dyn GameRepoTrait> = Arc::new(GameRepository::new(db_connection.clone()));
+    let card_repo: Arc<dyn GameCardRepoTrait> =
+        Arc::new(GameCardRepository::new(db_connection.clone()));
     let translator = Arc::new(Translator::new());
     let auth_service: Arc<AuthServiceType> =
         Arc::new(crate::api::services::auth_service::AuthService::new(
@@ -121,6 +127,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         Some(rc) => Arc::new(
             crate::api::services::dashboard_service::DashboardService::new_with_redis(
                 dashboard_repo,
+                game_repo,
+                card_repo,
                 user_cache.clone(),
                 rc,
                 config.default_credit,
@@ -129,6 +137,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         None => Arc::new(
             crate::api::services::dashboard_service::DashboardService::new(
                 dashboard_repo,
+                game_repo,
+                card_repo,
                 user_cache.clone(),
                 config.default_credit,
             ),

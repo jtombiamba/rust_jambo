@@ -18,6 +18,7 @@ impl GameRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(&self, bet: i32, auto: bool, step_by_step: bool) -> Result<Game, DbErr> {
         let id = Uuid::now_v7();
         let now = chrono::Utc::now();
@@ -56,6 +57,7 @@ impl GameRepository {
         Ok(game)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn create_with_mode(
         &self,
@@ -100,6 +102,7 @@ impl GameRepository {
         Ok(game)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn create_with_mode_and_creator(
         &self,
@@ -145,10 +148,12 @@ impl GameRepository {
         Ok(game)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
         game::Entity::find_by_id(id).one(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_rank(&self, id: Uuid, rank: Option<i32>) -> Result<Game, DbErr> {
         let mut active: game::ActiveModel = game::Entity::find_by_id(id)
             .one(&self.connection)
@@ -160,6 +165,7 @@ impl GameRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_status(&self, id: Uuid, status: GameStatus) -> Result<Game, DbErr> {
         let mut active: game::ActiveModel = game::Entity::find_by_id(id)
             .one(&self.connection)
@@ -171,6 +177,7 @@ impl GameRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn update_winner(&self, id: Uuid, winner_id: Option<Uuid>) -> Result<Game, DbErr> {
         let mut active: game::ActiveModel = game::Entity::find_by_id(id)
@@ -183,6 +190,7 @@ impl GameRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn update_player_positions(
         &self,
@@ -205,6 +213,7 @@ impl GameRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn list_players(&self, game_id: Uuid) -> Result<Vec<Player>, DbErr> {
         player::Entity::find()

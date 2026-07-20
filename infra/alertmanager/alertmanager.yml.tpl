@@ -8,6 +8,8 @@ global:
   resolve_timeout: ${RESOLVE_TIMEOUT}
   smtp_smarthost: '${SMTP_SMARTHOST}'
   smtp_from: '${SMTP_FROM}'
+  smtp_auth_username: '${SMTP_USERNAME}'     # SMTP authentication username
+  smtp_auth_password: '${SMTP_PASSWORD}' # SMTP authentication password
   smtp_require_tls: ${SMTP_REQUIRE_TLS}
 
 route:

@@ -1,0 +1,48 @@
+# Dependabot configuration
+# See docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # ── Rust (Cargo) backend dependencies ──────────────────────────────
+  - package-ecosystem: cargo
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    target-branch: main
+    labels:
+      - dependencies
+      - rust
+    open-pull-requests-limit: 10
+    versioning-strategy: auto
+
+  # ── npm frontend dependencies ──────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    target-branch: main
+    labels:
+      - dependencies
+      - javascript
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+
+  # ── GitHub Actions workflows ───────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Europe/Paris
+    target-branch: main
+    labels:
+      - dependencies
+      - github-actions
+    open-pull-requests-limit: 10

@@ -373,3 +373,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs:
+      - build-push-backend
+      - build-push-frontend       # only runs if build-push-backend and build-push-frontend succeeds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify deployment
+        run: |
+          curl -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "X-Coolify-Token: ${{ secrets.COOLIFY_WEBHOOK_SECRET }}" \
+            -d '{}'

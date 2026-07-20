@@ -1,15 +1,70 @@
 use super::*;
 use crate::api::dto::dashboard::GameFilter;
-use crate::database::models::{Game, GameCard, Player, PlayerProfile};
+use crate::database::models::{Game, GameCard, GameStatus, Player, PlayerProfile};
+use crate::database::traits::{GameCardRepoTrait, GameRepoTrait};
 use async_trait::async_trait;
 use sea_orm::DbErr;
 use std::sync::Mutex;
+
+struct MockGameRepo;
+
+#[async_trait]
+impl GameRepoTrait for MockGameRepo {
+    async fn create(&self, _bet: i32, _auto: bool, _step_by_step: bool) -> Result<Game, DbErr> {
+        unimplemented!()
+    }
+    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Game>, DbErr> {
+        Ok(None)
+    }
+    async fn update_rank(&self, _id: Uuid, _rank: Option<i32>) -> Result<Game, DbErr> {
+        unimplemented!()
+    }
+    async fn update_status(&self, _id: Uuid, _status: GameStatus) -> Result<Game, DbErr> {
+        unimplemented!()
+    }
+    async fn update_winner(&self, _id: Uuid, _winner_id: Option<Uuid>) -> Result<Game, DbErr> {
+        unimplemented!()
+    }
+    async fn list_players(&self, _game_id: Uuid) -> Result<Vec<Player>, DbErr> {
+        Ok(vec![])
+    }
+}
+
+struct MockCardRepo;
+
+#[async_trait]
+impl GameCardRepoTrait for MockCardRepo {
+    async fn create(
+        &self,
+        _game_id: Uuid,
+        _player_id: Option<Uuid>,
+        _card_index: i32,
+        _round: Option<i32>,
+    ) -> Result<GameCard, DbErr> {
+        unimplemented!()
+    }
+    async fn bulk_insert(&self, _cards: Vec<(Uuid, Option<Uuid>, i32)>) -> Result<(), DbErr> {
+        Ok(())
+    }
+    async fn list_by_player(&self, _player_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
+        Ok(vec![])
+    }
+    async fn list_by_game_and_round(
+        &self,
+        _game_id: Uuid,
+        _round: i32,
+    ) -> Result<Vec<GameCard>, DbErr> {
+        Ok(vec![])
+    }
+    async fn list_by_game(&self, _game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
+        Ok(vec![])
+    }
+}
 
 struct MockDashboardRepo {
     profile: Mutex<Option<PlayerProfile>>,
     players: Mutex<Vec<Player>>,
     games: Mutex<HashMap<Uuid, Game>>,
-    cards: Mutex<Vec<GameCard>>,
 }
 
 impl MockDashboardRepo {
@@ -18,7 +73,6 @@ impl MockDashboardRepo {
             profile: Mutex::new(None),
             players: Mutex::new(Vec::new()),
             games: Mutex::new(HashMap::new()),
-            cards: Mutex::new(Vec::new()),
         }
     }
 }
@@ -61,32 +115,6 @@ impl DashboardRepoTrait for MockDashboardRepo {
             .unwrap()
             .iter()
             .filter(|p| p.game_id == game_id)
-            .cloned()
-            .collect())
-    }
-
-    async fn find_cards_for_player(
-        &self,
-        player_id: Uuid,
-        _unplayed_only: bool,
-    ) -> Result<Vec<GameCard>, DbErr> {
-        Ok(self
-            .cards
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|c| c.player_id == Some(player_id))
-            .cloned()
-            .collect())
-    }
-
-    async fn find_all_cards_for_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
-        Ok(self
-            .cards
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|c| c.game_id == game_id)
             .cloned()
             .collect())
     }
@@ -142,7 +170,9 @@ impl DashboardRepoTrait for MockDashboardRepo {
 
 fn make_service(repo: Arc<MockDashboardRepo>) -> DashboardService<MockDashboardRepo> {
     let cache = Arc::new(UserCache::new());
-    DashboardService::new(repo, cache, 500)
+    let game_repo = Arc::new(MockGameRepo);
+    let card_repo = Arc::new(MockCardRepo);
+    DashboardService::new(repo, game_repo, card_repo, cache, 500)
 }
 
 #[tokio::test]

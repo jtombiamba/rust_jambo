@@ -6,15 +6,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY templates ./templates
 COPY migration ./migration
-# Build all binaries
+# Build only service binaries (test binaries are feature-gated behind "load-tests")
 RUN cargo build --release \
-# RUN cargo build --profile fast-release \
     --bin jambo-backend \
     --bin ai-worker \
-    --bin scheduler-worker \
-    --bin load-test \
-    --bin http-load-test \
-    --bin ws-load-test
+    --bin scheduler-worker
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -27,9 +23,6 @@ WORKDIR /app
 COPY --from=builder /usr/src/app/target/release/jambo-backend /usr/local/bin/jambo-backend
 COPY --from=builder /usr/src/app/target/release/ai-worker /usr/local/bin/ai-worker
 COPY --from=builder /usr/src/app/target/release/scheduler-worker /usr/local/bin/scheduler-worker
-COPY --from=builder /usr/src/app/target/release/load-test /usr/local/bin/load-test
-COPY --from=builder /usr/src/app/target/release/http-load-test /usr/local/bin/http-load-test
-COPY --from=builder /usr/src/app/target/release/ws-load-test /usr/local/bin/ws-load-test
 COPY --from=builder --chown=jambo:jambo /usr/src/app/migration ./migration
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

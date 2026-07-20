@@ -9,6 +9,11 @@ repository = ""
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+# Enable this feature to build load-test binaries (not needed for normal dev/CI)
+load-tests = []
+
 [dependencies]
 actix-web = "4.6"
 actix-cors = "0.7"
@@ -16,7 +21,7 @@ actix-http = "3"
 actix-ws = "0.3"
 actix-rt = "2.9"
 migration = { path = "migration" }
-sea-orm = { version = "2.0.0-rc", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "debug-print"] }
+sea-orm = { version = "2.0.0-rc", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "tracing-spans"] }
 lapin = { version = "4.0", features = ["tokio"] }
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -66,14 +71,17 @@ path = "src/bin/scheduler_worker.rs"
 [[bin]]
 name = "load-test"
 path = "src/bin/load_test.rs"
+required-features = ["load-tests"]
 
 [[bin]]
 name = "http-load-test"
 path = "src/bin/http_load_test.rs"
+required-features = ["load-tests"]
 
 [[bin]]
 name = "ws-load-test"
 path = "src/bin/ws_load_test.rs"
+required-features = ["load-tests"]
 
 [dev-dependencies]
 actix-rt = "2.9"

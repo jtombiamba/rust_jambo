@@ -34,7 +34,7 @@ pub enum OutgoingMessage {
         current_winning_card: Option<i32>,
         current_winning_player_position: Option<i32>,
         players: Vec<GameStatePlayer>,
-        played_cards: Vec<GameStateCard>,
+        played_cards: Vec<Option<i32>>, //Vec<GameStateCard>,
         step_by_step: bool,
     },
     /// Error response.
@@ -52,11 +52,12 @@ pub struct GameStatePlayer {
     pub player_type: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct GameStateCard {
-    pub player_id: Uuid,
-    pub card_index: i32,
-}
+// #[warn(dead_code)]
+// #[derive(Debug, Clone, Serialize)]
+// pub struct GameStateCard {
+//     pub player_id: i32,
+//     pub card_index: i32,
+// }
 
 #[cfg(test)]
 mod tests {

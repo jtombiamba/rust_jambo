@@ -19,6 +19,7 @@ impl RoomRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(
         &self,
         creator_id: Uuid,
@@ -42,10 +43,12 @@ impl RoomRepository {
         Ok(room)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Room>, sea_orm::DbErr> {
         room::Entity::find_by_id(id).one(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_invitation_code(
         &self,
         code: &str,
@@ -56,6 +59,7 @@ impl RoomRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_user(&self, user_id: Uuid) -> Result<Vec<Room>, sea_orm::DbErr> {
         let member_room_ids: Vec<Uuid> = room_member::Entity::find()
             .filter(room_member::Column::UserId.eq(user_id))
@@ -75,6 +79,7 @@ impl RoomRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_creator(
         &self,
         id: Uuid,
@@ -90,6 +95,7 @@ impl RoomRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn delete(&self, id: Uuid) -> Result<(), sea_orm::DbErr> {
         room::Entity::delete_by_id(id)
             .exec(&self.connection)
@@ -107,6 +113,7 @@ impl RoomMemberRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(&self, room_id: Uuid, user_id: Uuid) -> Result<RoomMember, sea_orm::DbErr> {
         let now = chrono::Utc::now();
         let active = room_member::ActiveModel {
@@ -125,6 +132,7 @@ impl RoomMemberRepository {
         Ok(member)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_membership(
         &self,
         room_id: Uuid,
@@ -137,6 +145,7 @@ impl RoomMemberRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_room(&self, room_id: Uuid) -> Result<Vec<RoomMember>, sea_orm::DbErr> {
         room_member::Entity::find()
             .filter(room_member::Column::RoomId.eq(room_id))
@@ -144,6 +153,7 @@ impl RoomMemberRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn count_by_room(&self, room_id: Uuid) -> Result<usize, sea_orm::DbErr> {
         room_member::Entity::find()
             .filter(room_member::Column::RoomId.eq(room_id))
@@ -152,6 +162,7 @@ impl RoomMemberRepository {
             .map(|c| c as usize)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn count_by_rooms(
         &self,
         room_ids: &[Uuid],
@@ -173,6 +184,7 @@ impl RoomMemberRepository {
         Ok(map)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn remove(&self, room_id: Uuid, user_id: Uuid) -> Result<(), sea_orm::DbErr> {
         room_member::Entity::delete_many()
             .filter(room_member::Column::RoomId.eq(room_id))
@@ -193,6 +205,7 @@ impl GameRunRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(
         &self,
         room_id: Uuid,
@@ -226,10 +239,12 @@ impl GameRunRepository {
         Ok(run)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<GameRun>, sea_orm::DbErr> {
         game_run::Entity::find_by_id(id).one(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_active_by_room(
         &self,
         room_id: Uuid,
@@ -241,6 +256,7 @@ impl GameRunRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_room(&self, room_id: Uuid) -> Result<Vec<GameRun>, sea_orm::DbErr> {
         game_run::Entity::find()
             .filter(game_run::Column::RoomId.eq(room_id))
@@ -248,6 +264,7 @@ impl GameRunRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_status(&self, id: Uuid, status: &str) -> Result<(), sea_orm::DbErr> {
         let model = game_run::Entity::find_by_id(id)
             .one(&self.connection)
@@ -261,6 +278,7 @@ impl GameRunRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_game_index(&self, id: Uuid, index: i32) -> Result<(), sea_orm::DbErr> {
         let model = game_run::Entity::find_by_id(id)
             .one(&self.connection)
@@ -274,6 +292,7 @@ impl GameRunRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn set_auto_start(
         &self,
         id: Uuid,
@@ -302,6 +321,7 @@ impl GameRunPlayerRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(
         &self,
         run_id: Uuid,
@@ -331,6 +351,7 @@ impl GameRunPlayerRepository {
         Ok(player)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<GameRunPlayer>, sea_orm::DbErr> {
         game_run_player::Entity::find()
             .filter(game_run_player::Column::GameRunId.eq(run_id))
@@ -339,6 +360,7 @@ impl GameRunPlayerRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_all_by_run(
         &self,
         run_id: Uuid,
@@ -349,6 +371,7 @@ impl GameRunPlayerRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_run_and_user(
         &self,
         run_id: Uuid,
@@ -361,6 +384,7 @@ impl GameRunPlayerRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn deduct_provisioned(&self, id: Uuid, amount: i32) -> Result<i32, sea_orm::DbErr> {
         let model = game_run_player::Entity::find_by_id(id)
             .one(&self.connection)
@@ -378,6 +402,7 @@ impl GameRunPlayerRepository {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn mark_kicked(&self, run_id: Uuid, user_id: Uuid) -> Result<(), sea_orm::DbErr> {
         let model = game_run_player::Entity::find()
             .filter(game_run_player::Column::GameRunId.eq(run_id))
@@ -392,6 +417,7 @@ impl GameRunPlayerRepository {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn remove(&self, run_id: Uuid, user_id: Uuid) -> Result<(), sea_orm::DbErr> {
         game_run_player::Entity::delete_many()
             .filter(game_run_player::Column::GameRunId.eq(run_id))
@@ -412,6 +438,7 @@ impl GameRunGameRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(
         &self,
         run_id: Uuid,
@@ -439,6 +466,7 @@ impl GameRunGameRepository {
         Ok(rungame)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn find_by_run_and_index(
         &self,
         run_id: Uuid,
@@ -451,6 +479,7 @@ impl GameRunGameRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<GameRunGame>, sea_orm::DbErr> {
         game_run_game::Entity::find()
             .filter(game_run_game::Column::GameRunId.eq(run_id))
@@ -458,6 +487,7 @@ impl GameRunGameRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_status(
         &self,
         run_game_id: Uuid,
@@ -484,6 +514,7 @@ impl GameRunEventRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn log(
         &self,
         run_id: Uuid,

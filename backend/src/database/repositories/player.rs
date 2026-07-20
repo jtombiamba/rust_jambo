@@ -17,6 +17,7 @@ impl PlayerRepository {
         Self { connection }
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create(
         &self,
         game_id: Uuid,
@@ -50,6 +51,7 @@ impl PlayerRepository {
         Ok(player)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_game(&self, game_id: Uuid) -> Result<Vec<Player>, DbErr> {
         player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
@@ -58,6 +60,7 @@ impl PlayerRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_credits(&self, player_id: Uuid, credits: i32) -> Result<Player, DbErr> {
         let model = player::Entity::find_by_id(player_id)
             .one(&self.connection)
@@ -68,6 +71,7 @@ impl PlayerRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn create_with_user(
         &self,
         game_id: Uuid,
@@ -102,6 +106,7 @@ impl PlayerRepository {
         Ok(player)
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn find_by_game_and_user(
         &self,
