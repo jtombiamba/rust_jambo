@@ -11,7 +11,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d jambo"]
-      interval: 5s
+      interval: 30s
       timeout: 5s
       retries: 5
     # networks:
@@ -24,7 +24,7 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 5s
+      interval: 30s
       timeout: 5s
       retries: 5
     # networks:
@@ -36,7 +36,7 @@ services:
     command: redis-server --maxmemory 256mb --maxmemory-policy volatile-lru --save "" --appendonly no
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 30s
       timeout: 5s
       retries: 5
     # networks:
@@ -191,7 +191,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
-      interval: 10s
+      interval: 15s
       timeout: 5s
       retries: 3
     labels:
