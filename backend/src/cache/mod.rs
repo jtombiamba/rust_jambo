@@ -3,6 +3,7 @@ use tracing::error;
 use uuid::Uuid;
 
 use crate::messaging::RedisClient;
+use crate::observability::metrics::{record_cache_hit, record_cache_miss};
 
 pub mod leaderboard;
 
@@ -38,9 +39,17 @@ impl UserCache {
             .unwrap_or_else(|e| {
                 error!("Redis get_by_pseudo error: {}", e);
                 None
-            })?;
-        let uuid = Uuid::parse_str(&uuid_str).ok()?;
-        self.get_by_uuid(&uuid).await
+            });
+        match uuid_str {
+            Some(val) => {
+                let uuid = Uuid::parse_str(&val).ok()?;
+                self.get_by_uuid(&uuid).await
+            }
+            None => {
+                record_cache_miss();
+                None
+            }
+        }
     }
 
     pub async fn get_uuid_by_pseudo(&self, pseudo: &str) -> Option<Uuid> {
@@ -51,8 +60,22 @@ impl UserCache {
             .unwrap_or_else(|e| {
                 error!("Redis get_uuid_by_pseudo error: {}", e);
                 None
-            })?;
-        Uuid::parse_str(&uuid_str).ok()
+            });
+        match uuid_str {
+            Some(val) => {
+                let uuid = Uuid::parse_str(&val).ok();
+                if uuid.is_some() {
+                    record_cache_hit();
+                } else {
+                    record_cache_miss();
+                }
+                uuid
+            }
+            None => {
+                record_cache_miss();
+                None
+            }
+        }
     }
 
     pub async fn get_by_uuid(&self, uuid: &Uuid) -> Option<CachedUser> {
@@ -63,8 +86,22 @@ impl UserCache {
             .unwrap_or_else(|e| {
                 error!("Redis get_by_uuid error: {}", e);
                 None
-            })?;
-        serde_json::from_str(&data).ok()
+            });
+        match data {
+            Some(raw) => {
+                let user: Option<CachedUser> = serde_json::from_str(&raw).ok();
+                if user.is_some() {
+                    record_cache_hit();
+                } else {
+                    record_cache_miss();
+                }
+                user
+            }
+            None => {
+                record_cache_miss();
+                None
+            }
+        }
     }
 
     pub async fn get_by_uuids(&self, uuids: &[Uuid]) -> Vec<Option<CachedUser>> {
@@ -80,10 +117,18 @@ impl UserCache {
                 return vec![None; uuids.len()];
             }
         };
-        values
+        let results: Vec<Option<CachedUser>> = values
             .into_iter()
             .map(|opt| opt.and_then(|data| serde_json::from_str(&data).ok()))
-            .collect()
+            .collect();
+        for r in &results {
+            if r.is_some() {
+                record_cache_hit();
+            } else {
+                record_cache_miss();
+            }
+        }
+        results
     }
 
     pub async fn put(&self, uuid: Uuid, pseudo: String, email: String) {

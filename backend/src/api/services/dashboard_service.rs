@@ -19,6 +19,7 @@ use crate::database::traits::{DashboardRepoTrait, GameCardRepoTrait, GameRepoTra
 use crate::error::AppError;
 use crate::game::service::compute_display_position;
 use crate::messaging::RedisClient;
+use crate::observability::metrics::{record_cache_hit, record_cache_miss};
 
 const PROFILE_CACHE_TTL_SECS: u64 = 5 * 60;
 const GAMES_CACHE_TTL_SECS: u64 = 30;
@@ -190,8 +191,23 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
         let data = redis.get(key).await.unwrap_or_else(|e| {
             error!("Dashboard cache get error: {}", e);
             None
-        })?;
-        serde_json::from_str(&data).ok()
+        });
+        match data {
+            Some(raw) => {
+                let deserialized: Option<T> = serde_json::from_str(&raw).ok();
+                if deserialized.is_some() {
+                    record_cache_hit();
+                    deserialized
+                } else {
+                    record_cache_miss();
+                    None
+                }
+            }
+            None => {
+                record_cache_miss();
+                None
+            }
+        }
     }
 
     async fn set_cached<T: serde::Serialize>(&self, key: &str, value: &T, ttl: u64) {

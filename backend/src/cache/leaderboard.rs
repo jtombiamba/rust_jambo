@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::cache::UserCache;
 use crate::database::models::PlayerProfile;
 use crate::messaging::RedisClient;
+use crate::observability::metrics::{record_cache_hit, record_cache_miss};
 
 const LEADERBOARD_WINS_KEY: &str = "leaderboard:wins";
 const LEADERBOARD_STREAK_KEY: &str = "leaderboard:streak";
@@ -70,9 +71,17 @@ pub async fn get_leaderboard(
 ) -> Option<LeaderboardResponse> {
     let wins_raw: Vec<(String, f64)> =
         match redis.zrevrange_withscores(LEADERBOARD_WINS_KEY, 0, 9).await {
-            Ok(data) => data,
+            Ok(data) => {
+                if data.is_empty() {
+                    record_cache_miss();
+                } else {
+                    record_cache_hit();
+                }
+                data
+            }
             Err(e) => {
                 error!("Failed to ZREVRANGE wins: {}", e);
+                record_cache_miss();
                 return None;
             }
         };
@@ -81,9 +90,17 @@ pub async fn get_leaderboard(
         .zrevrange_withscores(LEADERBOARD_STREAK_KEY, 0, 9)
         .await
     {
-        Ok(data) => data,
+        Ok(data) => {
+            if data.is_empty() {
+                record_cache_miss();
+            } else {
+                record_cache_hit();
+            }
+            data
+        }
         Err(e) => {
             error!("Failed to ZREVRANGE streak: {}", e);
+            record_cache_miss();
             return None;
         }
     };
@@ -92,10 +109,17 @@ pub async fn get_leaderboard(
         .zrevrank(LEADERBOARD_WINS_KEY, current_user_id.to_string())
         .await
     {
-        Ok(Some(rank)) => Some(rank + 1),
-        Ok(None) => None,
+        Ok(Some(rank)) => {
+            record_cache_hit();
+            Some(rank + 1)
+        }
+        Ok(None) => {
+            record_cache_miss();
+            None
+        }
         Err(e) => {
             error!("Failed to ZREVRANK wins: {}", e);
+            record_cache_miss();
             None
         }
     };
@@ -104,10 +128,17 @@ pub async fn get_leaderboard(
         .zrevrank(LEADERBOARD_STREAK_KEY, current_user_id.to_string())
         .await
     {
-        Ok(Some(rank)) => Some(rank + 1),
-        Ok(None) => None,
+        Ok(Some(rank)) => {
+            record_cache_hit();
+            Some(rank + 1)
+        }
+        Ok(None) => {
+            record_cache_miss();
+            None
+        }
         Err(e) => {
             error!("Failed to ZREVRANK streak: {}", e);
+            record_cache_miss();
             None
         }
     };

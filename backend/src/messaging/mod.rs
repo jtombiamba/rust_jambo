@@ -537,12 +537,16 @@ impl RabbitMQClient {
         } else {
             FieldTable::default()
         };
-
+        let declare_options = QueueDeclareOptions {
+            passive: true,
+            ..Default::default()
+        };
         let queue_info = channel
-            .queue_declare(queue_name, QueueDeclareOptions::default(), queue_args)
+            .queue_declare(queue_name, declare_options, queue_args)
             .await?;
         info!("queue retrieved: {}", queue);
         let count = queue_info.message_count();
+        info!("queue count size: {}", count);
         metrics::RABBITMQ_QUEUE_LENGTH.set(count as f64);
 
         Ok(count)

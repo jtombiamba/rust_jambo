@@ -270,6 +270,18 @@ pub static REDIS_PUBLISH_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
     .unwrap()
 });
 
+pub static REDIS_CACHE_HITS_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!("redis_cache_hits_total", "Total number of Redis cache hits").unwrap()
+});
+
+pub static REDIS_CACHE_MISSES_TOTAL: Lazy<Counter> = Lazy::new(|| {
+    register_counter!(
+        "redis_cache_misses_total",
+        "Total number of Redis cache misses"
+    )
+    .unwrap()
+});
+
 pub static REDIS_CACHE_HIT_RATIO: Lazy<Gauge> = Lazy::new(|| {
     register_gauge!(
         "redis_cache_hit_ratio",
@@ -277,6 +289,28 @@ pub static REDIS_CACHE_HIT_RATIO: Lazy<Gauge> = Lazy::new(|| {
     )
     .unwrap()
 });
+
+/// Call this on every cache hit to update the hit ratio gauge.
+pub fn record_cache_hit() {
+    REDIS_CACHE_HITS_TOTAL.inc();
+    let hits = REDIS_CACHE_HITS_TOTAL.get();
+    let misses = REDIS_CACHE_MISSES_TOTAL.get();
+    let total = hits + misses;
+    if total > 0.0 {
+        REDIS_CACHE_HIT_RATIO.set(hits / total);
+    }
+}
+
+/// Call this on every cache miss to update the hit ratio gauge.
+pub fn record_cache_miss() {
+    REDIS_CACHE_MISSES_TOTAL.inc();
+    let hits = REDIS_CACHE_HITS_TOTAL.get();
+    let misses = REDIS_CACHE_MISSES_TOTAL.get();
+    let total = hits + misses;
+    if total > 0.0 {
+        REDIS_CACHE_HIT_RATIO.set(hits / total);
+    }
+}
 
 pub static BOT_MOVE_DURATION_SECONDS: Lazy<HistogramVec> = Lazy::new(|| {
     register_histogram_vec!(
@@ -526,6 +560,8 @@ pub fn init_all() {
     DB_QUERY_DURATION_SECONDS.with_label_values(&["generic"]);
     DB_TRANSACTION_DURATION_SECONDS.with_label_values(&["generic"]);
     REDIS_PUBLISH_DURATION_SECONDS.with_label_values(&[]);
+    REDIS_CACHE_HITS_TOTAL.inc_by(0.0);
+    REDIS_CACHE_MISSES_TOTAL.inc_by(0.0);
     REDIS_CACHE_HIT_RATIO.set(0.0);
     BOT_MOVE_DURATION_SECONDS.with_label_values(&["sync_chain"]);
     BOT_MOVE_DURATION_SECONDS.with_label_values(&["ai_task"]);
