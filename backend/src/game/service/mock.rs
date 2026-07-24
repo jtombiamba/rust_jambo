@@ -4,12 +4,15 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::error::GameError;
+use crate::game::service::types::{
+    AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
+    EvaluateRoundOutcome, GameServiceTrait, MultiplayerCreationOutcome, PlayCardOutcome,
+    QuickGameOutcome,
+};
 use crate::observability::CorrelationId;
 
-use super::*;
-
 #[allow(dead_code)]
-pub struct MockGameOrchestrator {
+pub struct MockGameService {
     play_card_result: Mutex<Option<Result<PlayCardOutcome, GameError>>>,
     create_quick_game_result: Mutex<Option<Result<QuickGameOutcome, GameError>>>,
     create_multiplayer_game_result: Mutex<Option<Result<MultiplayerCreationOutcome, GameError>>>,
@@ -21,7 +24,7 @@ pub struct MockGameOrchestrator {
     cleanup_benchmark_result: Mutex<Option<Result<BenchmarkCleanupCounts, GameError>>>,
 }
 
-impl MockGameOrchestrator {
+impl MockGameService {
     pub fn new(
         play_card_result: Result<PlayCardOutcome, GameError>,
         create_quick_game_result: Result<QuickGameOutcome, GameError>,
@@ -68,7 +71,7 @@ impl MockGameOrchestrator {
 }
 
 #[async_trait]
-impl GameOrchestratorTrait for MockGameOrchestrator {
+impl GameServiceTrait for MockGameService {
     async fn play_card(
         &self,
         _game_id: Uuid,
@@ -81,7 +84,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator play_card called more than once")
+            .expect("mock play_card called more than once")
     }
 
     async fn create_quick_game(
@@ -93,7 +96,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator create_quick_game called more than once")
+            .expect("mock create_quick_game called more than once")
     }
 
     async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
@@ -101,20 +104,20 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator create_bot_only_game called more than once")
+            .expect("mock create_bot_only_game called more than once")
     }
 
-    async fn create_quick_game_for_user(
-        &self,
-        _user_id: Uuid,
-        _db: &DatabaseConnection,
-    ) -> Result<QuickGameOutcome, GameError> {
-        self.create_quick_game_result
-            .lock()
-            .unwrap()
-            .take()
-            .expect("mock orchestrator create_quick_game_for_user called more than once")
-    }
+    // async fn create_quick_game_for_user(
+    //     &self,
+    //     _user_id: Uuid,
+    //     _db: &DatabaseConnection,
+    // ) -> Result<QuickGameOutcome, GameError> {
+    //     self.create_quick_game_result
+    //         .lock()
+    //         .unwrap()
+    //         .take()
+    //         .expect("mock create_quick_game_for_user called more than once")
+    // }
 
     async fn create_quick_game_for_user_with_step_by_step(
         &self,
@@ -122,9 +125,11 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
         _db: &DatabaseConnection,
         _step_by_step: bool,
     ) -> Result<QuickGameOutcome, GameError> {
-        self.create_quick_game_result.lock().unwrap().take().expect(
-            "mock orchestrator create_quick_game_for_user_with_step_by_step called more than once",
-        )
+        self.create_quick_game_result
+            .lock()
+            .unwrap()
+            .take()
+            .expect("mock create_quick_game_for_user_with_step_by_step called more than once")
     }
 
     async fn create_multiplayer_game(
@@ -138,7 +143,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator create_multiplayer_game called more than once")
+            .expect("mock create_multiplayer_game called more than once")
     }
 
     async fn create_benchmark_multiplayer_game(
@@ -150,7 +155,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator create_benchmark_multiplayer_game called more than once")
+            .expect("mock create_benchmark_multiplayer_game called more than once")
     }
 
     async fn cleanup_benchmark_data(&self) -> Result<BenchmarkCleanupCounts, GameError> {
@@ -158,7 +163,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator cleanup_benchmark_data called more than once")
+            .expect("mock cleanup_benchmark_data called more than once")
     }
 
     async fn start_game(&self, _game_id: Uuid, _user_id: Uuid) -> Result<(), GameError> {
@@ -166,7 +171,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator start_game called more than once")
+            .expect("mock start_game called more than once")
     }
 
     async fn send_invites(
@@ -179,7 +184,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator send_invites called more than once")
+            .expect("mock send_invites called more than once")
     }
 
     async fn accept_invite(
@@ -192,7 +197,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator accept_invite called more than once")
+            .expect("mock accept_invite called more than once")
     }
 
     async fn decline_invite(&self, _game_id: Uuid, _user_id: Uuid) -> Result<(), GameError> {
@@ -204,7 +209,7 @@ impl GameOrchestratorTrait for MockGameOrchestrator {
             .lock()
             .unwrap()
             .take()
-            .expect("mock orchestrator cancel_game called more than once")
+            .expect("mock cancel_game called more than once")
     }
 
     async fn advance_bot(

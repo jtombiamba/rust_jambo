@@ -15,9 +15,9 @@ use uuid::Uuid;
 use jambo_backend::config::Config;
 use jambo_backend::database;
 use jambo_backend::database::models::{game, GameStatus};
-use jambo_backend::game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
+use jambo_backend::game::orchestrator::{GameService, GameServiceTrait};
 use jambo_backend::messaging::{self, RedisClient};
-use jambo_backend::observability::metrics;
+use jambo_backend::observability::{metrics, metrics_init};
 
 #[derive(Parser, Debug)]
 #[command(name = "load-test")]
@@ -139,7 +139,7 @@ async fn main() -> Result<()> {
         .json()
         .init();
 
-    metrics::init_all();
+    metrics_init::init_all();
 
     let cli = Cli::parse();
     info!(
@@ -202,7 +202,7 @@ async fn main() -> Result<()> {
     let mailer =
         jambo_backend::mailer::create_mailer(mailer_config).expect("Failed to create mailer");
 
-    let orchestrator: Arc<dyn GameOrchestratorTrait> = Arc::new(GameOrchestrator::new(
+    let orchestrator: Arc<dyn GameServiceTrait> = Arc::new(GameService::new(
         db.clone(),
         redis_client.clone(),
         rabbitmq_client.clone(),

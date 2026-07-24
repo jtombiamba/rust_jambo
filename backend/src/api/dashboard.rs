@@ -71,7 +71,7 @@ pub async fn get_active_game(
 pub async fn create_game(
     auth_user: AuthenticatedUser,
     body: web::Json<CreateGameRequest>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GameServiceTrait>>,
     db: web::Data<sea_orm::DatabaseConnection>,
 ) -> HttpResponse {
     if let Err(e) = body.validate() {
@@ -130,7 +130,7 @@ pub async fn send_invites(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     body: web::Json<SendInvitesRequest>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GameServiceTrait>>,
     service: web::Data<Arc<DashboardServiceType>>,
     mailer: web::Data<Arc<dyn Mailer>>,
     i18n: I18n,
@@ -216,7 +216,7 @@ pub async fn respond_to_invite(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     query: web::Query<InviteActionQuery>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GameServiceTrait>>,
     i18n: I18n,
 ) -> HttpResponse {
     let game_id = path.into_inner();
@@ -275,7 +275,7 @@ pub async fn get_invitations(
 pub async fn start_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GameServiceTrait>>,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
@@ -291,7 +291,7 @@ pub async fn play_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     payload: web::Json<PlayCardRequest>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GameServiceTrait>>,
     service: web::Data<Arc<DashboardServiceType>>,
     i18n: I18n,
 ) -> HttpResponse {
@@ -347,15 +347,15 @@ mod tests {
     use super::*;
     use crate::auth::extractors::AuthenticatedUser;
     use crate::error::GameError;
-    use crate::game::orchestrator::mock::MockGameOrchestrator;
-    use crate::game::orchestrator::AcceptInviteOutcome;
+    use crate::game::service::mock::MockGameService;
+    use crate::game::service::AcceptInviteOutcome;
     use crate::i18n::Translator;
     use actix_web::{test, web, App};
     use std::sync::Arc;
     use uuid::Uuid;
 
     async fn make_app(
-        mock: Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>,
+        mock: Arc<dyn crate::game::service::GameServiceTrait>,
     ) -> impl actix_web::dev::Service<
         actix_http::Request,
         Response = actix_web::dev::ServiceResponse,
@@ -390,7 +390,7 @@ mod tests {
     #[actix_web::test]
     async fn respond_accept_success() {
         let outcome = accept_outcome();
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         mock.set_accept_invite_result(Ok(outcome));
         let app = make_app(mock).await;
         let user = authenticated_user();
@@ -418,7 +418,7 @@ mod tests {
     async fn respond_accept_game_ready() {
         let mut outcome = accept_outcome();
         outcome.game_status = "ready".to_string();
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         mock.set_accept_invite_result(Ok(outcome));
         let app = make_app(mock).await;
         let user = authenticated_user();
@@ -438,7 +438,7 @@ mod tests {
 
     #[actix_web::test]
     async fn respond_accept_not_invited() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         mock.set_accept_invite_result(Err(GameError::NotInvited));
         let app = make_app(mock).await;
         let user = authenticated_user();
@@ -457,7 +457,7 @@ mod tests {
 
     #[actix_web::test]
     async fn respond_decline_success() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let user = authenticated_user();
         let game_id = Uuid::new_v4();
@@ -482,7 +482,7 @@ mod tests {
 
     #[actix_web::test]
     async fn respond_invalid_action_returns_400() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let user = authenticated_user();
         let game_id = Uuid::new_v4();
@@ -501,7 +501,7 @@ mod tests {
 
     #[actix_web::test]
     async fn respond_missing_action_returns_error() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let user = authenticated_user();
         let game_id = Uuid::new_v4();
@@ -517,7 +517,7 @@ mod tests {
 
     #[actix_web::test]
     async fn respond_accept_account_frozen() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         mock.set_accept_invite_result(Err(GameError::AccountFrozen {
             until: "2026-05-18T12:00:00+00:00".to_string(),
         }));

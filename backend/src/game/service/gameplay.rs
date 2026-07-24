@@ -9,9 +9,8 @@ use uuid::Uuid;
 
 use crate::database::models::{game, game_card, player, GameStatus};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
-use crate::game::service::types::{
-    CardPlayResult, CardPlayTimer, GameServiceError, RoundEvaluationResult,
-};
+use crate::error::GameError;
+use crate::game::service::types::{CardPlayResult, CardPlayTimer, RoundEvaluationResult};
 use crate::game::turn_order::next_player;
 use crate::observability::metrics;
 
@@ -24,7 +23,7 @@ impl GameService {
         player_id: Uuid,
         card_index: i32,
         current_winning_card: Option<i32>,
-    ) -> Result<bool, GameServiceError> {
+    ) -> Result<bool, GameError> {
         if let Some(winning_idx) = current_winning_card {
             if (winning_idx / 8) == (card_index / 8) {
                 return Ok(true);
@@ -52,7 +51,7 @@ impl GameService {
         player_id: Uuid,
         card_index: i32,
         correlation_id: Option<Uuid>,
-    ) -> Result<CardPlayResult, GameServiceError> {
+    ) -> Result<CardPlayResult, GameError> {
         let _timer = CardPlayTimer(Instant::now());
         let span = tracing::info_span!(
             "card_play",
@@ -73,13 +72,13 @@ impl GameService {
             let game = game::Entity::find_by_id(game_id)
                 .one(&txn)
                 .await?
-                .ok_or(GameServiceError::GameNotFound)?;
+                .ok_or(GameError::GameNotFound)?;
             if game.status == GameStatus::Finished
                 || game.status == GameStatus::Kora
                 || game.status == GameStatus::DoubleKora
             {
                 txn.rollback().await.ok();
-                return Err(GameServiceError::GameFinished);
+                return Err(GameError::GameFinished);
             }
 
             let read_version = game.updated_at;
@@ -93,12 +92,12 @@ impl GameService {
             let current_player = players
                 .iter()
                 .find(|p| p.id == player_id)
-                .ok_or(GameServiceError::PlayerNotFound)?;
+                .ok_or(GameError::PlayerNotFound)?;
             let active_player_count = players.iter().filter(|p| !p.kicked).count();
             let current_rank = game.rank.unwrap_or(0) as usize;
             if current_player.position as usize != current_rank {
                 txn.rollback().await.ok();
-                return Err(GameServiceError::NotYourTurn);
+                return Err(GameError::NotYourTurn);
             }
 
             // 3. Fetch the card and ensure it's unplayed (via txn)
@@ -109,7 +108,7 @@ impl GameService {
             let target_card = game_cards
                 .iter()
                 .find(|gc| gc.card_index == card_index && !gc.played)
-                .ok_or(GameServiceError::CardNotFound)?;
+                .ok_or(GameError::CardNotFound)?;
 
             // 4. Use stored current winning card from game model
             let current_winning_card = game.current_winning_card;
@@ -120,7 +119,7 @@ impl GameService {
                 .await?;
             if !valid {
                 txn.rollback().await.ok();
-                return Err(GameServiceError::InvalidCard);
+                return Err(GameError::InvalidCard);
             }
 
             // 6. Mark card as played and set round = game.roll (using txn connection)
@@ -154,11 +153,11 @@ impl GameService {
             if round_complete && !game.step_by_step {
                 match self.evaluate_round_in_txn(&txn, game_id, game.roll).await {
                     Ok(result) => round_result = Some(result),
-                    Err(GameServiceError::VersionConflict) => {
+                    Err(GameError::VersionConflict) => {
                         txn.rollback().await.ok();
                         attempt += 1;
                         if attempt >= max_retries {
-                            return Err(GameServiceError::Internal(
+                            return Err(GameError::internal(
                                 "Optimistic lock conflict after max retries".to_string(),
                             ));
                         }
@@ -204,7 +203,7 @@ impl GameService {
                     txn.rollback().await.ok();
                     attempt += 1;
                     if attempt >= max_retries {
-                        return Err(GameServiceError::Internal(
+                        return Err(GameError::internal(
                             "Optimistic lock conflict after max retries".to_string(),
                         ));
                     }
@@ -232,14 +231,13 @@ impl GameService {
                 players
                     .get(result.winner_position)
                     .map(|p| p.id)
-                    .ok_or_else(|| {
-                        GameServiceError::Internal("Winner not in player list".to_string())
-                    })?
+                    .ok_or_else(|| GameError::internal("Winner not in player list"))?
             } else {
                 let rank_after = next_player(current_rank, active_player_count);
-                players.get(rank_after).map(|p| p.id).ok_or_else(|| {
-                    GameServiceError::Internal("No player at computed rank".to_string())
-                })?
+                players
+                    .get(rank_after)
+                    .map(|p| p.id)
+                    .ok_or_else(|| GameError::internal("No player at computed rank"))?
             };
 
             // 11. Publish CardPlayed event
@@ -290,7 +288,7 @@ impl GameService {
                 .await?
                 .into_iter()
                 .find(|gc| gc.id == target_card.id)
-                .ok_or(GameServiceError::Internal("Card disappeared".to_string()))?;
+                .ok_or(GameError::internal("Card disappeared"))?;
 
             return Ok(CardPlayResult {
                 card,
@@ -304,13 +302,13 @@ impl GameService {
         }
     }
 
-    pub async fn next_player(&self, game_id: Uuid) -> Result<Uuid, GameServiceError> {
+    pub async fn next_player(&self, game_id: Uuid) -> Result<Uuid, GameError> {
         let game_repo = GameRepository::new(self.db.clone());
         let player_repo = PlayerRepository::new(self.db.clone());
         let game = game_repo
             .find_by_id(game_id)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
         let players = player_repo.list_by_game(game_id).await?;
         let active_players: Vec<_> = players.iter().filter(|p| !p.kicked).collect();
         let current_rank = game.rank.unwrap_or(0) as usize;
@@ -318,7 +316,7 @@ impl GameService {
             active_players
                 .get(current_rank)
                 .map(|p| p.id)
-                .ok_or(GameServiceError::Internal(
+                .ok_or(GameError::internal(
                     "Player index out of bounds".to_string(),
                 ))?;
         Ok(player_id)

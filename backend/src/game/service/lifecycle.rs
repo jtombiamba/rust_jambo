@@ -9,21 +9,22 @@ use crate::database::models::{
     game, game_card, game_invite, player, player_profile, GameMode, GameStatus, InviteStatus,
     PlayerType,
 };
+use crate::error::GameError;
 use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
-use crate::game::service::types::{GameCreationTimer, GameServiceError};
+use crate::game::service::types::GameCreationTimer;
 use crate::messaging::events::GameEvent;
 use crate::messaging::redis::PublishResult;
 
 use super::GameService;
 
 impl GameService {
-    pub async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameServiceError> {
+    pub async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
         let txn = self.db.begin().await?;
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
 
         if game_model.status != GameStatus::Pending {
             txn.rollback().await.ok();
@@ -100,23 +101,23 @@ impl GameService {
         game_id: Uuid,
         kicked_player_id: Uuid,
         all_players: &[player::Model],
-    ) -> Result<(), GameServiceError> {
+    ) -> Result<(), GameError> {
         let txn = self.db.begin().await?;
 
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
 
         if game_model.status != GameStatus::Active {
             txn.rollback().await.ok();
-            return Err(GameServiceError::GameFinished);
+            return Err(GameError::GameFinished);
         }
 
         let kicked_player = all_players
             .iter()
             .find(|p| p.id == kicked_player_id)
-            .ok_or(GameServiceError::PlayerNotFound)?;
+            .ok_or(GameError::PlayerNotFound)?;
 
         // Mark player as kicked
         let mut kicked_active: player::ActiveModel = kicked_player.clone().into();
@@ -186,7 +187,7 @@ impl GameService {
         if active_players.len() <= 1 {
             let winner = active_players
                 .first()
-                .ok_or_else(|| GameServiceError::Internal("No remaining players".to_string()))?;
+                .ok_or_else(|| GameError::internal("No remaining players"))?;
 
             let mut game_active: game::ActiveModel = game_model.clone().into();
             game_active.status = ActiveValue::Set(GameStatus::Finished);
@@ -199,7 +200,7 @@ impl GameService {
                     winner.user_id.unwrap_or(Uuid::nil()),
                 )]))
                 .map_err(|e| {
-                    GameServiceError::Internal(format!("Failed to serialize positions: {}", e))
+                    GameError::internal(format!("Failed to serialize positions: {}", e))
                 })?,
             );
             game_active.stall_warning_sent_at = ActiveValue::Set(None);
@@ -318,7 +319,7 @@ impl GameService {
         let mut game_active: game::ActiveModel = game_model.into();
         game_active.player_positions =
             ActiveValue::Set(serde_json::to_value(&new_positions).map_err(|e| {
-                GameServiceError::Internal(format!("Failed to serialize positions: {}", e))
+                GameError::internal(format!("Failed to serialize positions: {}", e))
             })?);
         game_active.rank = ActiveValue::Set(Some(new_rank));
         game_active.updated_at = ActiveValue::Set(chrono::Utc::now());
@@ -357,13 +358,18 @@ impl GameService {
         if new_rank_usize < active_players.len() {
             let next = active_players[new_rank_usize];
             if matches!(next.player_type, PlayerType::Bot) {
-                crate::game::bot_scheduler::BotScheduler::run_sync_chain(
-                    self.db.clone(),
-                    self.redis_client.clone(),
-                    game_id,
-                    next.id,
-                )
-                .await;
+                let db = self.db.clone();
+                let redis = self.redis_client.clone();
+                let gid = game_id;
+                let nid = next.id;
+                let fds = self.freeze_duration_secs;
+                let ucnp = self.unfreeze_credit_no_payment;
+                tokio::spawn(async move {
+                    crate::game::bot_scheduler::BotScheduler::run_sync_chain(
+                        db, redis, gid, nid, fds, ucnp, None,
+                    )
+                    .await;
+                });
             }
         }
 
@@ -371,9 +377,10 @@ impl GameService {
     }
 
     #[allow(dead_code)]
-    pub async fn cancel_expired_games(&self) -> Result<u64, GameServiceError> {
+    pub async fn cancel_expired_games(&self) -> Result<u64, GameError> {
         let now = chrono::Utc::now();
 
+        // TODO: should be in a repository
         let expired_games = game::Entity::find()
             .filter(game::Column::Status.eq(GameStatus::Pending))
             .filter(game::Column::GameMode.eq(GameMode::Multiplayer))
@@ -396,7 +403,7 @@ impl GameService {
         Ok(cancelled)
     }
 
-    pub async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameServiceError> {
+    pub async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
         let _timer = GameCreationTimer::new("quick");
         use rand::{seq::SliceRandom, thread_rng};
 
@@ -412,15 +419,15 @@ impl GameService {
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
 
         if game_model.status != GameStatus::Ready {
             txn.rollback().await.ok();
-            return Err(GameServiceError::GameNotReady);
+            return Err(GameError::GameNotReady);
         }
         if game_model.creator_id != Some(user_id) {
             txn.rollback().await.ok();
-            return Err(GameServiceError::NotCreator);
+            return Err(GameError::NotCreator);
         }
 
         let players = player::Entity::find()
@@ -432,13 +439,13 @@ impl GameService {
         let num_players = players.len();
         if num_players < 2 {
             txn.rollback().await.ok();
-            return Err(GameServiceError::Internal(
+            return Err(GameError::internal(
                 "Not enough players to start".to_string(),
             ));
         }
         if num_players > game_model.max_players as usize {
             txn.rollback().await.ok();
-            return Err(GameServiceError::Internal(format!(
+            return Err(GameError::internal(format!(
                 "Player count {} exceeds max_players {} for game {}",
                 num_players, game_model.max_players, game_id
             )));

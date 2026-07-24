@@ -3,7 +3,6 @@ pub mod bot_scheduler;
 pub mod card_mapping;
 pub mod constants;
 pub mod distribution;
-pub mod orchestrator;
 pub mod payment;
 pub mod round_evaluation;
 pub mod service;

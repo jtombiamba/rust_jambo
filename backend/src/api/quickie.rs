@@ -6,7 +6,7 @@ use crate::api::dto::responses::QuickGameResponse;
 use crate::auth::config::AuthConfig;
 use crate::auth::jwt;
 use crate::error::AppError;
-use crate::game::orchestrator::GameOrchestratorTrait;
+use crate::game::service::GameServiceTrait;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 
@@ -16,7 +16,7 @@ const GAME_TOKEN_TTL_SECS: u64 = 7200;
 #[post("/quickie")]
 pub async fn create_quick_game(
     req: HttpRequest,
-    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn GameServiceTrait>>,
     auth_config: web::Data<AuthConfig>,
     redis: web::Data<Option<RedisClient>>,
 ) -> impl Responder {
@@ -81,9 +81,7 @@ mod tests {
     use super::*;
     use crate::auth::config::AuthConfig;
     use crate::error::GameError;
-    use crate::game::orchestrator::{
-        mock::MockGameOrchestrator, PlayCardOutcome, QuickGameOutcome,
-    };
+    use crate::game::service::{mock::MockGameService, PlayCardOutcome, QuickGameOutcome};
     use actix_web::{test, web, App};
     use std::sync::Arc;
     use uuid::Uuid;
@@ -98,7 +96,7 @@ mod tests {
     }
 
     async fn make_app(
-        mock: Arc<dyn GameOrchestratorTrait>,
+        mock: Arc<dyn GameServiceTrait>,
     ) -> impl actix_web::dev::Service<
         actix_http::Request,
         Response = actix_web::dev::ServiceResponse,
@@ -117,7 +115,7 @@ mod tests {
     #[actix_web::test]
     async fn create_quick_game_success() {
         let game_id = Uuid::new_v4();
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Ok(PlayCardOutcome {
                 card_id: Uuid::new_v4(),
                 next_turn: Some(Uuid::new_v4()),
@@ -151,7 +149,7 @@ mod tests {
 
     #[actix_web::test]
     async fn create_quick_game_error() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Ok(PlayCardOutcome {
                 card_id: Uuid::new_v4(),
                 next_turn: None,

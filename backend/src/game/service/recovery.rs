@@ -95,6 +95,9 @@ impl GameService {
                     redis_clone,
                     game_id,
                     player_id,
+                    86400,
+                    250,
+                    None,
                 )
                 .await;
             });

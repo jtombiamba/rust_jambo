@@ -157,7 +157,10 @@ pub async fn process_bot_move(
                                 let redis = redis_client.clone();
                                 let next_id = result.next_player_id;
                                 tokio::spawn(async move {
-                                    BotScheduler::run_sync_chain(db, redis, game_id, next_id).await;
+                                    BotScheduler::run_sync_chain(
+                                        db, redis, game_id, next_id, 86400, 250, None,
+                                    )
+                                    .await;
                                 });
                             }
                         }
@@ -244,7 +247,10 @@ async fn process_bot_move_with_db(
                                 let redis = redis_client.clone();
                                 let next_id = next_player;
                                 tokio::spawn(async move {
-                                    BotScheduler::run_sync_chain(db, redis, game_id, next_id).await;
+                                    BotScheduler::run_sync_chain(
+                                        db, redis, game_id, next_id, 86400, 250, None,
+                                    )
+                                    .await;
                                 });
                             }
                         }

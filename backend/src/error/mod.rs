@@ -135,8 +135,12 @@ fn game_error_status_code(e: &GameError) -> StatusCode {
         | GameError::GameFull
         | GameError::CreatorCannotJoin
         | GameError::GameNotReady => StatusCode::CONFLICT,
-        GameError::RoundNotComplete | GameError::InviteExpired => StatusCode::BAD_REQUEST,
+        // GameError::RoundNotComplete | GameError::InviteExpired | GameError::StepByStepOnly | GameError::NotABot => StatusCode::BAD_REQUEST,
+        GameError::RoundNotComplete | GameError::StepByStepOnly | GameError::NotABot => {
+            StatusCode::BAD_REQUEST
+        }
         GameError::InsufficientCredits { .. } => StatusCode::PAYMENT_REQUIRED,
+        GameError::VersionConflict | GameError::IdempotencyConflict => StatusCode::CONFLICT,
         GameError::Database(_) | GameError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

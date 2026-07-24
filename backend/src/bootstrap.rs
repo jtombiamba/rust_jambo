@@ -16,7 +16,9 @@ use crate::database::repositories::{
     DashboardRepository, GameCardRepository, GameRepository, UserRepository,
 };
 use crate::database::traits::{GameCardRepoTrait, GameRepoTrait};
-use crate::game::orchestrator::{GameOrchestrator, GameOrchestratorTrait};
+use crate::game::bot_scheduler::BotScheduler;
+use crate::game::service::types::GameServiceTrait;
+use crate::game::service::GameService;
 use crate::i18n::Translator;
 use crate::mailer::{self, Mailer, MailerConfig};
 use crate::messaging::{self, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
@@ -29,7 +31,7 @@ pub struct AppState {
     pub redis: web::Data<Option<RedisClient>>,
     pub rabbitmq: web::Data<Option<RabbitMQClient>>,
     pub ws_manager: web::Data<WebSocketManager>,
-    pub orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    pub orchestrator: web::Data<Arc<dyn GameServiceTrait>>,
     pub auth_config: web::Data<AuthConfig>,
     pub auth_service: web::Data<Arc<AuthServiceType>>,
     pub dashboard_service: web::Data<Arc<DashboardServiceType>>,
@@ -145,13 +147,19 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         ),
     };
 
-    let orchestrator: Arc<dyn GameOrchestratorTrait> = Arc::new(GameOrchestrator::new(
-        db_clone,
-        redis_client.clone(),
+    let bot_scheduler = BotScheduler::new(
+        db_clone.clone(),
         rabbitmq_client.clone(),
-        config.clone(),
-        mailer.clone(),
-    ));
+        redis_client.clone(),
+        config.freeze_duration_secs,
+        config.unfreeze_credit_no_payment,
+    );
+
+    let orchestrator: Arc<dyn GameServiceTrait> = Arc::new(
+        GameService::new_with_redis(db_clone, redis_client.clone())
+            .with_config(config, mailer.clone())
+            .with_bot_scheduler(Some(bot_scheduler)),
+    );
 
     let ws_manager = WebSocketManager::new(redis_client.clone(), Some(db_connection.clone()));
     if let Err(e) = ws_manager.start_redis_subscriber().await {

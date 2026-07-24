@@ -1,6 +1,8 @@
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::game::service::types::{MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome};
+
 #[derive(Debug, Serialize)]
 pub struct PlayCardResponse {
     pub success: bool,
@@ -172,4 +174,47 @@ pub struct EvaluateRoundResponse {
 #[derive(Debug, serde::Deserialize)]
 pub struct PlayerActionRequest {
     pub player_id: Uuid,
+}
+
+impl From<PlayCardOutcome> for PlayCardResponse {
+    fn from(o: PlayCardOutcome) -> Self {
+        PlayCardResponse {
+            success: true,
+            message: "Card played successfully".to_string(),
+            card_id: o.card_id,
+            next_turn: o.next_turn,
+            round_completed: o.round_completed,
+            game_ended: o.game_ended,
+            current_round: o.current_round,
+        }
+    }
+}
+
+impl From<QuickGameOutcome> for QuickGameResponse {
+    fn from(o: QuickGameOutcome) -> Self {
+        QuickGameResponse {
+            game_id: o.game_id,
+            players: o.players,
+            status: o.status,
+            current_turn: o.current_turn,
+            bet: o.bet,
+            max_players: o.max_players,
+            invite_expires_at: o.invite_expires_at,
+            deck_slots: o.deck_slots.map(|v| v.into_iter().map(Some).collect()),
+            ws_token: o.ws_token,
+            step_by_step: o.step_by_step,
+        }
+    }
+}
+
+impl From<MultiplayerCreationOutcome> for MultiplayerGameResponse {
+    fn from(o: MultiplayerCreationOutcome) -> Self {
+        MultiplayerGameResponse {
+            game_id: o.game_id,
+            status: o.status,
+            bet: o.bet,
+            max_players: o.max_players,
+            invite_expires_at: o.invite_expires_at,
+        }
+    }
 }

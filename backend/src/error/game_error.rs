@@ -45,22 +45,43 @@ pub enum GameError {
     #[error("Game is full")]
     GameFull,
 
-    #[error("Invite has expired")]
-    InviteExpired,
-
+    // #[error("Invite has expired")]
+    // InviteExpired,
     #[error("Creator cannot join their own game")]
     CreatorCannotJoin,
     #[error("Game is not in ready state")]
     GameNotReady,
     #[error("Account is frozen until {until}")]
     AccountFrozen { until: String },
+    #[error("Optimistic lock conflict: game state was modified concurrently")]
+    VersionConflict,
     #[error("{0}")]
     Internal(#[source] Box<dyn std::error::Error + Send>),
     #[error("Player profile not found")]
     ProfileNotFound,
+    #[error("This operation is only available in step-by-step mode")]
+    StepByStepOnly,
+    #[error("Current player is not a bot")]
+    NotABot,
+    #[error("A request with this idempotency key is already in progress")]
+    IdempotencyConflict,
+}
+
+impl From<sea_orm::TransactionError<sea_orm::DbErr>> for GameError {
+    fn from(e: sea_orm::TransactionError<sea_orm::DbErr>) -> Self {
+        match e {
+            sea_orm::TransactionError::Connection(e) => GameError::Database(e),
+            sea_orm::TransactionError::Transaction(e) => GameError::Database(e),
+        }
+    }
 }
 
 impl GameError {
+    #[track_caller]
+    pub fn internal(msg: impl Into<String>) -> Self {
+        GameError::Internal(Box::new(std::io::Error::other(msg.into())))
+    }
+
     pub fn source(&self) -> &'static str {
         match self {
             GameError::Database(_) => "game:database",
@@ -77,12 +98,16 @@ impl GameError {
             GameError::NotInvited => "game:not_invited",
             GameError::AlreadyJoined => "game:already_joined",
             GameError::GameFull => "game:game_full",
-            GameError::InviteExpired => "game:invite_expired",
+            // GameError::InviteExpired => "game:invite_expired",
             GameError::CreatorCannotJoin => "game:creator_cannot_join",
             GameError::GameNotReady => "game:game_not_ready",
             GameError::AccountFrozen { .. } => "game:account_frozen",
+            GameError::VersionConflict => "game:version_conflict",
             GameError::Internal(_) => "game:internal",
             GameError::ProfileNotFound => "game:profile_not_found",
+            GameError::StepByStepOnly => "game:step_by_step_only",
+            GameError::NotABot => "game:not_a_bot",
+            GameError::IdempotencyConflict => "game:idempotency_conflict",
         }
     }
 }

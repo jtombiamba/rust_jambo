@@ -1,7 +1,6 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use thiserror::Error;
 use uuid::Uuid;
 
 use crate::database::models::{game_card, player, GameStatus, Player as PlayerModel};
@@ -83,94 +82,6 @@ pub(crate) struct CachedCard {
     pub(crate) round: Option<i32>,
 }
 
-#[allow(dead_code)]
-#[derive(Error, Debug)]
-pub enum GameServiceError {
-    #[error("Database error: {0}")]
-    Database(#[from] sea_orm::DbErr),
-    #[error("Game not found")]
-    GameNotFound,
-    #[error("Player not found")]
-    PlayerNotFound,
-    #[error("Card not found or already played")]
-    CardNotFound,
-    #[error("Not your turn to play")]
-    NotYourTurn,
-    #[error("Invalid card play: you must follow suit if possible")]
-    InvalidCard,
-    #[error("Round not complete")]
-    RoundNotComplete,
-    #[error("Game already finished")]
-    GameFinished,
-    #[error("Insufficient credits: need {required} but have {current}")]
-    InsufficientCredits { required: i32, current: i32 },
-    #[error("Game is not pending")]
-    GameNotPending,
-    #[error("User is not the game creator")]
-    NotCreator,
-    #[error("User is not invited to this game")]
-    NotInvited,
-    #[error("User is already a player in this game")]
-    AlreadyJoined,
-    #[error("Game is full")]
-    GameFull,
-    #[error("Invite has expired")]
-    InviteExpired,
-    #[error("Creator cannot join their own game")]
-    CreatorCannotJoin,
-    #[error("Game is not in ready state")]
-    GameNotReady,
-    #[error("Account is frozen until {until}")]
-    AccountFrozen { until: String },
-    #[error("Duplicate player: user is already a player in this game")]
-    DuplicatePlayer,
-    #[error("Optimistic lock conflict: game state was modified concurrently")]
-    VersionConflict,
-    #[error("Internal error: {0}")]
-    Internal(String),
-    #[error("Player profile not found")]
-    ProfileNotFound,
-}
-
-impl GameServiceError {
-    #[allow(dead_code)]
-    pub fn source(&self) -> &'static str {
-        match self {
-            GameServiceError::Database(_) => "game_service:database",
-            GameServiceError::GameNotFound => "game_service:game_not_found",
-            GameServiceError::PlayerNotFound => "game_service:player_not_found",
-            GameServiceError::CardNotFound => "game_service:card_not_found",
-            GameServiceError::NotYourTurn => "game_service:not_your_turn",
-            GameServiceError::InvalidCard => "game_service:invalid_card",
-            GameServiceError::RoundNotComplete => "game_service:round_not_complete",
-            GameServiceError::GameFinished => "game_service:game_finished",
-            GameServiceError::InsufficientCredits { .. } => "game_service:insufficient_credits",
-            GameServiceError::GameNotPending => "game_service:game_not_pending",
-            GameServiceError::NotCreator => "game_service:not_creator",
-            GameServiceError::NotInvited => "game_service:not_invited",
-            GameServiceError::AlreadyJoined => "game_service:already_joined",
-            GameServiceError::GameFull => "game_service:game_full",
-            GameServiceError::InviteExpired => "game_service:invite_expired",
-            GameServiceError::CreatorCannotJoin => "game_service:creator_cannot_join",
-            GameServiceError::GameNotReady => "game_service:game_not_ready",
-            GameServiceError::AccountFrozen { .. } => "game_service:account_frozen",
-            GameServiceError::DuplicatePlayer => "game_service:duplicate_player",
-            GameServiceError::VersionConflict => "game_service:version_conflict",
-            GameServiceError::Internal(_) => "game_service:internal",
-            GameServiceError::ProfileNotFound => "game_service:profile_not_found",
-        }
-    }
-}
-
-impl From<sea_orm::TransactionError<sea_orm::DbErr>> for GameServiceError {
-    fn from(e: sea_orm::TransactionError<sea_orm::DbErr>) -> Self {
-        match e {
-            sea_orm::TransactionError::Connection(e) => GameServiceError::Database(e),
-            sea_orm::TransactionError::Transaction(e) => GameServiceError::Database(e),
-        }
-    }
-}
-
 /// Rich result returned by `update_card_play` after a successful card play.
 pub struct CardPlayResult {
     pub card: game_card::Model,
@@ -209,4 +120,183 @@ pub struct RoundEvaluationResult {
     pub(crate) game_ended: bool,
     pub(crate) final_status: GameStatus,
     pub(crate) players: Vec<PlayerModel>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QuickGameOutcome {
+    pub game_id: Uuid,
+    pub players: Vec<crate::api::dto::responses::PlayerInfoDto>,
+    pub status: String,
+    pub current_turn: i32,
+    pub bet: i32,
+    pub max_players: i32,
+    pub invite_expires_at: Option<String>,
+    pub deck_slots: Option<Vec<i32>>,
+    pub ws_token: Option<String>,
+    pub step_by_step: bool,
+}
+
+pub struct AcceptInviteOutcome {
+    pub player_id: Uuid,
+    pub position: i32,
+    pub player_count: i32,
+    pub max_players: i32,
+    pub game_status: String,
+}
+
+pub struct AdvanceBotOutcome {
+    pub card_played: i32,
+    pub next_player_id: Uuid,
+    pub next_is_bot: bool,
+    pub round_complete: bool,
+    pub game_ended: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlayCardOutcome {
+    pub card_id: Uuid,
+    pub next_turn: Option<Uuid>,
+    pub game_ended: bool,
+    pub round_completed: bool,
+    pub current_round: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EvaluateRoundOutcome {
+    pub round_number: i32,
+    pub winner_id: Option<Uuid>,
+    pub winner_position: i32,
+    pub game_ended: bool,
+}
+
+pub struct MultiplayerCreationOutcome {
+    pub game_id: Uuid,
+    pub status: String,
+    pub bet: i32,
+    pub max_players: i16,
+    pub invite_expires_at: String,
+}
+
+pub struct BenchmarkGameOutcome {
+    pub game_id: Uuid,
+    pub players: Vec<BenchmarkPlayerOutcome>,
+    pub current_turn: i32,
+    pub bet: i32,
+}
+
+#[derive(Debug)]
+pub struct BenchmarkPlayerOutcome {
+    pub player_id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub position: i32,
+    pub cards: Vec<i32>,
+}
+
+pub struct BenchmarkCleanupCounts {
+    pub users_deleted: u64,
+    pub games_deleted: u64,
+    pub game_cards_deleted: u64,
+    pub players_deleted: u64,
+    pub player_profiles_deleted: u64,
+    pub game_invites_deleted: u64,
+}
+
+#[async_trait::async_trait]
+#[allow(unused_variables)]
+pub trait GameServiceTrait: Send + Sync {
+    async fn play_card(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        card_index: i32,
+        correlation_id: Option<crate::observability::CorrelationId>,
+        idempotency_key: Option<String>,
+    ) -> Result<PlayCardOutcome, crate::error::GameError>;
+
+    async fn create_quick_game(
+        &self,
+        correlation_id: Option<crate::observability::CorrelationId>,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, crate::error::GameError>;
+
+    #[allow(dead_code)]
+    async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, crate::error::GameError>;
+
+    // async fn create_quick_game_for_user(
+    //     &self,
+    //     user_id: Uuid,
+    //     db: &sea_orm::DatabaseConnection,
+    // ) -> Result<QuickGameOutcome, crate::error::GameError>;
+
+    async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        user_id: Uuid,
+        db: &sea_orm::DatabaseConnection,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, crate::error::GameError>;
+
+    async fn create_multiplayer_game(
+        &self,
+        user_id: Uuid,
+        pseudo: &str,
+        bet: i32,
+        max_players: i16,
+    ) -> Result<MultiplayerCreationOutcome, crate::error::GameError>;
+
+    async fn create_benchmark_multiplayer_game(
+        &self,
+        user_ids: Vec<Uuid>,
+        bet: i32,
+    ) -> Result<BenchmarkGameOutcome, crate::error::GameError>;
+
+    async fn cleanup_benchmark_data(
+        &self,
+    ) -> Result<BenchmarkCleanupCounts, crate::error::GameError>;
+
+    async fn start_game(&self, game_id: Uuid, user_id: Uuid)
+        -> Result<(), crate::error::GameError>;
+
+    async fn send_invites(
+        &self,
+        game_id: Uuid,
+        creator_user_id: Uuid,
+        invited_user_ids: Vec<Uuid>,
+    ) -> Result<(), crate::error::GameError>;
+
+    async fn accept_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+        pseudo: &str,
+    ) -> Result<AcceptInviteOutcome, crate::error::GameError>;
+
+    async fn decline_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), crate::error::GameError>;
+
+    #[allow(dead_code)]
+    async fn cancel_game(&self, game_id: Uuid) -> Result<(), crate::error::GameError>;
+
+    async fn advance_bot(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+    ) -> Result<AdvanceBotOutcome, crate::error::GameError>;
+
+    async fn evaluate_round(
+        &self,
+        game_id: Uuid,
+        human_player_id: Uuid,
+        idempotency_key: Option<String>,
+    ) -> Result<EvaluateRoundOutcome, crate::error::GameError>;
+
+    async fn verify_player_ownership(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, crate::error::GameError>;
 }

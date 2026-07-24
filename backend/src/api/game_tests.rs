@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::error::GameError;
-    use crate::game::orchestrator::mock::MockGameOrchestrator;
-    use crate::game::orchestrator::QuickGameOutcome;
+    use crate::game::service::mock::MockGameService;
+    use crate::game::service::QuickGameOutcome;
     use actix_web::{test, web, App};
     use std::sync::Arc;
     use uuid::Uuid;
@@ -10,7 +10,7 @@ mod tests {
     use crate::api::game::play_card;
 
     async fn make_app(
-        mock: Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>,
+        mock: Arc<dyn crate::game::service::GameServiceTrait>,
     ) -> impl actix_web::dev::Service<
         actix_http::Request,
         Response = actix_web::dev::ServiceResponse,
@@ -23,7 +23,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_valid_payload() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let game_id = Uuid::new_v4();
         let player_id = Uuid::new_v4();
@@ -42,7 +42,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_negative_index() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let game_id = Uuid::new_v4();
         let player_id = Uuid::new_v4();
@@ -64,7 +64,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_index_out_of_range() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let game_id = Uuid::new_v4();
         let player_id = Uuid::new_v4();
@@ -82,7 +82,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_missing_player_id() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let game_id = Uuid::new_v4();
         let payload = serde_json::json!({ "card_index": 0 });
@@ -97,7 +97,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_missing_card_index() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let game_id = Uuid::new_v4();
         let player_id = Uuid::new_v4();
@@ -113,7 +113,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_invalid_player_id_uuid() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let game_id = Uuid::new_v4();
         let payload = serde_json::json!({ "player_id": "not-a-uuid", "card_index": 0 });
@@ -128,7 +128,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_non_uuid_path() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
+        let mock = Arc::new(MockGameService::ok());
         let app = make_app(mock).await;
         let player_id = Uuid::new_v4();
         let payload = serde_json::json!({ "player_id": player_id, "card_index": 0 });
@@ -145,7 +145,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_game_not_found() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::GameNotFound),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -173,7 +173,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_player_not_found() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::PlayerNotFound),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -201,7 +201,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_card_not_found() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::CardNotFound),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -229,7 +229,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_not_your_turn() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::NotYourTurn),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -257,7 +257,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_invalid_card() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::InvalidCard),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -285,7 +285,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_game_finished() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::GameFinished),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -313,7 +313,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_round_not_complete() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::RoundNotComplete),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
@@ -341,7 +341,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_database_error() {
-        let mock = Arc::new(MockGameOrchestrator::new(
+        let mock = Arc::new(MockGameService::new(
             Err(GameError::Database(sea_orm::DbErr::Custom(
                 "db down".into(),
             ))),
@@ -371,10 +371,8 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_internal_error() {
-        let mock = Arc::new(MockGameOrchestrator::new(
-            Err(GameError::Internal(Box::new(std::io::Error::other(
-                "internal kaboom",
-            )))),
+        let mock = Arc::new(MockGameService::new(
+            Err(GameError::internal("internal kaboom")),
             Ok(QuickGameOutcome {
                 game_id: Uuid::new_v4(),
                 players: vec![],

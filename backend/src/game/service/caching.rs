@@ -4,8 +4,9 @@ use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::database::models::{game, game_card, player, PlayerType};
+use crate::error::GameError;
 use crate::game::service::types::{
-    CachedCard, CachedGameState, CachedPlayer, GameServiceError, GAME_STATE_CACHE_TTL_SECS,
+    CachedCard, CachedGameState, CachedPlayer, GAME_STATE_CACHE_TTL_SECS,
 };
 use crate::game::turn_order::next_player;
 use crate::observability::metrics::GAME_STATE_CACHE_WRITE_ERRORS_TOTAL;
@@ -83,11 +84,11 @@ impl GameService {
     pub(crate) async fn build_cached_game_state(
         &self,
         game_id: Uuid,
-    ) -> Result<CachedGameState, GameServiceError> {
+    ) -> Result<CachedGameState, GameError> {
         let game = game::Entity::find_by_id(game_id)
             .one(&self.db)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
 
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
@@ -150,7 +151,7 @@ impl GameService {
         db: &DatabaseConnection,
         game_id: Uuid,
         round: i32,
-    ) -> Result<bool, GameServiceError> {
+    ) -> Result<bool, GameError> {
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .all(db)
@@ -178,7 +179,7 @@ impl GameService {
         _game_id: Uuid,
         game_model: &game::Model,
         players: &[player::Model],
-    ) -> Result<Uuid, GameServiceError> {
+    ) -> Result<Uuid, GameError> {
         let current_rank = game_model.rank.unwrap_or(0) as usize;
         // Use active player count (exclude kicked) for correct modular arithmetic
         let active_count = players.iter().filter(|p| !p.kicked).count();
@@ -188,6 +189,6 @@ impl GameService {
             .filter(|p| !p.kicked)
             .nth(next_rank)
             .map(|p| p.id)
-            .ok_or_else(|| GameServiceError::Internal("No player at computed rank".to_string()))
+            .ok_or_else(|| GameError::internal("No player at computed rank"))
     }
 }

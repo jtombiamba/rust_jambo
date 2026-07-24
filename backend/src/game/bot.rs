@@ -47,9 +47,7 @@ pub async fn execute_bot_move(
         .collect::<Vec<i32>>();
 
     if bot_cards.is_empty() {
-        return Err(GameError::Internal(Box::new(std::io::Error::other(
-            "No cards available for bot",
-        ))));
+        return Err(GameError::internal("No cards available for bot"));
     }
 
     let round_cards = game_card_repo
@@ -81,21 +79,14 @@ pub async fn execute_bot_move(
     service
         .update_card_play(game_id, player_id, chosen, None)
         .await
-        .map_err(|e| {
-            GameError::Internal(Box::new(std::io::Error::other(format!(
-                "Failed to play card: {}",
-                e
-            ))))
-        })?;
+        .map_err(|e| GameError::internal(format!("Failed to play card: {}", e)))?;
 
     info!("Bot {} played card {}", player_id, chosen);
 
-    let next_player = service.next_player(game_id).await.map_err(|e| {
-        GameError::Internal(Box::new(std::io::Error::other(format!(
-            "Failed to determine next player: {}",
-            e
-        ))))
-    })?;
+    let next_player = service
+        .next_player(game_id)
+        .await
+        .map_err(|e| GameError::internal(format!("Failed to determine next player: {}", e)))?;
 
     let players = player_repo.list_by_game(game_id).await?;
 
@@ -124,9 +115,7 @@ pub async fn execute_bot_move_from_task(task: &AITask) -> Result<BotMoveResult, 
     let bot_cards = task.bot_hand_cards.clone();
 
     if bot_cards.is_empty() {
-        return Err(GameError::Internal(Box::new(std::io::Error::other(
-            "No cards available for bot",
-        ))));
+        return Err(GameError::internal("No cards available for bot"));
     }
 
     let chosen = compute_strategy(
