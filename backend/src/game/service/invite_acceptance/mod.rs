@@ -21,13 +21,7 @@ use validation::{
     validate_sufficient_credit,
 };
 
-fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
-    if let sea_orm::DbErr::Exec(exec_err) = e {
-        exec_err.to_string().contains("23505")
-    } else {
-        false
-    }
-}
+use super::is_unique_violation;
 
 pub(crate) struct AcceptInviteOrchestrator {
     db: sea_orm::DatabaseConnection,
@@ -156,9 +150,17 @@ impl AcceptInviteOrchestrator {
 
         publish_game_ready_if_needed(&self.redis_client, game_id, new_status).await;
 
-        player::Entity::find_by_id(new_player_id)
-            .one(&self.db)
-            .await?
-            .ok_or(GameError::PlayerNotFound)
+        Ok(player::Model {
+            id: new_player_id,
+            game_id,
+            player_type: PlayerType::Human,
+            name: user_pseudo.to_string(),
+            position: next_position,
+            credits: credit_result.final_credit,
+            created_at: now,
+            user_id: Some(user_id),
+            kicked: false,
+            kicked_at: None,
+        })
     }
 }

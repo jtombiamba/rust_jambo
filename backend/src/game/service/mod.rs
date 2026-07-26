@@ -1,6 +1,7 @@
 mod ai_task;
 mod benchmark;
 mod caching;
+pub(crate) mod card_play;
 mod creation;
 mod evaluation;
 mod events;
@@ -46,8 +47,7 @@ pub const fn compute_display_position(
     (num_players + actual_pos - my_pos) % num_players
 }
 
-#[cfg(test)]
-fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
+pub(crate) fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
     if let sea_orm::DbErr::Exec(exec_err) = e {
         exec_err.to_string().contains("23505")
     } else {

@@ -113,6 +113,7 @@ pub struct MultiplayerGameOutcome {
 }
 
 /// Result of evaluating a completed round inside a transaction.
+#[derive(Clone, Debug)]
 pub struct RoundEvaluationResult {
     pub(crate) round: i32,
     pub(crate) winner_id: Uuid,

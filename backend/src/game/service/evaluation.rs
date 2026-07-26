@@ -25,6 +25,7 @@ use super::GameService;
 impl GameService {
     /// Check if all players have played a card in the given round.
     /// Uses the provided transaction connection to see uncommitted data.
+    #[tracing::instrument(skip(self, txn), fields(game_id = %game_id, round = %round))]
     pub(crate) async fn is_round_complete_txn(
         &self,
         txn: &DatabaseTransaction,
@@ -267,6 +268,7 @@ impl GameService {
     }
 
     /// Process payment for a finished game inside an active transaction.
+    #[tracing::instrument(skip(self, txn), fields(game_id = %game_id, winner_id = %result.winner_id))]
     pub(crate) async fn process_payment_in_txn(
         &self,
         txn: &DatabaseTransaction,
