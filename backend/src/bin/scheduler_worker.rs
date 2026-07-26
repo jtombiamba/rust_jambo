@@ -12,7 +12,7 @@ use jambo_backend::config::Config;
 use jambo_backend::database;
 use jambo_backend::mailer::{self, MailerConfig};
 use jambo_backend::messaging::RedisClient;
-use jambo_backend::observability::metrics;
+use jambo_backend::observability::metrics_init;
 use jambo_backend::scheduler::Scheduler;
 
 async fn metrics_handler() -> actix_web::HttpResponse {
@@ -30,7 +30,7 @@ async fn metrics_handler() -> actix_web::HttpResponse {
 async fn main() -> Result<()> {
     jambo_backend::observability::init_tracing("jambo-scheduler-worker");
 
-    metrics::init_all();
+    metrics_init::init_all();
 
     let config = Config::from_env().context("Failed to load configuration")?;
     info!("Starting scheduler worker");

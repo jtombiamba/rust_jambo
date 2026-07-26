@@ -1,6 +1,7 @@
 use super::compute_display_position;
+use super::is_unique_violation;
 use super::GameService;
-use sea_orm::{DatabaseBackend, MockDatabase};
+use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
 use uuid::Uuid;
 
 fn make_service_without_redis() -> GameService {
@@ -94,4 +95,24 @@ fn test_display_position_rotation_three_players() {
 #[test]
 fn test_display_position_single_player() {
     assert_eq!(compute_display_position(0, 1, 0), 0);
+}
+
+#[test]
+fn test_is_unique_violation_postgres() {
+    let err = DbErr::Exec(sea_orm::RuntimeErr::Internal(
+        "duplicate key value violates unique constraint \"23505\"".to_string(),
+    ));
+    assert!(is_unique_violation(&err));
+}
+
+#[test]
+fn test_is_unique_violation_other_db_error() {
+    let err = DbErr::RecordNotFound("not found".to_string());
+    assert!(!is_unique_violation(&err));
+}
+
+#[test]
+fn test_is_unique_violation_non_exec_error() {
+    let err = DbErr::Custom("custom error".to_string());
+    assert!(!is_unique_violation(&err));
 }

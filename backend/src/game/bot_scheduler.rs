@@ -27,6 +27,8 @@ pub struct BotScheduler {
     db: DatabaseConnection,
     rabbitmq: Option<RabbitMQClient>,
     redis: Option<RedisClient>,
+    freeze_duration_secs: u64,
+    unfreeze_credit_no_payment: i32,
 }
 
 impl BotScheduler {
@@ -34,34 +36,31 @@ impl BotScheduler {
         db: DatabaseConnection,
         rabbitmq: Option<RabbitMQClient>,
         redis: Option<RedisClient>,
+        freeze_duration_secs: u64,
+        unfreeze_credit_no_payment: i32,
     ) -> Self {
         Self {
             db,
             rabbitmq,
             redis,
+            freeze_duration_secs,
+            unfreeze_credit_no_payment,
         }
     }
 
     /// Called after a human plays. If the next player is a bot, dispatch an AI
     /// task via RabbitMQ, or fall back to the synchronous chain when RabbitMQ
     /// is unavailable.
+    #[tracing::instrument(level = "info", skip(self), fields(correlation_id = %correlation_id.map(|c| c.to_string()).unwrap_or_default(), game_id = %game_id, next_player = %next_player))]
     pub async fn schedule_if_next_bot(
         &self,
         game_id: Uuid,
         next_player: Uuid,
         correlation_id: Option<CorrelationId>,
     ) {
-        let cid_str = correlation_id.map(|c| c.to_string()).unwrap_or_default();
-        let span = tracing::info_span!(
-            "bot_scheduling",
-            correlation_id = %cid_str,
-            game_id = %game_id,
-            next_player = %next_player,
-        );
-        let _guard = span.enter();
-
         if let Some(client) = self.rabbitmq.as_ref() {
-            let service = GameService::new_with_redis(self.db.clone(), self.redis.clone());
+            let service = GameService::new_with_redis(self.db.clone(), self.redis.clone())
+                .with_freeze_params(self.freeze_duration_secs, self.unfreeze_credit_no_payment);
             let cid_uuid = correlation_id.map(|c| c.0);
             match service.build_ai_task(game_id, next_player, cid_uuid).await {
                 Ok(task) => {
@@ -73,8 +72,12 @@ impl BotScheduler {
                         );
                         let db = self.db.clone();
                         let redis = self.redis.clone();
+                        let fds = self.freeze_duration_secs;
+                        let ucnp = self.unfreeze_credit_no_payment;
+                        let cid = correlation_id;
                         tokio::spawn(async move {
-                            Self::run_sync_chain(db, redis, game_id, next_player).await;
+                            Self::run_sync_chain(db, redis, game_id, next_player, fds, ucnp, cid)
+                                .await;
                         });
                     } else {
                         info!(
@@ -99,8 +102,12 @@ impl BotScheduler {
                         );
                         let db = self.db.clone();
                         let redis = self.redis.clone();
+                        let fds = self.freeze_duration_secs;
+                        let ucnp = self.unfreeze_credit_no_payment;
+                        let cid = correlation_id;
                         tokio::spawn(async move {
-                            Self::run_sync_chain(db, redis, game_id, next_player).await;
+                            Self::run_sync_chain(db, redis, game_id, next_player, fds, ucnp, cid)
+                                .await;
                         });
                     } else {
                         info!(
@@ -115,8 +122,11 @@ impl BotScheduler {
             info!("RabbitMQ not available, running internal bot chain");
             let db = self.db.clone();
             let redis = self.redis.clone();
+            let fds = self.freeze_duration_secs;
+            let ucnp = self.unfreeze_credit_no_payment;
+            let cid = correlation_id;
             tokio::spawn(async move {
-                Self::run_sync_chain(db, redis, game_id, next_player).await;
+                Self::run_sync_chain(db, redis, game_id, next_player, fds, ucnp, cid).await;
             });
         }
     }
@@ -126,20 +136,24 @@ impl BotScheduler {
         redis: &Option<RedisClient>,
         game_id: Uuid,
         bot_player_id: Uuid,
-    ) -> Result<BotMoveOutcome, crate::game::service::GameServiceError> {
-        let service = GameService::new_with_redis(db.clone(), redis.clone());
+        freeze_duration_secs: u64,
+        unfreeze_credit_no_payment: i32,
+        correlation_id: Option<CorrelationId>,
+    ) -> Result<BotMoveOutcome, crate::error::GameError> {
+        let service = GameService::new_with_redis(db.clone(), redis.clone())
+            .with_freeze_params(freeze_duration_secs, unfreeze_credit_no_payment);
         let game_repo = GameRepository::new(db.clone());
         let game_card_repo = GameCardRepository::new(db.clone());
 
         let game = game_repo
             .find_by_id(game_id)
             .await?
-            .ok_or(crate::game::service::GameServiceError::GameNotFound)?;
+            .ok_or(crate::error::GameError::GameNotFound)?;
         if game.status == GameStatus::Finished
             || game.status == GameStatus::Kora
             || game.status == GameStatus::DoubleKora
         {
-            return Err(crate::game::service::GameServiceError::GameFinished);
+            return Err(crate::error::GameError::GameFinished);
         }
 
         let bot_cards: Vec<i32> = game_card_repo
@@ -165,7 +179,7 @@ impl BotScheduler {
 
         let move_start = Instant::now();
         let result = service
-            .update_card_play(game_id, bot_player_id, chosen, None)
+            .update_card_play(game_id, bot_player_id, chosen, correlation_id.map(|c| c.0))
             .await?;
 
         BOT_MOVE_DURATION_SECONDS
@@ -189,15 +203,16 @@ impl BotScheduler {
     /// bot continues the loop. Stops when the next player is human or the
     /// game ends. Limited to 10 concurrent chains via a global semaphore.
     /// This is the fallback path when RabbitMQ is unavailable.
+    #[tracing::instrument(level = "info", skip(db, redis), fields(game_id = %game_id))]
     pub async fn run_sync_chain(
         db: DatabaseConnection,
         redis: Option<RedisClient>,
         game_id: Uuid,
         player_id: Uuid,
+        freeze_duration_secs: u64,
+        unfreeze_credit_no_payment: i32,
+        correlation_id: Option<CorrelationId>,
     ) {
-        let span = tracing::info_span!("bot_sync_chain", game_id = %game_id);
-        let _guard = span.enter();
-
         let _permit = match SYNC_CHAIN_SEMAPHORE.clone().acquire_owned().await {
             Ok(p) => p,
             Err(_) => {
@@ -214,7 +229,17 @@ impl BotScheduler {
             let outcome = {
                 let mut retries = 0u32;
                 loop {
-                    match Self::execute_one_bot_move(&db, &redis, game_id, current_player).await {
+                    match Self::execute_one_bot_move(
+                        &db,
+                        &redis,
+                        game_id,
+                        current_player,
+                        freeze_duration_secs,
+                        unfreeze_credit_no_payment,
+                        correlation_id,
+                    )
+                    .await
+                    {
                         Ok(o) => break o,
                         Err(e) => {
                             retries += 1;

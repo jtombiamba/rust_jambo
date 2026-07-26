@@ -71,7 +71,7 @@ pub async fn get_active_game(
 pub async fn create_game(
     auth_user: AuthenticatedUser,
     body: web::Json<CreateGameRequest>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GameLifecycleService>>,
     db: web::Data<sea_orm::DatabaseConnection>,
 ) -> HttpResponse {
     if let Err(e) = body.validate() {
@@ -130,7 +130,7 @@ pub async fn send_invites(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     body: web::Json<SendInvitesRequest>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::InviteService>>,
     service: web::Data<Arc<DashboardServiceType>>,
     mailer: web::Data<Arc<dyn Mailer>>,
     i18n: I18n,
@@ -216,7 +216,7 @@ pub async fn respond_to_invite(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     query: web::Query<InviteActionQuery>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::InviteService>>,
     i18n: I18n,
 ) -> HttpResponse {
     let game_id = path.into_inner();
@@ -275,7 +275,7 @@ pub async fn get_invitations(
 pub async fn start_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GameLifecycleService>>,
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
@@ -291,7 +291,7 @@ pub async fn play_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     payload: web::Json<PlayCardRequest>,
-    orchestrator: web::Data<Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn crate::game::service::GamePlayService>>,
     service: web::Data<Arc<DashboardServiceType>>,
     i18n: I18n,
 ) -> HttpResponse {
@@ -343,197 +343,5 @@ pub async fn search_users(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::auth::extractors::AuthenticatedUser;
-    use crate::error::GameError;
-    use crate::game::orchestrator::mock::MockGameOrchestrator;
-    use crate::game::orchestrator::AcceptInviteOutcome;
-    use crate::i18n::Translator;
-    use actix_web::{test, web, App};
-    use std::sync::Arc;
-    use uuid::Uuid;
-
-    async fn make_app(
-        mock: Arc<dyn crate::game::orchestrator::GameOrchestratorTrait>,
-    ) -> impl actix_web::dev::Service<
-        actix_http::Request,
-        Response = actix_web::dev::ServiceResponse,
-        Error = actix_web::Error,
-    > {
-        test::init_service(
-            App::new()
-                .app_data(web::Data::new(mock))
-                .app_data(web::Data::new(Arc::new(Translator::new())))
-                .route("/{game_id}/respond", web::post().to(respond_to_invite)),
-        )
-        .await
-    }
-
-    fn authenticated_user() -> AuthenticatedUser {
-        AuthenticatedUser {
-            user_id: Uuid::new_v4(),
-            pseudo: "TestPlayer".to_string(),
-        }
-    }
-
-    fn accept_outcome() -> AcceptInviteOutcome {
-        AcceptInviteOutcome {
-            player_id: Uuid::new_v4(),
-            position: 1,
-            player_count: 2,
-            max_players: 4,
-            game_status: "pending".to_string(),
-        }
-    }
-
-    #[actix_web::test]
-    async fn respond_accept_success() {
-        let outcome = accept_outcome();
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        mock.set_accept_invite_result(Ok(outcome));
-        let app = make_app(mock).await;
-        let user = authenticated_user();
-        let game_id = Uuid::new_v4();
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/{game_id}/respond?action=accept"))
-            .to_request();
-        req.extensions_mut().insert(user);
-
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], true);
-        assert_eq!(body["action"], "accept");
-        assert_eq!(body["message"], "Joined game successfully");
-        assert!(body["player_id"].is_string());
-        assert_eq!(body["position"], 1);
-        assert_eq!(body["player_count"], 2);
-        assert_eq!(body["max_players"], 4);
-        assert_eq!(body["game_status"], "pending");
-    }
-
-    #[actix_web::test]
-    async fn respond_accept_game_ready() {
-        let mut outcome = accept_outcome();
-        outcome.game_status = "ready".to_string();
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        mock.set_accept_invite_result(Ok(outcome));
-        let app = make_app(mock).await;
-        let user = authenticated_user();
-        let game_id = Uuid::new_v4();
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/{game_id}/respond?action=accept"))
-            .to_request();
-        req.extensions_mut().insert(user);
-
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], true);
-        assert_eq!(body["message"], "Game is ready to start!");
-    }
-
-    #[actix_web::test]
-    async fn respond_accept_not_invited() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        mock.set_accept_invite_result(Err(GameError::NotInvited));
-        let app = make_app(mock).await;
-        let user = authenticated_user();
-        let game_id = Uuid::new_v4();
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/{game_id}/respond?action=accept"))
-            .to_request();
-        req.extensions_mut().insert(user);
-
-        let resp = test::call_service(&app, req).await;
-        assert!(!resp.status().is_success());
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], false);
-    }
-
-    #[actix_web::test]
-    async fn respond_decline_success() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let user = authenticated_user();
-        let game_id = Uuid::new_v4();
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/{game_id}/respond?action=decline"))
-            .to_request();
-        req.extensions_mut().insert(user);
-
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 200);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], true);
-        assert_eq!(body["action"], "decline");
-        assert_eq!(body["message"], "Invitation declined");
-        assert!(body["player_id"].is_null());
-        assert!(body["position"].is_null());
-        assert!(body["player_count"].is_null());
-        assert!(body["max_players"].is_null());
-        assert!(body["game_status"].is_null());
-    }
-
-    #[actix_web::test]
-    async fn respond_invalid_action_returns_400() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let user = authenticated_user();
-        let game_id = Uuid::new_v4();
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/{game_id}/respond?action=foo"))
-            .to_request();
-        req.extensions_mut().insert(user);
-
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 400);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("accept"));
-    }
-
-    #[actix_web::test]
-    async fn respond_missing_action_returns_error() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        let app = make_app(mock).await;
-        let user = authenticated_user();
-        let game_id = Uuid::new_v4();
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/{game_id}/respond"))
-            .to_request();
-        req.extensions_mut().insert(user);
-
-        let resp = test::call_service(&app, req).await;
-        assert!(!resp.status().is_success());
-    }
-
-    #[actix_web::test]
-    async fn respond_accept_account_frozen() {
-        let mock = Arc::new(MockGameOrchestrator::ok());
-        mock.set_accept_invite_result(Err(GameError::AccountFrozen {
-            until: "2026-05-18T12:00:00+00:00".to_string(),
-        }));
-        let app = make_app(mock).await;
-        let user = authenticated_user();
-        let game_id = Uuid::new_v4();
-
-        let req = test::TestRequest::post()
-            .uri(&format!("/{game_id}/respond?action=accept"))
-            .to_request();
-        req.extensions_mut().insert(user);
-
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), 403);
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("frozen"));
-    }
-}
+#[path = "dashboard_tests.rs"]
+mod tests;

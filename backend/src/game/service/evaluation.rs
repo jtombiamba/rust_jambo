@@ -10,13 +10,14 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::database::models::{game, game_card, player, player_profile, GameStatus};
+use crate::error::GameError;
 use crate::game::card_mapping::Card;
 use crate::game::constants::{
     CARDS_PER_PLAYER, DOUBLE_KORA_CREDIT_MULTIPLIER, KORA_CREDIT_MULTIPLIER,
 };
 use crate::game::payment::calculate_payment;
 use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
-use crate::game::service::types::{GameServiceError, RoundEvalTimer, RoundEvaluationResult};
+use crate::game::service::types::{RoundEvalTimer, RoundEvaluationResult};
 use crate::observability::metrics;
 
 use super::GameService;
@@ -24,12 +25,13 @@ use super::GameService;
 impl GameService {
     /// Check if all players have played a card in the given round.
     /// Uses the provided transaction connection to see uncommitted data.
+    #[tracing::instrument(skip(self, txn), fields(game_id = %game_id, round = %round))]
     pub(crate) async fn is_round_complete_txn(
         &self,
         txn: &DatabaseTransaction,
         game_id: Uuid,
         round: i32,
-    ) -> Result<bool, GameServiceError> {
+    ) -> Result<bool, GameError> {
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .all(txn)
@@ -59,7 +61,7 @@ impl GameService {
         txn: &DatabaseTransaction,
         game_id: Uuid,
         round: i32,
-    ) -> Result<RoundEvaluationResult, GameServiceError> {
+    ) -> Result<RoundEvaluationResult, GameError> {
         let _timer = RoundEvalTimer(Instant::now());
         let span = tracing::info_span!(
             "round_eval",
@@ -82,7 +84,7 @@ impl GameService {
             round
         );
         if played_cards.is_empty() {
-            return Err(GameServiceError::RoundNotComplete);
+            return Err(GameError::RoundNotComplete);
         }
 
         // Fetch players (via txn)
@@ -101,9 +103,7 @@ impl GameService {
                 let position = player_positions
                     .iter()
                     .position(|&id| id == player_id)
-                    .ok_or_else(|| {
-                        GameServiceError::Internal("Player not found in game".to_string())
-                    })?;
+                    .ok_or_else(|| GameError::internal("Player not found in game"))?;
                 let Ok(index) = u8::try_from(card.card_index) else {
                     continue;
                 };
@@ -118,7 +118,7 @@ impl GameService {
 
         let first_play = plays
             .first()
-            .ok_or_else(|| GameServiceError::Internal("No plays in round".to_string()))?;
+            .ok_or_else(|| GameError::internal("No plays in round"))?;
         let leading_card = Some(first_play.card);
         let leading_player_position = Some(first_play.player_position);
 
@@ -144,8 +144,8 @@ impl GameService {
             leading_card,
             leading_player_position,
         };
-        let round_result = evaluate_round(&ctx)
-            .ok_or_else(|| GameServiceError::Internal("Round evaluation failed".to_string()))?;
+        let round_result =
+            evaluate_round(&ctx).ok_or_else(|| GameError::internal("Round evaluation failed"))?;
         let winner_pos = round_result.winner_position;
         let winner_id = player_positions[winner_pos];
 
@@ -158,7 +158,7 @@ impl GameService {
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
 
         let read_version = game_model.updated_at;
 
@@ -254,7 +254,7 @@ impl GameService {
         let update_result = update.exec(txn).await?;
 
         if update_result.rows_affected == 0 {
-            return Err(GameServiceError::VersionConflict);
+            return Err(GameError::VersionConflict);
         }
 
         Ok(RoundEvaluationResult {
@@ -268,19 +268,20 @@ impl GameService {
     }
 
     /// Process payment for a finished game inside an active transaction.
+    #[tracing::instrument(skip(self, txn), fields(game_id = %game_id, winner_id = %result.winner_id))]
     pub(crate) async fn process_payment_in_txn(
         &self,
         txn: &DatabaseTransaction,
         game_id: Uuid,
         result: &RoundEvaluationResult,
-    ) -> Result<(), GameServiceError> {
+    ) -> Result<(), GameError> {
         let players = &result.players;
         let total_players = players.len();
         let winner_id = result.winner_id;
         let winner_position = players
             .iter()
             .position(|p| p.id == winner_id)
-            .ok_or_else(|| GameServiceError::Internal("Winner not in player list".to_string()))?;
+            .ok_or_else(|| GameError::internal("Winner not in player list"))?;
 
         let bet_multiplier = match result.final_status {
             GameStatus::Kora => KORA_CREDIT_MULTIPLIER,
@@ -296,7 +297,7 @@ impl GameService {
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
         let bet = game_model.bet * bet_multiplier;
 
         let credits = calculate_payment(winner_position, total_players, bet);
@@ -348,10 +349,7 @@ impl GameService {
         Ok(())
     }
 
-    pub async fn evaluate_round(
-        &self,
-        game_id: Uuid,
-    ) -> Result<RoundEvaluationResult, GameServiceError> {
+    pub async fn evaluate_round(&self, game_id: Uuid) -> Result<RoundEvaluationResult, GameError> {
         let max_retries = 3u32;
         let mut attempt = 0u32;
 
@@ -361,17 +359,17 @@ impl GameService {
             let game = game::Entity::find_by_id(game_id)
                 .one(&txn)
                 .await?
-                .ok_or(GameServiceError::GameNotFound)?;
+                .ok_or(GameError::GameNotFound)?;
 
             let round = game.roll;
 
             let result = match self.evaluate_round_in_txn(&txn, game_id, round).await {
                 Ok(result) => result,
-                Err(GameServiceError::VersionConflict) => {
+                Err(GameError::VersionConflict) => {
                     txn.rollback().await.ok();
                     attempt += 1;
                     if attempt >= max_retries {
-                        return Err(GameServiceError::Internal(
+                        return Err(GameError::internal(
                             "Optimistic lock conflict after max retries".to_string(),
                         ));
                     }

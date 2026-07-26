@@ -24,7 +24,7 @@ use crate::routes::configure;
 async fn main() -> std::io::Result<()> {
     crate::observability::init_tracing("jambo-backend");
 
-    crate::observability::metrics::init_all();
+    crate::observability::metrics_init::init_all();
 
     let config = crate::config::Config::from_env().expect("Failed to load configuration");
     let cpu_count = num_cpus::get();
@@ -95,7 +95,7 @@ mod tests {
 
     #[actix_web::test]
     async fn test_metrics_contains_default_metrics() {
-        crate::observability::metrics::init_all();
+        crate::observability::metrics_init::init_all();
         let app =
             actix_web::test::init_service(actix_web::App::new().service(routes::metrics)).await;
         let req = actix_web::test::TestRequest::get()

@@ -9,14 +9,14 @@ use crate::api::dto::responses::{
 };
 use crate::auth::config::AuthConfig;
 use crate::error::AppError;
-use crate::game::orchestrator::GameOrchestratorTrait;
+use crate::game::service::GamePlayService;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 
 #[post("/game/{id}/play")]
 pub async fn play_card(
     req: HttpRequest,
-    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<PlayCardRequest>,
 ) -> impl Responder {
@@ -53,7 +53,7 @@ pub async fn play_card(
 
 pub async fn advance_bot(
     req: HttpRequest,
-    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<PlayerActionRequest>,
 ) -> impl Responder {
@@ -161,7 +161,7 @@ pub async fn advance_bot(
 
 pub async fn evaluate_round(
     req: HttpRequest,
-    orchestrator: web::Data<Arc<dyn GameOrchestratorTrait>>,
+    orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<PlayerActionRequest>,
 ) -> impl Responder {

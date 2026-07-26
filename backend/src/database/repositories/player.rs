@@ -60,6 +60,7 @@ impl PlayerRepository {
             .await
     }
 
+    #[allow(dead_code)]
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_credits(&self, player_id: Uuid, credits: i32) -> Result<Player, DbErr> {
         let model = player::Entity::find_by_id(player_id)

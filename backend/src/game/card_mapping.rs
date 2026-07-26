@@ -67,5 +67,39 @@ mod tests {
         assert_eq!(heart.suit_colour(), "Red");
         let spade = Card::new(8).unwrap();
         assert_eq!(spade.suit_colour(), "Black");
+        let diamond = Card::new(16).unwrap();
+        assert_eq!(diamond.suit_colour(), "Red");
+        let club = Card::new(24).unwrap();
+        assert_eq!(club.suit_colour(), "Black");
+    }
+
+    #[test]
+    fn test_all_card_boundaries() {
+        // First card of each suit
+        assert_eq!(Card::new(0).unwrap().rank, 3);
+        assert_eq!(Card::new(8).unwrap().rank, 3);
+        assert_eq!(Card::new(16).unwrap().rank, 3);
+        assert_eq!(Card::new(24).unwrap().rank, 3);
+
+        // Last card of each suit
+        assert_eq!(Card::new(7).unwrap().rank, 10);
+        assert_eq!(Card::new(15).unwrap().rank, 10);
+        assert_eq!(Card::new(23).unwrap().rank, 10);
+        assert_eq!(Card::new(31).unwrap().rank, 10);
+
+        // Out of bounds
+        assert!(Card::new(32).is_none());
+    }
+
+    #[test]
+    fn test_suit_mapping() {
+        assert_eq!(Card::new(0).unwrap().suit, "Hearts");
+        assert_eq!(Card::new(7).unwrap().suit, "Hearts");
+        assert_eq!(Card::new(8).unwrap().suit, "Spades");
+        assert_eq!(Card::new(15).unwrap().suit, "Spades");
+        assert_eq!(Card::new(16).unwrap().suit, "Diamonds");
+        assert_eq!(Card::new(23).unwrap().suit, "Diamonds");
+        assert_eq!(Card::new(24).unwrap().suit, "Clubs");
+        assert_eq!(Card::new(31).unwrap().suit, "Clubs");
     }
 }

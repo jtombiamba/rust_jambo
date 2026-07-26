@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait,
-    QueryFilter, QueryOrder, Set,
+    sea_query::Expr, ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection,
+    DatabaseTransaction, DbErr, EntityTrait, QueryFilter, QueryOrder, Set, Value,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -222,6 +222,36 @@ impl GameRepository {
             .all(&self.connection)
             .await
     }
+}
+
+#[tracing::instrument(skip(txn))]
+pub async fn optimistic_update_round_state(
+    txn: &DatabaseTransaction,
+    game_id: Uuid,
+    new_rank: Option<i32>,
+    new_winning_card: Option<i32>,
+    new_winning_position: Option<i32>,
+    read_version: chrono::DateTime<chrono::Utc>,
+) -> Result<u64, DbErr> {
+    let result = game::Entity::update_many()
+        .col_expr(game::Column::Rank, Expr::value(Value::Int(new_rank)))
+        .col_expr(
+            game::Column::CurrentWinningCard,
+            Expr::value(Value::Int(new_winning_card)),
+        )
+        .col_expr(
+            game::Column::CurrentWinningPlayerPosition,
+            Expr::value(Value::Int(new_winning_position)),
+        )
+        .col_expr(
+            game::Column::UpdatedAt,
+            Expr::value(Value::ChronoDateTimeUtc(Some(chrono::Utc::now()))),
+        )
+        .filter(game::Column::Id.eq(game_id))
+        .filter(game::Column::UpdatedAt.eq(read_version))
+        .exec(txn)
+        .await?;
+    Ok(result.rows_affected)
 }
 
 #[async_trait]

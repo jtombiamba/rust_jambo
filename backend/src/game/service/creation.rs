@@ -6,8 +6,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::database::models::{game, player, player_profile, GameMode, GameStatus};
+use crate::error::GameError;
 use crate::game::constants::KORA_CREDIT_MULTIPLIER;
-use crate::game::service::types::{GameServiceError, MultiplayerGameOutcome};
+use crate::game::service::types::MultiplayerGameOutcome;
 
 use super::GameService;
 
@@ -18,7 +19,7 @@ impl GameService {
         creator_pseudo: &str,
         bet: i32,
         max_players: i16,
-    ) -> Result<MultiplayerGameOutcome, GameServiceError> {
+    ) -> Result<MultiplayerGameOutcome, GameError> {
         const INVITE_TIMEOUT_MINUTES: i64 = 6;
 
         let txn = self.db.begin().await?;
@@ -27,12 +28,12 @@ impl GameService {
             .filter(player_profile::Column::UserId.eq(creator_user_id))
             .one(&txn)
             .await?
-            .ok_or_else(|| GameServiceError::ProfileNotFound)?;
+            .ok_or_else(|| GameError::ProfileNotFound)?;
 
         if let Some(frozen_until) = profile.frozen_until {
             if frozen_until > chrono::Utc::now() {
                 txn.rollback().await.ok();
-                return Err(GameServiceError::AccountFrozen {
+                return Err(GameError::AccountFrozen {
                     until: frozen_until.to_rfc3339(),
                 });
             }
@@ -41,7 +42,7 @@ impl GameService {
         let required_credit = bet * KORA_CREDIT_MULTIPLIER;
         if profile.credit < required_credit {
             txn.rollback().await.ok();
-            return Err(GameServiceError::InsufficientCredits {
+            return Err(GameError::InsufficientCredits {
                 required: required_credit,
                 current: profile.credit,
             });
@@ -119,11 +120,11 @@ impl GameService {
         let game_model = game::Entity::find_by_id(inserted_game_id)
             .one(&txn)
             .await?
-            .ok_or_else(|| GameServiceError::Internal("Game not found after insert".to_string()))?;
+            .ok_or_else(|| GameError::internal("Game not found after insert"))?;
         let mut game_active: game::ActiveModel = game_model.into();
         game_active.player_positions =
             ActiveValue::Set(serde_json::to_value(player_positions).map_err(|e| {
-                GameServiceError::Internal(format!("Failed to serialize player_positions: {}", e))
+                GameError::internal(format!("Failed to serialize player_positions: {}", e))
             })?);
         game_active.update(&txn).await?;
 

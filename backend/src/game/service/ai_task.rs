@@ -2,7 +2,7 @@ use uuid::Uuid;
 
 use crate::database::models::GameStatus;
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
-use crate::game::service::types::GameServiceError;
+use crate::error::GameError;
 use crate::messaging::ai_task::{AITask, PlayerInfo};
 
 use super::GameService;
@@ -13,7 +13,7 @@ impl GameService {
         game_id: Uuid,
         player_id: Uuid,
         correlation_id: Option<Uuid>,
-    ) -> Result<AITask, GameServiceError> {
+    ) -> Result<AITask, GameError> {
         let span = tracing::info_span!(
             "build_ai_task",
             correlation_id = %correlation_id.map(|id| id.to_string()).unwrap_or_default(),
@@ -28,7 +28,7 @@ impl GameService {
         let game = game_repo
             .find_by_id(game_id)
             .await?
-            .ok_or(GameServiceError::GameNotFound)?;
+            .ok_or(GameError::GameNotFound)?;
 
         let players_future = player_repo.list_by_game(game_id);
         let bot_cards_future = card_repo.list_by_player(player_id);
@@ -48,7 +48,7 @@ impl GameService {
                 players.iter().map(|p| (p.id, p.position)).collect()
             } else {
                 serde_json::from_value(game.player_positions.clone()).map_err(|e| {
-                    GameServiceError::Internal(format!("Failed to parse player positions: {}", e))
+                    GameError::internal(format!("Failed to parse player positions: {}", e))
                 })?
             }
         };

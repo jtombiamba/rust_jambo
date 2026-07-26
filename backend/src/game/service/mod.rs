@@ -1,14 +1,23 @@
 mod ai_task;
+mod benchmark;
 mod caching;
+pub(crate) mod card_play;
 mod creation;
 mod evaluation;
 mod events;
 mod gameplay;
+pub(crate) mod idempotency;
+pub(crate) mod invite_acceptance;
 mod invites;
 mod lifecycle;
+#[cfg(test)]
+pub mod mock;
+mod orchestration;
+mod quick_game;
 mod recovery;
 #[cfg(test)]
 mod tests;
+mod trait_impl;
 pub mod types;
 
 use std::collections::HashMap;
@@ -16,9 +25,19 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::game::bot_scheduler::BotScheduler;
 use crate::mailer::Mailer;
 use crate::messaging::RedisClient;
-pub use types::{CardPlayResult, GameServiceError, MultiplayerGameOutcome};
+// pub use types::GameServiceTrait;
+
+#[allow(unused_imports)]
+pub use types::{
+    AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
+    BenchmarkPlayerOutcome, BenchmarkService, BotMoveOutcome, CardPlayResult, EvaluateRoundOutcome,
+    GameLifecycleService, GamePlayService, GameServiceTrait, InviteService,
+    MultiplayerCreationOutcome, MultiplayerGameOutcome, PlayCardOutcome, QuickGameOutcome,
+    RoundEvaluationResult,
+};
 
 pub const fn compute_display_position(
     actual_pos: usize,
@@ -28,7 +47,7 @@ pub const fn compute_display_position(
     (num_players + actual_pos - my_pos) % num_players
 }
 
-fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
+pub(crate) fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
     if let sea_orm::DbErr::Exec(exec_err) = e {
         exec_err.to_string().contains("23505")
     } else {
@@ -43,6 +62,7 @@ pub struct GameService {
     pub(crate) freeze_duration_secs: u64,
     pub(crate) unfreeze_credit_no_payment: i32,
     mailer: Option<Arc<dyn Mailer>>,
+    bot_scheduler: Option<BotScheduler>,
 }
 
 impl GameService {
@@ -55,6 +75,7 @@ impl GameService {
             freeze_duration_secs: 86400,
             unfreeze_credit_no_payment: 250,
             mailer: None,
+            bot_scheduler: None,
         }
     }
 
@@ -69,7 +90,23 @@ impl GameService {
             freeze_duration_secs: 86400,
             unfreeze_credit_no_payment: 250,
             mailer: None,
+            bot_scheduler: None,
         }
+    }
+
+    pub fn with_bot_scheduler(mut self, bot_scheduler: Option<BotScheduler>) -> Self {
+        self.bot_scheduler = bot_scheduler;
+        self
+    }
+
+    pub fn with_freeze_params(
+        mut self,
+        freeze_duration_secs: u64,
+        unfreeze_credit_no_payment: i32,
+    ) -> Self {
+        self.freeze_duration_secs = freeze_duration_secs;
+        self.unfreeze_credit_no_payment = unfreeze_credit_no_payment;
+        self
     }
 
     pub fn with_config(mut self, config: &Config, mailer: Arc<dyn Mailer>) -> Self {
