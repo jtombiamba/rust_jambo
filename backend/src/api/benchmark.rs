@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::error::AppError;
-use crate::game::service::GameServiceTrait;
+use crate::game::service::BenchmarkService;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateBenchmarkGameRequest {
@@ -68,7 +68,7 @@ fn validate_benchmark_token(req: &HttpRequest, config: &Config) -> Option<HttpRe
 pub async fn create_benchmark_game(
     req: HttpRequest,
     config: web::Data<Config>,
-    orchestrator: web::Data<Arc<dyn GameServiceTrait>>,
+    orchestrator: web::Data<Arc<dyn BenchmarkService>>,
     payload: web::Json<CreateBenchmarkGameRequest>,
 ) -> impl Responder {
     if let Some(error_response) = validate_benchmark_token(&req, config.get_ref()) {
@@ -126,7 +126,7 @@ pub async fn create_benchmark_game(
 pub async fn cleanup_benchmark_data(
     req: HttpRequest,
     config: web::Data<Config>,
-    orchestrator: web::Data<Arc<dyn GameServiceTrait>>,
+    orchestrator: web::Data<Arc<dyn BenchmarkService>>,
 ) -> impl Responder {
     if let Some(error_response) = validate_benchmark_token(&req, config.get_ref()) {
         return error_response;
@@ -145,3 +145,7 @@ pub async fn cleanup_benchmark_data(
         Err(e) => AppError::from(e).error_response(),
     }
 }
+
+#[cfg(test)]
+#[path = "benchmark_tests.rs"]
+mod benchmark_tests;

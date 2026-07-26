@@ -135,4 +135,101 @@ mod tests {
         };
         assert_eq!(err.to_string(), "Insufficient credits: need 10 but have 5");
     }
+
+    #[test]
+    fn test_game_error_displays() {
+        assert_eq!(GameError::GameNotFound.to_string(), "Game not found");
+        assert_eq!(GameError::PlayerNotFound.to_string(), "Player not found");
+        assert_eq!(
+            GameError::CardNotFound.to_string(),
+            "Card not found or already played"
+        );
+        assert_eq!(GameError::NotYourTurn.to_string(), "Not your turn to play");
+        assert_eq!(
+            GameError::InvalidCard.to_string(),
+            "Invalid card play: must follow suit if possible"
+        );
+        assert_eq!(
+            GameError::RoundNotComplete.to_string(),
+            "Round not complete"
+        );
+        assert_eq!(GameError::GameFinished.to_string(), "Game already finished");
+        assert_eq!(
+            GameError::GameNotPending.to_string(),
+            "Game is not in pending state"
+        );
+        assert_eq!(
+            GameError::NotCreator.to_string(),
+            "User is not the game creator"
+        );
+        assert_eq!(
+            GameError::NotInvited.to_string(),
+            "User is not invited to this game"
+        );
+        assert_eq!(
+            GameError::AlreadyJoined.to_string(),
+            "User is already a player in this game"
+        );
+        assert_eq!(GameError::GameFull.to_string(), "Game is full");
+        assert_eq!(
+            GameError::CreatorCannotJoin.to_string(),
+            "Creator cannot join their own game"
+        );
+        assert_eq!(
+            GameError::GameNotReady.to_string(),
+            "Game is not in ready state"
+        );
+        assert_eq!(
+            GameError::ProfileNotFound.to_string(),
+            "Player profile not found"
+        );
+        assert_eq!(
+            GameError::StepByStepOnly.to_string(),
+            "This operation is only available in step-by-step mode"
+        );
+        assert_eq!(
+            GameError::NotABot.to_string(),
+            "Current player is not a bot"
+        );
+        assert_eq!(
+            GameError::IdempotencyConflict.to_string(),
+            "A request with this idempotency key is already in progress"
+        );
+    }
+
+    #[test]
+    fn test_game_error_sources() {
+        assert_eq!(
+            GameError::Database(DbErr::RecordNotFound("x".into())).source(),
+            "game:database"
+        );
+        assert_eq!(GameError::GameNotFound.source(), "game:game_not_found");
+        assert_eq!(GameError::PlayerNotFound.source(), "game:player_not_found");
+        assert_eq!(GameError::NotYourTurn.source(), "game:not_your_turn");
+        assert_eq!(GameError::GameFinished.source(), "game:game_finished");
+        assert_eq!(GameError::VersionConflict.source(), "game:version_conflict");
+        assert_eq!(
+            GameError::Internal(Box::new(std::io::Error::other("oops"))).source(),
+            "game:internal"
+        );
+    }
+
+    #[test]
+    fn test_internal_error_creation() {
+        let err = GameError::internal("something broke");
+        assert!(err.to_string().contains("something broke"));
+    }
+
+    #[test]
+    fn test_from_transaction_error() {
+        let db_err = DbErr::RecordNotFound("test".into());
+        let tx_err = sea_orm::TransactionError::Connection(db_err.clone());
+        let game_err: GameError = tx_err.into();
+        assert!(matches!(game_err, GameError::Database(_)));
+
+        let db_err2 = DbErr::RecordNotFound("test2".into());
+        let tx_err2 = sea_orm::TransactionError::Transaction(db_err2);
+        let game_err2: GameError = tx_err2.into();
+        assert!(matches!(game_err2, GameError::Database(_)));
+    }
 }

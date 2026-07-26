@@ -15,5 +15,8 @@ pub mod websocket;
 
 pub use config::Config;
 pub use database::create_connection;
-pub use game::service::{GameService, GameServiceTrait};
+pub use game::service::{
+    BenchmarkService, GameLifecycleService, GamePlayService, GameService, GameServiceTrait,
+    InviteService,
+};
 pub use messaging::{AITask, RabbitMQClient, RedisClient};

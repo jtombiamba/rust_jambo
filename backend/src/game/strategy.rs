@@ -274,4 +274,75 @@ mod tests {
         let card2 = compute_strategy(&unplayed, &round_played, Some(0));
         assert!(unplayed.contains(&card2));
     }
+
+    #[test]
+    fn test_compute_strategy_empty_cards() {
+        let unplayed: Vec<i32> = vec![];
+        let round_played: Vec<i32> = vec![];
+        let card = compute_strategy(&unplayed, &round_played, None);
+        assert_eq!(card, -1);
+    }
+
+    #[test]
+    fn test_strategy_choice_long_down() {
+        let cards = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::LongDown);
+        assert!(card == 6 || card == 7);
+    }
+
+    #[test]
+    fn test_strategy_choice_mid_up() {
+        let cards = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::MidUp);
+        assert!((3..=5).contains(&card));
+    }
+
+    #[test]
+    fn test_strategy_choice_mid_down() {
+        let cards = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::MidDown);
+        assert!((3..=5).contains(&card));
+    }
+
+    #[test]
+    fn test_strategy_choice_short_up() {
+        let cards = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::ShortUp);
+        assert!((0..=2).contains(&card));
+    }
+
+    #[test]
+    fn test_strategy_choice_short_down() {
+        let cards = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::ShortDown);
+        assert!((0..=2).contains(&card));
+    }
+
+    #[test]
+    fn test_strategy_choice_no_matching_suit() {
+        let cards = vec![8, 9, 10]; // suit 1, no hearts
+        let card = pick_best_card_from_strategy_choice(&cards, Some(0), StrategyChoice::LongUp);
+        assert!(cards.contains(&card));
+    }
+
+    #[test]
+    fn test_pick_playable_cards_empty() {
+        let cards: Vec<i32> = vec![];
+        let playable = pick_playable_cards_in_round(&cards, Some(0));
+        assert!(playable.is_empty());
+    }
+
+    #[test]
+    fn test_random_high_is_always_valid() {
+        for _ in 0..20 {
+            let choice = StrategyChoice::random_high();
+            assert!(matches!(
+                choice,
+                StrategyChoice::LongUp
+                    | StrategyChoice::LongDown
+                    | StrategyChoice::MidUp
+                    | StrategyChoice::MidDown
+            ));
+        }
+    }
 }

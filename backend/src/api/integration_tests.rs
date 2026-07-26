@@ -7,7 +7,7 @@ mod tests {
     use crate::api::game::play_card;
     use crate::error::GameError;
     use crate::game::service::mock::MockGameService;
-    use crate::game::service::types::{GameServiceTrait, PlayCardOutcome, QuickGameOutcome};
+    use crate::game::service::types::{GamePlayService, PlayCardOutcome, QuickGameOutcome};
 
     fn play_outcome(card_id: Uuid) -> PlayCardOutcome {
         PlayCardOutcome {
@@ -37,7 +37,7 @@ mod tests {
     #[actix_web::test]
     async fn play_card_happy_path() {
         let card_id = Uuid::new_v4();
-        let mock: Arc<dyn GameServiceTrait> = Arc::new(MockGameService::new(
+        let mock: Arc<dyn GamePlayService> = Arc::new(MockGameService::new(
             Ok(play_outcome(card_id)),
             Ok(quick_outcome(Uuid::new_v4(), false)),
         ));
@@ -61,7 +61,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_game_finished_returns_409() {
-        let mock: Arc<dyn GameServiceTrait> = Arc::new(MockGameService::new(
+        let mock: Arc<dyn GamePlayService> = Arc::new(MockGameService::new(
             Err(GameError::GameFinished),
             Ok(quick_outcome(Uuid::new_v4(), false)),
         ));
@@ -80,7 +80,7 @@ mod tests {
 
     #[actix_web::test]
     async fn play_card_insufficient_credits_returns_402() {
-        let mock: Arc<dyn GameServiceTrait> = Arc::new(MockGameService::new(
+        let mock: Arc<dyn GamePlayService> = Arc::new(MockGameService::new(
             Err(GameError::InsufficientCredits {
                 required: 10,
                 current: 5,

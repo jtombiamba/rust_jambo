@@ -1,5 +1,6 @@
 use actix_web::{get, web, HttpResponse, Responder};
 use prometheus::Encoder;
+use std::sync::Arc;
 
 use crate::api::anonymous::get_anonymous_stats;
 use crate::api::fallback;
@@ -8,6 +9,9 @@ use crate::api::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::api::quickie::create_quick_game;
 use crate::api::room;
 use crate::bootstrap::AppState;
+use crate::game::service::{
+    BenchmarkService, GameLifecycleService, GamePlayService, InviteService,
+};
 
 #[get("/health")]
 pub async fn health_check() -> impl Responder {
@@ -50,11 +54,23 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     // let default_limiter =
     //     RateLimiterMiddleware::new(redis.clone(), configs.default.clone(), translator.clone());
 
+    let orchestrator = state.orchestrator.get_ref().clone();
+
     cfg.app_data(state.db.clone())
         .app_data(state.redis.clone())
         .app_data(state.rabbitmq.clone())
         .app_data(state.ws_manager.clone())
         .app_data(state.orchestrator.clone())
+        .app_data(web::Data::new(
+            orchestrator.clone() as Arc<dyn GamePlayService>
+        ))
+        .app_data(web::Data::new(
+            orchestrator.clone() as Arc<dyn InviteService>
+        ))
+        .app_data(web::Data::new(
+            orchestrator.clone() as Arc<dyn GameLifecycleService>
+        ))
+        .app_data(web::Data::new(orchestrator as Arc<dyn BenchmarkService>))
         .app_data(state.auth_config.clone())
         .app_data(state.auth_service.clone())
         .app_data(state.dashboard_service.clone())

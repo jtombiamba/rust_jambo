@@ -202,9 +202,10 @@ pub struct BenchmarkCleanupCounts {
     pub game_invites_deleted: u64,
 }
 
+/// Core gameplay operations: playing cards, advancing bots, evaluating rounds.
 #[async_trait::async_trait]
 #[allow(unused_variables)]
-pub trait GameServiceTrait: Send + Sync {
+pub trait GamePlayService: Send + Sync {
     async fn play_card(
         &self,
         game_id: Uuid,
@@ -213,72 +214,6 @@ pub trait GameServiceTrait: Send + Sync {
         correlation_id: Option<crate::observability::CorrelationId>,
         idempotency_key: Option<String>,
     ) -> Result<PlayCardOutcome, crate::error::GameError>;
-
-    async fn create_quick_game(
-        &self,
-        correlation_id: Option<crate::observability::CorrelationId>,
-        step_by_step: bool,
-    ) -> Result<QuickGameOutcome, crate::error::GameError>;
-
-    #[allow(dead_code)]
-    async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, crate::error::GameError>;
-
-    // async fn create_quick_game_for_user(
-    //     &self,
-    //     user_id: Uuid,
-    //     db: &sea_orm::DatabaseConnection,
-    // ) -> Result<QuickGameOutcome, crate::error::GameError>;
-
-    async fn create_quick_game_for_user_with_step_by_step(
-        &self,
-        user_id: Uuid,
-        db: &sea_orm::DatabaseConnection,
-        step_by_step: bool,
-    ) -> Result<QuickGameOutcome, crate::error::GameError>;
-
-    async fn create_multiplayer_game(
-        &self,
-        user_id: Uuid,
-        pseudo: &str,
-        bet: i32,
-        max_players: i16,
-    ) -> Result<MultiplayerCreationOutcome, crate::error::GameError>;
-
-    async fn create_benchmark_multiplayer_game(
-        &self,
-        user_ids: Vec<Uuid>,
-        bet: i32,
-    ) -> Result<BenchmarkGameOutcome, crate::error::GameError>;
-
-    async fn cleanup_benchmark_data(
-        &self,
-    ) -> Result<BenchmarkCleanupCounts, crate::error::GameError>;
-
-    async fn start_game(&self, game_id: Uuid, user_id: Uuid)
-        -> Result<(), crate::error::GameError>;
-
-    async fn send_invites(
-        &self,
-        game_id: Uuid,
-        creator_user_id: Uuid,
-        invited_user_ids: Vec<Uuid>,
-    ) -> Result<(), crate::error::GameError>;
-
-    async fn accept_invite(
-        &self,
-        game_id: Uuid,
-        user_id: Uuid,
-        pseudo: &str,
-    ) -> Result<AcceptInviteOutcome, crate::error::GameError>;
-
-    async fn decline_invite(
-        &self,
-        game_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<(), crate::error::GameError>;
-
-    #[allow(dead_code)]
-    async fn cancel_game(&self, game_id: Uuid) -> Result<(), crate::error::GameError>;
 
     async fn advance_bot(
         &self,
@@ -299,4 +234,86 @@ pub trait GameServiceTrait: Send + Sync {
         player_id: Uuid,
         user_id: Uuid,
     ) -> Result<bool, crate::error::GameError>;
+}
+
+/// Game invitation management: sending, accepting, and declining invites.
+#[async_trait::async_trait]
+#[allow(unused_variables)]
+pub trait InviteService: Send + Sync {
+    async fn send_invites(
+        &self,
+        game_id: Uuid,
+        creator_user_id: Uuid,
+        invited_user_ids: Vec<Uuid>,
+    ) -> Result<(), crate::error::GameError>;
+
+    async fn accept_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+        pseudo: &str,
+    ) -> Result<AcceptInviteOutcome, crate::error::GameError>;
+
+    async fn decline_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), crate::error::GameError>;
+}
+
+/// Game lifecycle operations: creation, start, and cancellation.
+#[async_trait::async_trait]
+#[allow(unused_variables)]
+pub trait GameLifecycleService: Send + Sync {
+    async fn create_quick_game(
+        &self,
+        correlation_id: Option<crate::observability::CorrelationId>,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, crate::error::GameError>;
+
+    #[allow(dead_code)]
+    async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, crate::error::GameError>;
+
+    async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        user_id: Uuid,
+        db: &sea_orm::DatabaseConnection,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, crate::error::GameError>;
+
+    async fn create_multiplayer_game(
+        &self,
+        user_id: Uuid,
+        pseudo: &str,
+        bet: i32,
+        max_players: i16,
+    ) -> Result<MultiplayerCreationOutcome, crate::error::GameError>;
+
+    async fn start_game(&self, game_id: Uuid, user_id: Uuid)
+        -> Result<(), crate::error::GameError>;
+
+    #[allow(dead_code)]
+    async fn cancel_game(&self, game_id: Uuid) -> Result<(), crate::error::GameError>;
+}
+
+/// Benchmark-specific operations for load testing and benchmarking.
+#[async_trait::async_trait]
+#[allow(unused_variables)]
+pub trait BenchmarkService: Send + Sync {
+    async fn create_benchmark_multiplayer_game(
+        &self,
+        user_ids: Vec<Uuid>,
+        bet: i32,
+    ) -> Result<BenchmarkGameOutcome, crate::error::GameError>;
+
+    async fn cleanup_benchmark_data(
+        &self,
+    ) -> Result<BenchmarkCleanupCounts, crate::error::GameError>;
+}
+
+/// Backward-compatible supertrait combining all game service concerns.
+/// Implemented by any type that implements all four sub-traits.
+pub trait GameServiceTrait:
+    GamePlayService + InviteService + GameLifecycleService + BenchmarkService
+{
 }

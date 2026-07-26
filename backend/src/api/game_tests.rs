@@ -7,10 +7,10 @@ mod tests {
     use std::sync::Arc;
     use uuid::Uuid;
 
-    use crate::api::game::play_card;
+    use crate::api::game::{advance_bot, evaluate_round, play_card};
 
     async fn make_app(
-        mock: Arc<dyn crate::game::service::GameServiceTrait>,
+        mock: Arc<dyn crate::game::service::GamePlayService>,
     ) -> impl actix_web::dev::Service<
         actix_http::Request,
         Response = actix_web::dev::ServiceResponse,
@@ -395,5 +395,156 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 500);
+    }
+
+    // ── advance_bot tests ──
+
+    async fn make_app_advance_bot(
+        mock: Arc<dyn crate::game::service::GamePlayService>,
+    ) -> impl actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    > {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::new(mock))
+                .service(web::resource("/game/{id}/advance-bot").to(advance_bot)),
+        )
+        .await
+    }
+
+    #[actix_web::test]
+    async fn advance_bot_success() {
+        let mock = Arc::new(MockGameService::ok());
+        let app = make_app_advance_bot(mock).await;
+        let game_id = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        let req = test::TestRequest::post()
+            .uri(&format!("/game/{}/advance-bot", game_id))
+            .set_json(serde_json::json!({ "player_id": player_id }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+    }
+
+    #[actix_web::test]
+    async fn advance_bot_game_not_found() {
+        let mock = Arc::new(MockGameService::new(
+            Err(GameError::GameNotFound),
+            Ok(quick_game_outcome()),
+        ));
+        let app = make_app_advance_bot(mock).await;
+        let game_id = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        let req = test::TestRequest::post()
+            .uri(&format!("/game/{}/advance-bot", game_id))
+            .set_json(serde_json::json!({ "player_id": player_id }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+    }
+
+    #[actix_web::test]
+    async fn advance_bot_not_a_bot() {
+        let mock = Arc::new(MockGameService::ok());
+        let app = make_app_advance_bot(mock).await;
+        let game_id = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        let req = test::TestRequest::post()
+            .uri(&format!("/game/{}/advance-bot", game_id))
+            .set_json(serde_json::json!({ "player_id": player_id }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+    }
+
+    // ── evaluate_round tests ──
+
+    async fn make_app_evaluate_round(
+        mock: Arc<dyn crate::game::service::GamePlayService>,
+    ) -> impl actix_web::dev::Service<
+        actix_http::Request,
+        Response = actix_web::dev::ServiceResponse,
+        Error = actix_web::Error,
+    > {
+        test::init_service(
+            App::new()
+                .app_data(web::Data::new(mock))
+                .service(web::resource("/game/{id}/evaluate-round").to(evaluate_round)),
+        )
+        .await
+    }
+
+    #[actix_web::test]
+    async fn evaluate_round_success() {
+        let mock = Arc::new(MockGameService::ok());
+        let app = make_app_evaluate_round(mock).await;
+        let game_id = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        let req = test::TestRequest::post()
+            .uri(&format!("/game/{}/evaluate-round", game_id))
+            .set_json(serde_json::json!({ "player_id": player_id }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+    }
+
+    #[actix_web::test]
+    async fn evaluate_round_game_not_found() {
+        let mock = Arc::new(MockGameService::new(
+            Err(GameError::GameNotFound),
+            Ok(quick_game_outcome()),
+        ));
+        let app = make_app_evaluate_round(mock).await;
+        let game_id = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        let req = test::TestRequest::post()
+            .uri(&format!("/game/{}/evaluate-round", game_id))
+            .set_json(serde_json::json!({ "player_id": player_id }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+    }
+
+    #[actix_web::test]
+    async fn evaluate_round_round_not_complete() {
+        let mock = Arc::new(MockGameService::ok());
+        let app = make_app_evaluate_round(mock).await;
+        let game_id = Uuid::new_v4();
+        let player_id = Uuid::new_v4();
+        let req = test::TestRequest::post()
+            .uri(&format!("/game/{}/evaluate-round", game_id))
+            .set_json(serde_json::json!({ "player_id": player_id }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+    }
+
+    fn quick_game_outcome() -> QuickGameOutcome {
+        QuickGameOutcome {
+            game_id: Uuid::new_v4(),
+            players: vec![],
+            status: "active".into(),
+            current_turn: 0,
+            bet: 10,
+            max_players: 4,
+            invite_expires_at: None,
+            deck_slots: None,
+            ws_token: None,
+            step_by_step: false,
+        }
     }
 }

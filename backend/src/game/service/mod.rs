@@ -31,7 +31,8 @@ use crate::messaging::RedisClient;
 #[allow(unused_imports)]
 pub use types::{
     AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
-    BenchmarkPlayerOutcome, BotMoveOutcome, CardPlayResult, EvaluateRoundOutcome, GameServiceTrait,
+    BenchmarkPlayerOutcome, BenchmarkService, BotMoveOutcome, CardPlayResult, EvaluateRoundOutcome,
+    GameLifecycleService, GamePlayService, GameServiceTrait, InviteService,
     MultiplayerCreationOutcome, MultiplayerGameOutcome, PlayCardOutcome, QuickGameOutcome,
     RoundEvaluationResult,
 };

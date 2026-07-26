@@ -6,7 +6,7 @@ use crate::api::dto::responses::QuickGameResponse;
 use crate::auth::config::AuthConfig;
 use crate::auth::jwt;
 use crate::error::AppError;
-use crate::game::service::GameServiceTrait;
+use crate::game::service::GameLifecycleService;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 
@@ -16,7 +16,7 @@ const GAME_TOKEN_TTL_SECS: u64 = 7200;
 #[post("/quickie")]
 pub async fn create_quick_game(
     req: HttpRequest,
-    orchestrator: web::Data<Arc<dyn GameServiceTrait>>,
+    orchestrator: web::Data<Arc<dyn GameLifecycleService>>,
     auth_config: web::Data<AuthConfig>,
     redis: web::Data<Option<RedisClient>>,
 ) -> impl Responder {
@@ -81,7 +81,9 @@ mod tests {
     use super::*;
     use crate::auth::config::AuthConfig;
     use crate::error::GameError;
-    use crate::game::service::{mock::MockGameService, PlayCardOutcome, QuickGameOutcome};
+    use crate::game::service::{
+        mock::MockGameService, GameLifecycleService, PlayCardOutcome, QuickGameOutcome,
+    };
     use actix_web::{test, web, App};
     use std::sync::Arc;
     use uuid::Uuid;
@@ -96,7 +98,7 @@ mod tests {
     }
 
     async fn make_app(
-        mock: Arc<dyn GameServiceTrait>,
+        mock: Arc<dyn GameLifecycleService>,
     ) -> impl actix_web::dev::Service<
         actix_http::Request,
         Response = actix_web::dev::ServiceResponse,

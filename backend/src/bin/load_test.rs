@@ -15,9 +15,9 @@ use uuid::Uuid;
 use jambo_backend::config::Config;
 use jambo_backend::database;
 use jambo_backend::database::models::{game, GameStatus};
-use jambo_backend::game::orchestrator::{GameService, GameServiceTrait};
 use jambo_backend::messaging::{self, RedisClient};
 use jambo_backend::observability::{metrics, metrics_init};
+use jambo_backend::{GameService, GameServiceTrait};
 
 #[derive(Parser, Debug)]
 #[command(name = "load-test")]

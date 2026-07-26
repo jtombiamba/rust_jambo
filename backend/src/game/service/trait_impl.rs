@@ -9,15 +9,17 @@ use crate::error::GameError;
 use crate::game::service::idempotency::IdempotencyGuard;
 use crate::game::service::types::{
     AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
-    EvaluateRoundOutcome, GameServiceTrait, MultiplayerCreationOutcome, PlayCardOutcome,
-    QuickGameOutcome,
+    BenchmarkService, EvaluateRoundOutcome, GameLifecycleService, GamePlayService,
+    GameServiceTrait, InviteService, MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
 };
 use crate::observability::CorrelationId;
 
 use super::GameService;
 
+// ── GamePlayService ────────────────────────────────────────────────────
+
 #[async_trait]
-impl GameServiceTrait for GameService {
+impl GamePlayService for GameService {
     #[tracing::instrument(level = "info", skip(self), fields(correlation_id = %correlation_id.map(|c| c.to_string()).unwrap_or_default(), game_id = %game_id, player_id = %player_id, card_index = card_index))]
     async fn play_card(
         &self,
@@ -94,120 +96,6 @@ impl GameServiceTrait for GameService {
         }
 
         Ok(outcome)
-    }
-
-    async fn create_quick_game(
-        &self,
-        correlation_id: Option<CorrelationId>,
-        step_by_step: bool,
-    ) -> Result<QuickGameOutcome, GameError> {
-        self.create_quick_game(correlation_id, step_by_step).await
-    }
-
-    async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
-        self.create_bot_only_game().await
-    }
-
-    // async fn create_quick_game_for_user(
-    //     &self,
-    //     user_id: Uuid,
-    //     db: &DatabaseConnection,
-    // ) -> Result<QuickGameOutcome, GameError> {
-    //     self.create_quick_game_for_user(user_id, db).await
-    // }
-
-    async fn create_quick_game_for_user_with_step_by_step(
-        &self,
-        user_id: Uuid,
-        db: &DatabaseConnection,
-        step_by_step: bool,
-    ) -> Result<QuickGameOutcome, GameError> {
-        self.create_quick_game_for_user_with_step_by_step(user_id, db, step_by_step)
-            .await
-    }
-
-    async fn create_multiplayer_game(
-        &self,
-        user_id: Uuid,
-        pseudo: &str,
-        bet: i32,
-        max_players: i16,
-    ) -> Result<MultiplayerCreationOutcome, GameError> {
-        let outcome = self
-            .create_multiplayer_game(user_id, pseudo, bet, max_players)
-            .await?;
-
-        Ok(MultiplayerCreationOutcome {
-            game_id: outcome.game_id,
-            status: "pending".to_string(),
-            bet: outcome.bet,
-            max_players: outcome.max_players,
-            invite_expires_at: outcome.invite_expires_at.to_rfc3339(),
-        })
-    }
-
-    async fn create_benchmark_multiplayer_game(
-        &self,
-        user_ids: Vec<Uuid>,
-        bet: i32,
-    ) -> Result<BenchmarkGameOutcome, GameError> {
-        self.create_benchmark_multiplayer_game(user_ids, bet).await
-    }
-
-    async fn cleanup_benchmark_data(&self) -> Result<BenchmarkCleanupCounts, GameError> {
-        self.cleanup_benchmark_data().await
-    }
-
-    async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
-        self.start_game(game_id, user_id).await
-    }
-
-    async fn send_invites(
-        &self,
-        game_id: Uuid,
-        creator_user_id: Uuid,
-        invited_user_ids: Vec<Uuid>,
-    ) -> Result<(), GameError> {
-        self.send_invites(game_id, creator_user_id, &invited_user_ids)
-            .await
-    }
-
-    async fn accept_invite(
-        &self,
-        game_id: Uuid,
-        user_id: Uuid,
-        pseudo: &str,
-    ) -> Result<AcceptInviteOutcome, GameError> {
-        let player = self.accept_invite(game_id, user_id, pseudo).await?;
-
-        let player_count = PlayerRepository::new(self.db.clone())
-            .list_by_game(game_id)
-            .await?
-            .len() as i32;
-
-        let game = GameRepository::new(self.db.clone())
-            .find_by_id(game_id)
-            .await?
-            .ok_or(GameError::GameNotFound)?;
-
-        Ok(AcceptInviteOutcome {
-            player_id: player.id,
-            position: player.position,
-            player_count,
-            max_players: game.max_players as i32,
-            game_status: match game.status {
-                GameStatus::Ready => "ready".to_string(),
-                _ => "pending".to_string(),
-            },
-        })
-    }
-
-    async fn decline_invite(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
-        self.decline_invite(game_id, user_id).await
-    }
-
-    async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
-        self.cancel_game(game_id).await
     }
 
     async fn advance_bot(
@@ -305,3 +193,128 @@ impl GameServiceTrait for GameService {
             .await
     }
 }
+
+// ── InviteService ──────────────────────────────────────────────────────
+
+#[async_trait]
+impl InviteService for GameService {
+    async fn send_invites(
+        &self,
+        game_id: Uuid,
+        creator_user_id: Uuid,
+        invited_user_ids: Vec<Uuid>,
+    ) -> Result<(), GameError> {
+        self.send_invites(game_id, creator_user_id, &invited_user_ids)
+            .await
+    }
+
+    async fn accept_invite(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+        pseudo: &str,
+    ) -> Result<AcceptInviteOutcome, GameError> {
+        let player = self.accept_invite(game_id, user_id, pseudo).await?;
+
+        let player_count = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
+            .await?
+            .len() as i32;
+
+        let game = GameRepository::new(self.db.clone())
+            .find_by_id(game_id)
+            .await?
+            .ok_or(GameError::GameNotFound)?;
+
+        Ok(AcceptInviteOutcome {
+            player_id: player.id,
+            position: player.position,
+            player_count,
+            max_players: game.max_players as i32,
+            game_status: match game.status {
+                GameStatus::Ready => "ready".to_string(),
+                _ => "pending".to_string(),
+            },
+        })
+    }
+
+    async fn decline_invite(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
+        self.decline_invite(game_id, user_id).await
+    }
+}
+
+// ── GameLifecycleService ───────────────────────────────────────────────
+
+#[async_trait]
+impl GameLifecycleService for GameService {
+    async fn create_quick_game(
+        &self,
+        correlation_id: Option<CorrelationId>,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, GameError> {
+        self.create_quick_game(correlation_id, step_by_step).await
+    }
+
+    async fn create_bot_only_game(&self) -> Result<QuickGameOutcome, GameError> {
+        self.create_bot_only_game().await
+    }
+
+    async fn create_quick_game_for_user_with_step_by_step(
+        &self,
+        user_id: Uuid,
+        db: &DatabaseConnection,
+        step_by_step: bool,
+    ) -> Result<QuickGameOutcome, GameError> {
+        self.create_quick_game_for_user_with_step_by_step(user_id, db, step_by_step)
+            .await
+    }
+
+    async fn create_multiplayer_game(
+        &self,
+        user_id: Uuid,
+        pseudo: &str,
+        bet: i32,
+        max_players: i16,
+    ) -> Result<MultiplayerCreationOutcome, GameError> {
+        let outcome = self
+            .create_multiplayer_game(user_id, pseudo, bet, max_players)
+            .await?;
+
+        Ok(MultiplayerCreationOutcome {
+            game_id: outcome.game_id,
+            status: "pending".to_string(),
+            bet: outcome.bet,
+            max_players: outcome.max_players,
+            invite_expires_at: outcome.invite_expires_at.to_rfc3339(),
+        })
+    }
+
+    async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
+        self.start_game(game_id, user_id).await
+    }
+
+    async fn cancel_game(&self, game_id: Uuid) -> Result<(), GameError> {
+        self.cancel_game(game_id).await
+    }
+}
+
+// ── BenchmarkService ──────────────────────────────────────────────────
+
+#[async_trait]
+impl BenchmarkService for GameService {
+    async fn create_benchmark_multiplayer_game(
+        &self,
+        user_ids: Vec<Uuid>,
+        bet: i32,
+    ) -> Result<BenchmarkGameOutcome, GameError> {
+        self.create_benchmark_multiplayer_game(user_ids, bet).await
+    }
+
+    async fn cleanup_benchmark_data(&self) -> Result<BenchmarkCleanupCounts, GameError> {
+        self.cleanup_benchmark_data().await
+    }
+}
+
+// ── Backward-compatible supertrait ────────────────────────────────────
+
+impl GameServiceTrait for GameService {}
