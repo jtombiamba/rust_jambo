@@ -6,6 +6,7 @@ mod evaluation;
 mod events;
 mod gameplay;
 pub(crate) mod idempotency;
+pub(crate) mod invite_acceptance;
 mod invites;
 mod lifecycle;
 #[cfg(test)]
@@ -45,6 +46,7 @@ pub const fn compute_display_position(
     (num_players + actual_pos - my_pos) % num_players
 }
 
+#[cfg(test)]
 fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
     if let sea_orm::DbErr::Exec(exec_err) = e {
         exec_err.to_string().contains("23505")
