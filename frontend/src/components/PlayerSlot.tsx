@@ -1,5 +1,6 @@
 import React from 'react';
-import Card from './Card';
+import { AnimatePresence } from 'framer-motion';
+import AnimatedCard from './AnimatedCard';
 import CardFan from './CardFan';
 
 export interface PlayerSlotProps {
@@ -86,15 +87,18 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
 
     return (
       <div className="flex flex-wrap gap-1 sm:gap-2 justify-center">
-        {displayCards.map((cardIndex) => (
-          <Card
-            key={cardIndex}
-            index={cardIndex}
-            faceUp={cardsFaceUp}
-            onClick={handleCardClick ? () => handleCardClick(cardIndex) : undefined}
-            selected={selectedCardIndex === cardIndex || (cards[0] === cardIndex && selectedCardIndex === 0)}
-          />
-        ))}
+        <AnimatePresence mode="popLayout">
+          {displayCards.map((cardIndex) => (
+            <AnimatedCard
+              key={cardIndex}
+              index={cardIndex}
+              faceUp={cardsFaceUp}
+              onClick={handleCardClick ? () => handleCardClick(cardIndex) : undefined}
+              selected={selectedCardIndex === cardIndex || (cards[0] === cardIndex && selectedCardIndex === 0)}
+              layoutId={`hand-card-${cardIndex}`}
+            />
+          ))}
+        </AnimatePresence>
       </div>
     );
   };

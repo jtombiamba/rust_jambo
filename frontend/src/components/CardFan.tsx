@@ -1,5 +1,7 @@
 import React from 'react';
+import { motion } from 'framer-motion';
 import Card from './Card';
+import AnimatedCard from './AnimatedCard';
 import './CardFan.css';
 
 export interface CardFanProps {
@@ -33,13 +35,18 @@ const CardFan: React.FC<CardFanProps> = ({
         <div className="card-fan-badge">{cards.length} cards</div>
         <div className="card-fan-mini">
           {cards.slice(-3).map((cardIndex, i) => (
-            <div
+            <motion.div
               key={i}
               className="card-fan-mini-card"
               style={{ left: `${i * 12}px`, zIndex: i }}
+              layout
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.2 }}
             >
               <Card index={cardIndex} faceUp={false} />
-            </div>
+            </motion.div>
           ))}
         </div>
       </div>
@@ -59,23 +66,41 @@ const CardFan: React.FC<CardFanProps> = ({
       data-testid="card-fan"
     >
       {cards.map((cardIndex, i) => (
-        <div
-          key={`${cardIndex}-${i}`}
+        <motion.div
+          key={`card-wrapper-${cardIndex}-${i}`}
           className={`card-fan-card ${selectedIndex === i ? 'selected' : ''}`}
           style={{
             left: `${step * i}px`,
             zIndex: i,
-            transition: 'transform 0.2s ease, translate 0.2s ease',
+          }}
+          layout
+          initial={{ opacity: 0, scale: 0.8, y: 20 }}
+          animate={{
+            opacity: 1,
+            scale: 1,
+            y: 0,
+          }}
+          exit={{
+            opacity: 0,
+            scale: 0.8,
+            y: -20,
+            transition: { duration: 0.3, ease: [0.34, 1.56, 0.64, 1] },
+          }}
+          transition={{
+            type: 'spring',
+            stiffness: 300,
+            damping: 25,
           }}
           data-testid={`card-fan-card-${i}`}
         >
-          <Card
+          <AnimatedCard
             index={cardIndex}
             faceUp={faceUp}
             onClick={onCardClick ? () => onCardClick(cardIndex) : undefined}
             selected={selectedIndex === i}
+            layoutId={`hand-card-${cardIndex}`}
           />
-        </div>
+        </motion.div>
       ))}
     </div>
   );
