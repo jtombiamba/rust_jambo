@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AnimatePresence, motion } from 'framer-motion';
 import PlayerSlot, { PlayerSlotProps } from './PlayerSlot';
-import Card from './Card';
+import AnimatedCard from './AnimatedCard';
+import CardCollectionAnimation from './CardCollectionAnimation';
 import WinnerRing from './WinnerRing';
 import GameOverModal from './GameOverModal';
 import GameRules from './GameRules';
@@ -169,13 +171,27 @@ const GameTable: React.FC<GameTableProps> = ({
             style={{ left: `${idx * step}px`, zIndex: idx }}
             data-testid={`${testIdPrefix}-${idx}`}
           >
-            {card !== null ? (
-              <Card index={card} faceUp={true} />
-            ) : (
-              <div className={placeholderClass}>
-                <div className={labelClass}>S{idx + 1}</div>
-              </div>
-            )}
+            <AnimatePresence mode="wait">
+              {card !== null ? (
+                <AnimatedCard
+                  key={`card-${card}`}
+                  index={card}
+                  faceUp={true}
+                  layoutId={`deck-card-${card}`}
+                />
+              ) : (
+                <motion.div
+                  key={`placeholder-${idx}`}
+                  className={placeholderClass}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <div className={labelClass}>S{idx + 1}</div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         ))}
       </div>
@@ -194,7 +210,29 @@ const GameTable: React.FC<GameTableProps> = ({
         </button>
       </div>
 
-      <div className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px]">
+      <div
+        className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px] rounded-xl overflow-hidden"
+        style={{
+          backgroundImage: 'url(/table_background_green.png)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+        }}
+      >
+        <div className="absolute inset-0 bg-black/20 pointer-events-none"></div>
+
+        {roundWinner && (
+          <CardCollectionAnimation
+            cards={deckSlots}
+            winnerPosition={
+              roundWinner.position !== null
+                ? positionMap[roundWinner.position] || null
+                : null
+            }
+          />
+        )}
+
+        <div className="relative z-10">
 
         {/* Mobile portrait layout */}
         {layoutMode === 'mobile-portrait' && (
@@ -380,11 +418,26 @@ const GameTable: React.FC<GameTableProps> = ({
                     className="w-16 h-24 border-2 border-dashed border-gray-400 rounded-lg flex items-center justify-center bg-gray-100"
                     data-testid={`deck-slot-${idx}`}
                   >
-                    {card !== null ? (
-                      <Card index={card} faceUp={true} />
-                    ) : (
-                      <div className="text-gray-400">{t('common.slot')} {idx + 1}</div>
-                    )}
+                    <AnimatePresence mode="wait">
+                      {card !== null ? (
+                        <AnimatedCard
+                          key={`card-${card}`}
+                          index={card}
+                          faceUp={true}
+                          layoutId={`deck-card-${card}`}
+                        />
+                      ) : (
+                        <motion.div
+                          key={`placeholder-${idx}`}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <div className="text-gray-400">{t('common.slot')} {idx + 1}</div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 ))}
               </div>
@@ -396,6 +449,7 @@ const GameTable: React.FC<GameTableProps> = ({
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {phase !== 'idle' && (
