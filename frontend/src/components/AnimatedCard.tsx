@@ -27,8 +27,9 @@ const AnimatedCard = forwardRef<HTMLDivElement, AnimatedCardProps>(({
       layoutId={layoutId}
       className={className}
       style={style}
-      initial={false}
+      initial={{ opacity: 0 }}
       animate={{
+        opacity: 1,
         scale: 1,
         rotate: 0,
       }}
