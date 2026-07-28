@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import Card from './Card';
 import AnimatedCard from './AnimatedCard';
 import './CardFan.css';
@@ -36,7 +36,7 @@ const CardFan: React.FC<CardFanProps> = ({
         <div className="card-fan-mini">
           {cards.slice(-3).map((cardIndex, i) => (
             <motion.div
-              key={i}
+              key={`mini-${cardIndex}-${i}`}
               className="card-fan-mini-card"
               style={{ left: `${i * 12}px`, zIndex: i }}
               layout
@@ -65,43 +65,45 @@ const CardFan: React.FC<CardFanProps> = ({
       style={{ width: maxWidth || `${totalWidth}px`, minHeight: '80px' }}
       data-testid="card-fan"
     >
-      {cards.map((cardIndex, i) => (
-        <motion.div
-          key={`card-wrapper-${cardIndex}-${i}`}
-          className={`card-fan-card ${selectedIndex === i ? 'selected' : ''}`}
-          style={{
-            left: `${step * i}px`,
-            zIndex: i,
-          }}
-          layout
-          initial={{ opacity: 0, scale: 0.8, y: 20 }}
-          animate={{
-            opacity: 1,
-            scale: 1,
-            y: 0,
-          }}
-          exit={{
-            opacity: 0,
-            scale: 0.8,
-            y: -20,
-            transition: { duration: 0.3, ease: [0.34, 1.56, 0.64, 1] },
-          }}
-          transition={{
-            type: 'spring',
-            stiffness: 300,
-            damping: 25,
-          }}
-          data-testid={`card-fan-card-${i}`}
-        >
-          <AnimatedCard
-            index={cardIndex}
-            faceUp={faceUp}
-            onClick={onCardClick ? () => onCardClick(cardIndex) : undefined}
-            selected={selectedIndex === i}
-            layoutId={`hand-card-${cardIndex}`}
-          />
-        </motion.div>
-      ))}
+      <AnimatePresence>
+        {cards.map((cardIndex, i) => (
+          <motion.div
+            key={`hand-card-${cardIndex}`}
+            className={`card-fan-card ${selectedIndex === i ? 'selected' : ''}`}
+            style={{
+              left: `${step * i}px`,
+              zIndex: i,
+            }}
+            layout
+            initial={{ opacity: 0, scale: 0.8, y: 20 }}
+            animate={{
+              opacity: 1,
+              scale: 1,
+              y: 0,
+            }}
+            exit={{
+              opacity: 0,
+              scale: 0.8,
+              y: -20,
+              transition: { duration: 0.3, ease: [0.34, 1.56, 0.64, 1] },
+            }}
+            transition={{
+              type: 'spring',
+              stiffness: 300,
+              damping: 25,
+            }}
+            data-testid={`card-fan-card-${i}`}
+          >
+            <AnimatedCard
+              index={cardIndex}
+              faceUp={faceUp}
+              onClick={onCardClick ? () => onCardClick(cardIndex) : undefined}
+              selected={selectedIndex === i}
+              layoutId={`hand-card-${cardIndex}`}
+            />
+          </motion.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 };

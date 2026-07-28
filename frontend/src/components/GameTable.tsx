@@ -171,7 +171,7 @@ const GameTable: React.FC<GameTableProps> = ({
             style={{ left: `${idx * step}px`, zIndex: idx }}
             data-testid={`${testIdPrefix}-${idx}`}
           >
-            <AnimatePresence mode="wait">
+            <AnimatePresence mode="sync">
               {card !== null ? (
                 <AnimatedCard
                   key={`card-${card}`}
