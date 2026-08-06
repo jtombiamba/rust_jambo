@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::database::models::PlayerType;
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
+use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::service::compute_display_position;
 
 use super::manager::WebSocketManager;
@@ -56,6 +58,8 @@ pub(super) async fn send_game_state_snapshot(
     let num_players = players.len();
     let my_pos = player_position as usize;
 
+    let played_counts: HashMap<Uuid, usize> = count_played_cards_per_player(db, game_id).await;
+
     let game_state_players: Vec<GameStatePlayer> = players
         .iter()
         .map(|p| {
@@ -64,12 +68,15 @@ pub(super) async fn send_game_state_snapshot(
                 PlayerType::Human => "human",
                 PlayerType::Bot => "bot",
             };
+            let cards_count =
+                CARDS_PER_PLAYER as i32 - *played_counts.get(&p.id).unwrap_or(&0) as i32;
             GameStatePlayer {
                 id: p.id,
                 name: p.name.clone(),
                 position: p.position,
                 display_position: display_pos as i32,
                 player_type: player_type_str.to_string(),
+                cards_count,
             }
         })
         .collect();
@@ -172,6 +179,7 @@ pub(super) async fn send_snapshots_to_all_players(
     }
 
     let num_players = players.len();
+    let played_counts: HashMap<Uuid, usize> = count_played_cards_per_player(db, game_id).await;
     let played_cards: Vec<Option<i32>> = match game_card_repo
         .list_by_game_and_round(game_id, game_model.roll)
         .await
@@ -223,6 +231,8 @@ pub(super) async fn send_snapshots_to_all_players(
                     position: p.position,
                     display_position: display_pos as i32,
                     player_type: player_type_str.to_string(),
+                    cards_count: CARDS_PER_PLAYER as i32
+                        - *played_counts.get(&p.id).unwrap_or(&0) as i32,
                 }
             })
             .collect();
@@ -255,4 +265,25 @@ pub(super) async fn send_snapshots_to_all_players(
             }
         }
     }
+}
+
+async fn count_played_cards_per_player(
+    db: &sea_orm::DatabaseConnection,
+    game_id: Uuid,
+) -> HashMap<Uuid, usize> {
+    let mut counts = HashMap::new();
+    let gc_repo = GameCardRepository::new(db.clone());
+    match gc_repo.list_played_by_game(game_id).await {
+        Ok(cards) => {
+            for card in cards {
+                if let Some(pid) = card.player_id {
+                    *counts.entry(pid).or_insert(0) += 1;
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to count played cards for game {}: {}", game_id, e);
+        }
+    }
+    counts
 }
