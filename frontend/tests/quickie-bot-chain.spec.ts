@@ -137,7 +137,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     await expect(page.getByText('Game Table')).toBeVisible();
 
     // Verify initial state: 5 human cards
-    const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
+    const humanCards = page.locator('[data-testid="player-slot-player-human"] [data-testid^="card-"]');
     await expect(humanCards).toHaveCount(5);
 
     // Human plays the first card (index 0)
@@ -220,7 +220,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     // After replay, deck should have 4 cards (human + 3 bots)
     // Each deck slot should not have placeholder text
     const deckSlots = page.locator('[data-testid^="deck-slot-"]');
-    const filledSlots = deckSlots.filter({ has: page.locator('.card') });
+    const filledSlots = deckSlots.filter({ has: page.locator('[data-testid^="card-"]') });
     await expect(filledSlots).toHaveCount(4);
 
     // Turn should be back to human (display_position 0)
@@ -241,7 +241,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     await expect(page.getByText('Game Table')).toBeVisible();
 
     // Human plays a card
-    const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
+    const humanCards = page.locator('[data-testid="player-slot-player-human"] [data-testid^="card-"]');
     await humanCards.first().click();
 
     // Human CardPlayed
@@ -291,7 +291,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
-    const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
+    const humanCards = page.locator('[data-testid="player-slot-player-human"] [data-testid^="card-"]');
     await humanCards.first().click();
 
     // Human plays, then bots play — the LAST bot's card completes the round
@@ -355,7 +355,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
-    const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
+    const humanCards = page.locator('[data-testid="player-slot-player-human"] [data-testid^="card-"]');
     await humanCards.first().click();
 
     // Human plays, bots start chain
@@ -390,8 +390,9 @@ test.describe('Quickie game — bot chain with delays', () => {
       });
     }, { gid: gameId, hid: humanId, bid1: bot1Id, bid2: bot2Id, bid3: bot3Id });
 
-    // Game over modal should appear
-    await expect(page.getByText('Game Over')).toBeVisible({ timeout: 5000 });
+    // Game over modal should appear. The game_finished event uses status 'kora',
+    // so the modal title is the localized "KORA!" string.
+    await expect(page.getByText('KORA!')).toBeVisible({ timeout: 5000 });
   });
 
   test('reconnection cancels bot replay and applies snapshot', async ({ page }) => {
@@ -400,7 +401,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
-    const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
+    const humanCards = page.locator('[data-testid="player-slot-player-human"] [data-testid^="card-"]');
     await humanCards.first().click();
 
     // Start bot chain
@@ -470,7 +471,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     // Snapshot should have been applied — deck has 4 cards now
     await page.waitForTimeout(500);
     const deckSlots = page.locator('[data-testid^="deck-slot-"]');
-    const filledSlots = deckSlots.filter({ has: page.locator('.card') });
+    const filledSlots = deckSlots.filter({ has: page.locator('[data-testid^="card-"]') });
     await expect(filledSlots).toHaveCount(4);
   });
 });

@@ -248,10 +248,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       let nextDelay: number;
 
       if (nextEvent.kind === 'round_pause') {
-        // Round boundary: show the winner and clear the deck now that the
-        // last card of the round has been applied by the replay.
+        // Round boundary: show the winner now that the last card of the round
+        // has been applied by the replay. The deck is NOT cleared here so the
+        // CardCollectionAnimation can animate the played cards flying toward
+        // the winner; it is cleared via onDeckAnimationComplete once the
+        // collection animation finishes.
         current.setRoundWinner(nextEvent.winner);
-        current.clearDeckSlots();
         if (current.roundWinnerClearTimerId) {
           clearTimeout(current.roundWinnerClearTimerId);
         }

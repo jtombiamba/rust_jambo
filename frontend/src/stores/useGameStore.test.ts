@@ -241,7 +241,7 @@ describe('useGameStore', () => {
       expect(useGameStore.getState().pendingBotMoves).toEqual([]);
     });
 
-    it('round_pause clears deck and sets winner only after last card is applied', () => {
+    it('round_pause sets winner only after last card is applied, keeping deck for collection animation', () => {
       const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
       const store = useGameStore.getState();
       store.setGame('g1', players, 'active', 0, 10);
@@ -263,11 +263,18 @@ describe('useGameStore', () => {
       expect(useGameStore.getState().roundWinner).toBeNull();
 
       // Advance past the initial botDelayMs (100ms) so the round_pause is
-      // consumed: the deck clears and the winner is set.
+      // consumed: the winner is set, but the deck is NOT cleared here so the
+      // CardCollectionAnimation can animate the played cards toward the winner.
+      // The deck is cleared externally via clearDeckSlots() once the animation
+      // completes (wired through onDeckAnimationComplete in App.tsx).
       vi.advanceTimersByTime(100);
       let state = useGameStore.getState();
-      expect(state.deckSlots).toEqual([null, null]);
+      expect(state.deckSlots).toEqual([5, null]);
       expect(state.roundWinner).toEqual({ playerId: 'b', position: 1, winType: 'normal' });
+
+      // Simulate the collection animation completing: the deck clears.
+      state.clearDeckSlots();
+      expect(useGameStore.getState().deckSlots).toEqual([null, null]);
 
       // After the roundPauseMs (500ms) the winner is cleared automatically.
       vi.advanceTimersByTime(500);

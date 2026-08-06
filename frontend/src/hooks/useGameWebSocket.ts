@@ -13,7 +13,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     setGameStatus,
     setRoundWinner,
     clearRoundWinner,
-    clearDeckSlots,
     setGameOver,
     setPendingGameOver,
     updatePlayerCards,
@@ -100,9 +99,11 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             // bot follows (e.g. the human starts the next round).
             startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
           } else {
-            // No bot chain in flight — show the winner and clear the deck now.
+            // No bot chain in flight — show the winner. The deck is NOT cleared
+            // here so the CardCollectionAnimation can animate the played cards
+            // toward the winner; it is cleared via onDeckAnimationComplete once
+            // the collection animation finishes.
             setRoundWinner(winner);
-            clearDeckSlots();
             if (roundWinnerTimerRef.current) {
               clearTimeout(roundWinnerTimerRef.current);
             }
@@ -135,6 +136,10 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             // visually replayed, so the last bots are shown playing before the
             // modal appears. The replay loop applies it once the queue drains.
             setPendingGameOver(gameOverData);
+            // Ensure the replay runs to drain the queue and apply the deferred
+            // game-over, even when the game ends before the last bot plays
+            // (so startBotReplay was never triggered by a human turn).
+            startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
           } else {
             cancelBotReplay();
             setGameOver(gameOverData);
