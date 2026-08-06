@@ -36,7 +36,7 @@ const CardFan: React.FC<CardFanProps> = ({
         <div className="card-fan-mini">
           {cards.slice(-3).map((cardIndex, i) => (
             <motion.div
-              key={`mini-${cardIndex}-${i}`}
+              key={`mini-${cardIndex}`}
               className="card-fan-mini-card"
               style={{ left: `${i * 12}px`, zIndex: i }}
               layout

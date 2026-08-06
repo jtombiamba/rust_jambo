@@ -95,6 +95,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   botThinkingDelayMs: 800,
   roundPauseDelayMs: 2500,
   setGame: (gameId, players, status, currentTurn, bet, deckSlots?) => {
+    const state = get();
     const remainingCards: Record<string, number> = {};
     const playersWithDisplay = players.map((p) => ({
       ...p,
@@ -106,6 +107,29 @@ export const useGameStore = create<GameState>((set, get) => ({
     const resolvedDeckSlots: (number | null)[] = deckSlots && deckSlots.length === players.length
       ? deckSlots
       : new Array(players.length).fill(null);
+
+    // Only skip update if absolutely nothing meaningful changed.
+    // Compare actual card arrays (not just counts) to avoid missing card content updates.
+    const sameGameId = gameId === state.gameId;
+    const sameStatus = status === state.status;
+    const sameTurn = currentTurn === state.currentTurn;
+    const sameDecks = resolvedDeckSlots.length === state.deckSlots.length
+      && resolvedDeckSlots.every((s, i) => s === state.deckSlots[i]);
+    const sameCards = playersWithDisplay.length === state.players.length
+      && playersWithDisplay.every((p) => {
+        const existing = state.players.find((ep) => ep.id === p.id);
+        if (!existing) return false;
+        if (p.cards.length !== existing.cards.length) return false;
+        return p.cards.every((c, i) => c === existing.cards[i]);
+      });
+    const sameRemaining = playersWithDisplay.every(
+      (p) => remainingCards[p.id] === state.remainingCards[p.id]
+    );
+
+    if (sameGameId && sameStatus && sameTurn && sameDecks && sameCards && sameRemaining) {
+      return;
+    }
+
     set({ gameId, players: playersWithDisplay, status, currentTurn, bet, remainingCards, deckSlots: resolvedDeckSlots });
   },
   resetGame: () =>

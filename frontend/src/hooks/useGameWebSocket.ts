@@ -189,6 +189,13 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
 
           const snapshotPlayers: Player[] = event.players.map((p) => {
             const existing = existingPlayers.find((ep) => ep.id === p.id);
+            // Preserve actual cards from existing player data (e.g., human player's hand).
+            // For bots or players without existing cards, generate placeholder indices
+            // based on cards_count so the UI can render the correct number of face-down cards.
+            const cardsCount = p.cards_count ?? existing?.cards_count ?? 0;
+            // const cards = existing?.cards && existing.cards.length > 0
+            //   ? existing.cards
+            //   : Array.from({ length: cardsCount }, (_, i) => i);
             return {
               id: p.id,
               type: p.player_type as 'human' | 'bot',
@@ -196,12 +203,14 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               position: p.position,
               display_position: p.display_position,
               cards: existing?.cards ?? [],
-              cards_count: existing?.cards_count,
+              cards_count: cardsCount,
             };
           });
 
           const remainingCards: Record<string, number> = {};
           snapshotPlayers.forEach((p) => {
+            // Use cards_count as the authoritative source for remaining card count
+            // remainingCards[p.id] = p.cards_count ?? existingRemaining[p.id] ?? p.cards.length;
             remainingCards[p.id] = existingRemaining[p.id] ?? p.cards.length;
           });
 
