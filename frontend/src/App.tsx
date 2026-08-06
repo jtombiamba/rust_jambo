@@ -66,7 +66,7 @@ function AppContent() {
   const [lobbyGameId, setLobbyGameId] = useState<string | null>(null)
   const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
   const [wsToken, setWsToken] = useState<string | null>(null)
-  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver, setStepByStep } = useGameStore() // clearDeckSlots,
+  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver, setStepByStep, clearDeckSlots } = useGameStore()
   const isMultiplayer = players.length > 0 && players.every(p => p.type === 'human')
   const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite, user } = useAuthStore()
   const { isConnected } = useWebSocket({ gameId: gameId || '' })
@@ -434,8 +434,7 @@ function AppContent() {
             remainingCards={remainingCards}
             roundWinner={roundWinner}
             gameOver={gameOver}
-            // onDeckAnimationComplete={clearDeckSlots}
-            onDeckAnimationComplete={() => {}}
+            onDeckAnimationComplete={clearDeckSlots}
             onCardClick={handleCardClick}
             showPlayAgain={!isMultiplayer && !runId}
             onPlayAgain={runId ? handlePlayNextInRun : startGame}
