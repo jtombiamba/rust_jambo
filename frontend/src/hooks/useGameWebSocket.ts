@@ -1,5 +1,5 @@
 import { useEffect, useRef} from 'react';
-import { useGameStore, GameResult, Player } from '../stores/useGameStore';
+import { useGameStore, GameResult, Player, RoundWinner } from '../stores/useGameStore';
 import { useWebSocket, GameEvent } from './useWebSocket';
 import { updateAnonymousStatsAfterGame } from '../utils/storage';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -27,7 +27,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
 
   const { showToast } = useToast();
   const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const deckClearTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Find the human player's id and position for WebSocket identity
   const humanPlayer = players.find((p) => p.type === 'human');
@@ -82,32 +81,33 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           break;
         }
         case 'round_completed': {
-          if (deckClearTimerRef.current) {
-            clearTimeout(deckClearTimerRef.current);
-          }
-          deckClearTimerRef.current = setTimeout(() => {
-            clearDeckSlots();
-          }, 800);
-
           const winType = (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal';
           const winnerPlayer = players.find((p) => p.id === event.winner_id);
           const winnerDisplayPos = winnerPlayer?.display_position ?? event.winner_position;
-          setRoundWinner({
+          const winner: RoundWinner = {
             playerId: event.winner_id,
             position: winnerDisplayPos,
             winType,
-          });
-
-          if (roundWinnerTimerRef.current) {
-            clearTimeout(roundWinnerTimerRef.current);
-          }
-          roundWinnerTimerRef.current = setTimeout(() => {
-            clearRoundWinner();
-          }, 3000);
+          };
 
           const state = useGameStore.getState();
           if (state.isBotChainActive || state.isReplayingBots) {
-            addPendingEvent({ kind: 'round_pause' });
+            // Defer deck-clear + winner declaration to the replay queue's
+            // round_pause barrier so the last card is fully shown first.
+            addPendingEvent({ kind: 'round_pause', winner });
+            // Ensure the replay runs to consume the round_pause even when no
+            // bot follows (e.g. the human starts the next round).
+            startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
+          } else {
+            // No bot chain in flight — show the winner and clear the deck now.
+            setRoundWinner(winner);
+            clearDeckSlots();
+            if (roundWinnerTimerRef.current) {
+              clearTimeout(roundWinnerTimerRef.current);
+            }
+            roundWinnerTimerRef.current = setTimeout(() => {
+              clearRoundWinner();
+            }, 3000);
           }
           break;
         }
@@ -251,9 +251,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     return () => {
       if (roundWinnerTimerRef.current) {
         clearTimeout(roundWinnerTimerRef.current);
-      }
-      if (deckClearTimerRef.current) {
-        clearTimeout(deckClearTimerRef.current);
       }
     };
   }, []);
