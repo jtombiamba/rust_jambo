@@ -133,7 +133,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     await expect(page.getByText('FapFap Card Game')).toBeVisible();
 
     // Start the game
-    await page.getByRole('button', { name: 'Start a game' }).click();
+    await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
     // Verify initial state: 5 human cards
@@ -237,7 +237,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     await expect(page.getByText('FapFap Card Game')).toBeVisible();
 
     // Start the game
-    await page.getByRole('button', { name: 'Start a game' }).click();
+    await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
     // Human plays a card
@@ -288,7 +288,7 @@ test.describe('Quickie game — bot chain with delays', () => {
   test('round completion triggers pause before new round', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByText('FapFap Card Game')).toBeVisible();
-    await page.getByRole('button', { name: 'Start a game' }).click();
+    await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
     const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
@@ -329,21 +329,30 @@ test.describe('Quickie game — bot chain with delays', () => {
       });
     }, { gid: gameId, hid: humanId, bid1: bot1Id, bid2: bot2Id, bid3: bot3Id });
 
-    // Wait for replay + round pause
-    await page.waitForTimeout(1000);
+    // Replay timeline (botDelayMs=800, roundPauseMs=2500):
+    //   t=800  apply bot1 card
+    //   t=1600 apply bot2 card
+    //   t=2400 apply bot3 card (last card of the round)
+    //   t=4900 consume round_pause -> clear deck + show winner
+    //
+    // The last card must remain visible until the round_pause barrier is
+    // consumed, so the deck must NOT be cleared before ~4900ms.
 
-    // After round_completed, deck should clear (after 800ms timeout in handler)
-    await page.waitForTimeout(1000);
-
-    // Verify deck slots are cleared (all null/empty)
+    // Wait until the last bot card has been applied but the round_pause has
+    // not yet been consumed (~3500ms). The deck should still be filled.
+    await page.waitForTimeout(3500);
     const deckSlot0 = page.locator('[data-testid="deck-slot-0"]');
+    await expect(deckSlot0).not.toContainText('Slot 1');
+
+    // Wait past the round_pause barrier (~4900ms) and verify the deck clears.
+    await page.waitForTimeout(2000);
     await expect(deckSlot0).toContainText('Slot 1');
   });
 
   test('game finished mid-chain cancels replay queue', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByText('FapFap Card Game')).toBeVisible();
-    await page.getByRole('button', { name: 'Start a game' }).click();
+    await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
     const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
@@ -388,7 +397,7 @@ test.describe('Quickie game — bot chain with delays', () => {
   test('reconnection cancels bot replay and applies snapshot', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByText('FapFap Card Game')).toBeVisible();
-    await page.getByRole('button', { name: 'Start a game' }).click();
+    await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
     const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');

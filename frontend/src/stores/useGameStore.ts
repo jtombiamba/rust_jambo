@@ -32,7 +32,7 @@ export type StepByStepPhase = 'idle' | 'human_turn' | 'bot_turn' | 'evaluate_rou
 
 export type QueuedBotEvent =
   | { kind: 'bot_play'; playerId: string; cardIndex: number; nextTurnPlayerId: string }
-  | { kind: 'round_pause' };
+  | { kind: 'round_pause'; winner: RoundWinner | null };
 
 export interface GameState {
   gameId: string | null;
@@ -48,6 +48,7 @@ export interface GameState {
   pendingBotMoves: QueuedBotEvent[];
   isReplayingBots: boolean;
   botReplayTimerId: ReturnType<typeof setTimeout> | null;
+  roundWinnerClearTimerId: ReturnType<typeof setTimeout> | null;
   isBotChainActive: boolean;
   botThinkingDelayMs: number;
   roundPauseDelayMs: number;
@@ -86,6 +87,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   pendingBotMoves: [],
   isReplayingBots: false,
   botReplayTimerId: null,
+  roundWinnerClearTimerId: null,
   isBotChainActive: false,
   botThinkingDelayMs: 800,
   roundPauseDelayMs: 2500,
@@ -118,6 +120,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       pendingBotMoves: [],
       isReplayingBots: false,
       isBotChainActive: false,
+      roundWinnerClearTimerId: null,
     }),
   updatePlayerCards: (playerId, cards) =>
     set((state) => ({
@@ -210,6 +213,17 @@ export const useGameStore = create<GameState>((set, get) => ({
       let nextDelay: number;
 
       if (nextEvent.kind === 'round_pause') {
+        // Round boundary: show the winner and clear the deck now that the
+        // last card of the round has been applied by the replay.
+        current.setRoundWinner(nextEvent.winner);
+        current.clearDeckSlots();
+        if (current.roundWinnerClearTimerId) {
+          clearTimeout(current.roundWinnerClearTimerId);
+        }
+        const clearTimer = setTimeout(() => {
+          set({ roundWinner: null, roundWinnerClearTimerId: null });
+        }, roundPauseMs);
+        set({ roundWinnerClearTimerId: clearTimer });
         nextDelay = roundPauseMs;
       } else {
         current.applyCardPlayed(nextEvent.playerId, nextEvent.cardIndex, nextEvent.nextTurnPlayerId);
@@ -232,11 +246,15 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (state.botReplayTimerId !== null) {
       clearTimeout(state.botReplayTimerId);
     }
+    if (state.roundWinnerClearTimerId !== null) {
+      clearTimeout(state.roundWinnerClearTimerId);
+    }
     set({
       pendingBotMoves: [],
       isReplayingBots: false,
       isBotChainActive: false,
       botReplayTimerId: null,
+      roundWinnerClearTimerId: null,
     });
   },
   flushPendingEvents: () => {

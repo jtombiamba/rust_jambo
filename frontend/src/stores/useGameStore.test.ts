@@ -147,7 +147,7 @@ describe('useGameStore', () => {
     it('addPendingEvent appends to queue', () => {
       const store = useGameStore.getState();
       store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
-      store.addPendingEvent({ kind: 'round_pause' });
+      store.addPendingEvent({ kind: 'round_pause', winner: null });
       const state = useGameStore.getState();
       expect(state.pendingBotMoves).toHaveLength(2);
       expect(state.pendingBotMoves[0].kind).toBe('bot_play');
@@ -202,7 +202,7 @@ describe('useGameStore', () => {
       const store = useGameStore.getState();
       store.setGame('g1', players, 'active', 0, 10);
       store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
-      store.addPendingEvent({ kind: 'round_pause' });
+      store.addPendingEvent({ kind: 'round_pause', winner: null });
       store.addPendingEvent({ kind: 'bot_play', playerId: 'c', cardIndex: 12, nextTurnPlayerId: 'a' });
       store.flushPendingEvents();
       const state = useGameStore.getState();
@@ -232,13 +232,49 @@ describe('useGameStore', () => {
       const store = useGameStore.getState();
       store.setGame('g1', players, 'active', 0, 10);
       store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'a' });
-      store.addPendingEvent({ kind: 'round_pause' });
+      store.addPendingEvent({ kind: 'round_pause', winner: null });
       store.startBotReplay(100, 500);
 
       vi.runAllTimers();
 
       expect(useGameStore.getState().isReplayingBots).toBe(false);
       expect(useGameStore.getState().pendingBotMoves).toEqual([]);
+    });
+
+    it('round_pause clears deck and sets winner only after last card is applied', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+
+      // Fill the deck with the last card of the round (bot plays it).
+      store.applyCardPlayed('b', 5, 'a');
+      expect(useGameStore.getState().deckSlots).toEqual([5, null]);
+
+      // Queue the round_pause carrying the winner.
+      store.addPendingEvent({
+        kind: 'round_pause',
+        winner: { playerId: 'b', position: 1, winType: 'normal' },
+      });
+      store.startBotReplay(100, 500);
+
+      // Before the round_pause is consumed, the deck is still filled and no
+      // winner is shown yet.
+      expect(useGameStore.getState().deckSlots).toEqual([5, null]);
+      expect(useGameStore.getState().roundWinner).toBeNull();
+
+      // Advance past the initial botDelayMs (100ms) so the round_pause is
+      // consumed: the deck clears and the winner is set.
+      vi.advanceTimersByTime(100);
+      let state = useGameStore.getState();
+      expect(state.deckSlots).toEqual([null, null]);
+      expect(state.roundWinner).toEqual({ playerId: 'b', position: 1, winType: 'normal' });
+
+      // After the roundPauseMs (500ms) the winner is cleared automatically.
+      vi.advanceTimersByTime(500);
+      state = useGameStore.getState();
+      expect(state.roundWinner).toBeNull();
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.pendingBotMoves).toEqual([]);
     });
 
     it('flushPendingEvents applies all bot_play moves immediately', () => {
@@ -250,7 +286,7 @@ describe('useGameStore', () => {
       const store = useGameStore.getState();
       store.setGame('g1', players, 'active', 0, 10);
       store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
-      store.addPendingEvent({ kind: 'round_pause' });
+      store.addPendingEvent({ kind: 'round_pause', winner: null });
       store.addPendingEvent({ kind: 'bot_play', playerId: 'c', cardIndex: 12, nextTurnPlayerId: 'a' });
       store.flushPendingEvents();
       const state = useGameStore.getState();
