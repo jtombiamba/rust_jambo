@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to start consuming AI tasks")?;
     info!(
-        "Waiting for AI tasks (concurrent: {}, delay: {}ms)...",
+        "Waiting for AI tasks (concurrent: {}, frontend thinking delay: {}ms)...",
         max_concurrent, *BOT_THINKING_DELAY_MS
     );
 

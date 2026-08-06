@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 use crate::database::models::{GameStatus, PlayerType};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
-use crate::game::constants::BOT_THINKING_DELAY_MS;
 use crate::game::service::types::BotMoveOutcome;
 use crate::game::service::GameService;
 use crate::game::strategy::compute_strategy;
@@ -224,8 +223,6 @@ impl BotScheduler {
         let mut current_player = player_id;
 
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(*BOT_THINKING_DELAY_MS)).await;
-
             let outcome = {
                 let mut retries = 0u32;
                 loop {

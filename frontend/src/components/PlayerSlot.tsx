@@ -15,6 +15,8 @@ export interface PlayerSlotProps {
   remainingCount?: number;
   /** Whether this player currently has the turn */
   isCurrentTurn?: boolean;
+  /** Whether this bot is currently thinking (bot chain replay in progress) */
+  isThinking?: boolean;
   /** Optional callback when a card is clicked (only relevant for human players) */
   onCardClick?: (cardIndex: number) => void;
   /** Whether to use compact mode (for mobile portrait) */
@@ -43,6 +45,7 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
   cardsFaceUp,
   remainingCount,
   isCurrentTurn = false,
+  isThinking = false,
   onCardClick,
   compact = false,
   selectedCardIndex = null,
@@ -101,8 +104,11 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
       className={`flex flex-col items-center p-2 sm:p-4 ${positionStyles[position]} ${ringClass} rounded-lg`}
       data-testid={`player-slot-${playerId}`}
     >
-      <div className={`${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2`}>
+      <div className={`${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2 flex items-center gap-1`}>
         {name} {type === 'bot' && '🤖'}
+        {isThinking && (
+          <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse" title="thinking..." />
+        )}
       </div>
       <div className="flex justify-center w-full">
         {renderCards()}

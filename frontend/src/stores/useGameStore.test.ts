@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { useGameStore } from './useGameStore';
 
 const makePlayer = (id: string, position: number, display_position?: number) => ({
@@ -10,9 +10,23 @@ const makePlayer = (id: string, position: number, display_position?: number) => 
   cards: [0, 1, 2, 3, 4],
 });
 
+const makeBotPlayer = (id: string, position: number, display_position?: number) => ({
+  id,
+  type: 'bot' as const,
+  name: `Bot ${position}`,
+  position,
+  display_position: display_position ?? position,
+  cards: [],
+});
+
 describe('useGameStore', () => {
   beforeEach(() => {
     useGameStore.getState().resetGame();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('setGame', () => {
@@ -98,6 +112,151 @@ describe('useGameStore', () => {
       useGameStore.getState().resetGame();
       expect(useGameStore.getState().deckSlots).toEqual([]);
       expect(useGameStore.getState().gameId).toBeNull();
+    });
+
+    it('resets bot chain state', () => {
+      const players = [makePlayer('a', 0), makePlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'a' });
+      useGameStore.setState({ isBotChainActive: true, isReplayingBots: true });
+      store.resetGame();
+      const state = useGameStore.getState();
+      expect(state.pendingBotMoves).toEqual([]);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+    });
+  });
+
+  describe('bot delays', () => {
+    it('has sensible defaults', () => {
+      const state = useGameStore.getState();
+      expect(state.botThinkingDelayMs).toBe(800);
+      expect(state.roundPauseDelayMs).toBe(2500);
+    });
+
+    it('setBotDelays updates both values', () => {
+      useGameStore.getState().setBotDelays(500, 1000);
+      const state = useGameStore.getState();
+      expect(state.botThinkingDelayMs).toBe(500);
+      expect(state.roundPauseDelayMs).toBe(1000);
+    });
+  });
+
+  describe('pending events queue', () => {
+    it('addPendingEvent appends to queue', () => {
+      const store = useGameStore.getState();
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
+      store.addPendingEvent({ kind: 'round_pause' });
+      const state = useGameStore.getState();
+      expect(state.pendingBotMoves).toHaveLength(2);
+      expect(state.pendingBotMoves[0].kind).toBe('bot_play');
+      expect(state.pendingBotMoves[1].kind).toBe('round_pause');
+    });
+
+    it('clearPendingEvents empties queue', () => {
+      const store = useGameStore.getState();
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
+      store.clearPendingEvents();
+      expect(useGameStore.getState().pendingBotMoves).toEqual([]);
+    });
+
+    it('cancelBotReplay clears queue and stops replay', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'a' });
+      useGameStore.setState({ isBotChainActive: true, isReplayingBots: true, botReplayTimerId: setTimeout(() => {}, 999) });
+      store.cancelBotReplay();
+      const state = useGameStore.getState();
+      expect(state.pendingBotMoves).toEqual([]);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.botReplayTimerId).toBeNull();
+    });
+  });
+
+  describe('bot replay', () => {
+    it('does not start replay if queue is empty', () => {
+      const store = useGameStore.getState();
+      store.startBotReplay(800, 2500);
+      expect(useGameStore.getState().isReplayingBots).toBe(false);
+    });
+
+    it('does not start replay if already replaying', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'a' });
+      useGameStore.setState({ isReplayingBots: true });
+      store.startBotReplay(800, 2500);
+      expect(useGameStore.getState().pendingBotMoves).toHaveLength(1);
+    });
+
+    it('applies pending bot_play via flushPendingEvents', () => {
+      const players = [
+        makePlayer('a', 0),
+        makeBotPlayer('b', 1),
+        makeBotPlayer('c', 2),
+      ];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
+      store.addPendingEvent({ kind: 'round_pause' });
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'c', cardIndex: 12, nextTurnPlayerId: 'a' });
+      store.flushPendingEvents();
+      const state = useGameStore.getState();
+      expect(state.pendingBotMoves).toEqual([]);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.currentTurn).toBe(0);
+    });
+
+    it('replays bot_play via startBotReplay with timer', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'a' });
+      store.startBotReplay(100, 500);
+
+      expect(useGameStore.getState().isReplayingBots).toBe(true);
+
+      vi.runAllTimers();
+
+      expect(useGameStore.getState().isReplayingBots).toBe(false);
+      expect(useGameStore.getState().pendingBotMoves).toEqual([]);
+    });
+
+    it('handles round_pause in replay queue', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'a' });
+      store.addPendingEvent({ kind: 'round_pause' });
+      store.startBotReplay(100, 500);
+
+      vi.runAllTimers();
+
+      expect(useGameStore.getState().isReplayingBots).toBe(false);
+      expect(useGameStore.getState().pendingBotMoves).toEqual([]);
+    });
+
+    it('flushPendingEvents applies all bot_play moves immediately', () => {
+      const players = [
+        makePlayer('a', 0),
+        makeBotPlayer('b', 1),
+        makeBotPlayer('c', 2),
+      ];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
+      store.addPendingEvent({ kind: 'round_pause' });
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'c', cardIndex: 12, nextTurnPlayerId: 'a' });
+      store.flushPendingEvents();
+      const state = useGameStore.getState();
+      expect(state.pendingBotMoves).toEqual([]);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
     });
   });
 });

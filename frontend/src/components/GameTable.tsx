@@ -5,7 +5,7 @@ import Card from './Card';
 import WinnerRing from './WinnerRing';
 import GameOverModal from './GameOverModal';
 import GameRules from './GameRules';
-import { RoundWinner, GameOverData, useStepByStepPhase } from '../stores/useGameStore';
+import { RoundWinner, GameOverData, useStepByStepPhase, useGameStore } from '../stores/useGameStore';
 
 export interface GamePlayer {
   id: string;
@@ -67,6 +67,8 @@ const GameTable: React.FC<GameTableProps> = ({
 }) => {
   const { t } = useTranslation();
   const phase = useStepByStepPhase();
+  const isReplayingBots = useGameStore((s) => s.isReplayingBots);
+  const isBotChainActive = useGameStore((s) => s.isBotChainActive);
 
   const getLayoutMode = (): LayoutMode => {
     if (typeof window === 'undefined') return 'desktop';
@@ -117,6 +119,9 @@ const GameTable: React.FC<GameTableProps> = ({
     const displayPos = getDisplayPos(player);
     const position = positionMap[displayPos] || 'south';
     const isCurrentTurn = currentTurn !== undefined && displayPos === currentTurn;
+    const isBotThinking = player.type === 'bot'
+      && (isReplayingBots || isBotChainActive)
+      && isCurrentTurn;
     const isWinner = isPlayerRoundWinner(displayPos);
 
     return (
@@ -130,7 +135,8 @@ const GameTable: React.FC<GameTableProps> = ({
           cardsFaceUp={player.cards.length > 0}
           remainingCount={remainingCards[player.id]}
           isCurrentTurn={isCurrentTurn}
-          onCardClick={(cardIndex) => onCardClick?.(player.id, cardIndex)}
+          isThinking={isBotThinking}
+          onCardClick={(cardIndex) => isReplayingBots ? undefined : onCardClick?.(player.id, cardIndex)}
           compact={compact}
           orientation={layoutMode === 'mobile-portrait' ? 'portrait' : 'landscape'}
         />
@@ -315,6 +321,9 @@ const GameTable: React.FC<GameTableProps> = ({
               const displayPos = getDisplayPos(player);
               const position = positionMap[displayPos] || 'south';
               const isCurrentTurn = currentTurn !== undefined && displayPos === currentTurn;
+              const isBotThinking = player.type === 'bot'
+                && (isReplayingBots || isBotChainActive)
+                && isCurrentTurn;
               const isWinner = isPlayerRoundWinner(displayPos);
 
               let gridClass = '';
@@ -346,7 +355,8 @@ const GameTable: React.FC<GameTableProps> = ({
                     cardsFaceUp={player.cards.length > 0}
                     remainingCount={remainingCards[player.id]}
                     isCurrentTurn={isCurrentTurn}
-                    onCardClick={(cardIndex) => onCardClick?.(player.id, cardIndex)}
+                    isThinking={isBotThinking}
+                    onCardClick={(cardIndex) => isReplayingBots ? undefined : onCardClick?.(player.id, cardIndex)}
                     overlapCards={false}
                   />
                   {isWinner && roundWinner && (

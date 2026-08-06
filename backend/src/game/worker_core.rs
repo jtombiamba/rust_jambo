@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use sea_orm::DatabaseConnection;
 use tracing::{debug, error, info, warn};
@@ -8,7 +6,6 @@ use uuid::Uuid;
 use crate::database::models::PlayerType;
 use crate::game::bot::execute_bot_move_from_task;
 use crate::game::bot_scheduler::BotScheduler;
-use crate::game::constants::BOT_THINKING_DELAY_MS;
 use crate::game::service::GameService;
 use crate::messaging::redis::PublishResult;
 use crate::messaging::{AITask, RabbitMQClient, RedisClient};
@@ -46,12 +43,6 @@ pub async fn process_bot_move(
         task.bot_hand_cards.len(),
         task.played_cards_this_round.len()
     );
-
-    info!(
-        "Bot {} thinking for {} ms before playing in game {}",
-        player_id, *BOT_THINKING_DELAY_MS, game_id
-    );
-    tokio::time::sleep(Duration::from_millis(*BOT_THINKING_DELAY_MS)).await;
 
     let start_time = std::time::Instant::now();
 
