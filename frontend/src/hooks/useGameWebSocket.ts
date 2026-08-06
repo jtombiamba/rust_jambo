@@ -1,5 +1,5 @@
 import { useEffect, useRef} from 'react';
-import { useGameStore, GameResult, Player, RoundWinner } from '../stores/useGameStore';
+import { useGameStore, GameResult, Player, RoundWinner, GameOverData } from '../stores/useGameStore';
 import { useWebSocket, GameEvent } from './useWebSocket';
 import { updateAnonymousStatsAfterGame } from '../utils/storage';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -15,6 +15,7 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     clearRoundWinner,
     clearDeckSlots,
     setGameOver,
+    setPendingGameOver,
     updatePlayerCards,
     players,
     bet,
@@ -112,7 +113,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           break;
         }
         case 'game_finished': {
-          cancelBotReplay();
           setGameStatus(event.status);
 
           const winner = event.winner_id ? players.find(p => p.id === event.winner_id) : null;
@@ -122,11 +122,23 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             roundsPlayed: event.rounds_played,
           };
 
-          setGameOver({
+          const gameOverData: GameOverData = {
             isGameOver: true,
             winner: winner || null,
             result: gameResult,
-          });
+          };
+
+          const state = useGameStore.getState();
+          if (state.isBotChainActive || state.isReplayingBots) {
+            // A bot chain is still buffering/replaying. Defer the game-over
+            // modal until the queued bot cards (and round_pause) have been
+            // visually replayed, so the last bots are shown playing before the
+            // modal appears. The replay loop applies it once the queue drains.
+            setPendingGameOver(gameOverData);
+          } else {
+            cancelBotReplay();
+            setGameOver(gameOverData);
+          }
 
           const { isAuthenticated } = useAuthStore.getState();
           if (!isAuthenticated) {

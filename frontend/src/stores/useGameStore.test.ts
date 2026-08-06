@@ -294,5 +294,60 @@ describe('useGameStore', () => {
       expect(state.isBotChainActive).toBe(false);
       expect(state.isReplayingBots).toBe(false);
     });
+
+    it('applies a deferred game-over only after the bot replay queue drains', () => {
+      const players = [
+        makePlayer('a', 0),
+        makeBotPlayer('b', 1),
+        makeBotPlayer('c', 2),
+      ];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+
+      // Simulate the last round: bots are queued and a game-over is deferred
+      // (game_finished arrived while the bot chain was still buffering).
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'b', cardIndex: 5, nextTurnPlayerId: 'c' });
+      store.addPendingEvent({ kind: 'bot_play', playerId: 'c', cardIndex: 12, nextTurnPlayerId: 'a' });
+      store.addPendingEvent({ kind: 'round_pause', winner: null });
+      store.setPendingGameOver({
+        isGameOver: true,
+        winner: makePlayer('a', 0),
+        result: { status: 'finished', roundsPlayed: 3 },
+      });
+
+      // Before replay runs, the game-over must NOT be shown yet.
+      expect(useGameStore.getState().gameOver).toBeNull();
+      expect(useGameStore.getState().pendingGameOver).not.toBeNull();
+
+      store.startBotReplay(100, 500);
+      expect(useGameStore.getState().isReplayingBots).toBe(true);
+
+      // Run all timers so the bots replay and the queue drains.
+      vi.runAllTimers();
+
+      const state = useGameStore.getState();
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.pendingBotMoves).toEqual([]);
+      // The deferred game-over is now applied.
+      expect(state.pendingGameOver).toBeNull();
+      expect(state.gameOver?.isGameOver).toBe(true);
+    });
+
+    it('cancelBotReplay applies a deferred game-over so it is never lost', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10);
+      store.setPendingGameOver({
+        isGameOver: true,
+        winner: makePlayer('a', 0),
+        result: { status: 'finished', roundsPlayed: 3 },
+      });
+
+      store.cancelBotReplay();
+
+      const state = useGameStore.getState();
+      expect(state.pendingGameOver).toBeNull();
+      expect(state.gameOver?.isGameOver).toBe(true);
+    });
   });
 });
