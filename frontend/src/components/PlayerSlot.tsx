@@ -52,10 +52,18 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
   selectedCardIndex = null,
   overlapCards = true,
 }) => {
+  // Determine the effective card count: use actual cards if available,
+  // otherwise fall back to remainingCount (which comes from the backend's cards_count)
+  const effectiveCardCount = cards.length > 0
+    ? cards.length
+    : (remainingCount !== undefined && remainingCount > 0 ? remainingCount : 0);
+
+  // Generate display cards: use actual card indices if available,
+  // otherwise generate placeholder indices (0..count-1) for face-down rendering
   const displayCards = cards.length > 0
     ? cards
-    : (remainingCount !== undefined && remainingCount > 0
-        ? Array.from({ length: remainingCount }, (_, i) => i)
+    : (effectiveCardCount > 0
+        ? Array.from({ length: effectiveCardCount }, (_, i) => i)
         : []);
 
   const handleCardClick = cards.length > 0 && onCardClick

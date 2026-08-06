@@ -20,6 +20,7 @@ export interface GameStatePlayer {
   position: number;
   display_position: number;
   player_type: string;
+  cards_count: number;
 }
 
 export interface GameStateCard {

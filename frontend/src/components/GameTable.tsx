@@ -26,6 +26,7 @@ export interface GameTableProps {
   roundWinner?: RoundWinner | null;
   gameOver?: GameOverData | null;
   onCardClick?: (playerId: string, cardIndex: number) => void;
+  onDeckAnimationComplete?: () => void;
   onPlayAgain?: () => void;
   onReturnToLobby?: () => void;
   onCloseGameOver?: () => void;
@@ -60,6 +61,7 @@ const GameTable: React.FC<GameTableProps> = ({
   roundWinner = null,
   gameOver = null,
   onCardClick,
+  onDeckAnimationComplete,
   onPlayAgain,
   onReturnToLobby,
   onCloseGameOver,
@@ -125,6 +127,8 @@ const GameTable: React.FC<GameTableProps> = ({
       && (isReplayingBots || isBotChainActive)
       && isCurrentTurn;
     const isWinner = isPlayerRoundWinner(displayPos);
+    // Human players see their own cards face-up; bots' cards are face-down
+    // const cardsFaceUp = player.type === 'human';
 
     return (
       <div key={player.id} className="relative">
@@ -229,6 +233,7 @@ const GameTable: React.FC<GameTableProps> = ({
                 ? positionMap[roundWinner.position] || null
                 : null
             }
+            onAnimationComplete={onDeckAnimationComplete}
           />
         )}
 
@@ -363,6 +368,7 @@ const GameTable: React.FC<GameTableProps> = ({
                 && (isReplayingBots || isBotChainActive)
                 && isCurrentTurn;
               const isWinner = isPlayerRoundWinner(displayPos);
+              // const cardsFaceUp = player.type === 'human';
 
               let gridClass = '';
               switch (position) {
