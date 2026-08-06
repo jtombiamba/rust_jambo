@@ -106,6 +106,15 @@ impl GameCardRepository {
     }
 
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn list_played_by_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::GameId.eq(game_id))
+            .filter(game_card::Column::Played.eq(true))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn list_by_player_and_round(
         &self,
