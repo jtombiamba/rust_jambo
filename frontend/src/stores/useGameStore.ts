@@ -44,6 +44,7 @@ export interface GameState {
   remainingCards: Record<string, number>;
   roundWinner: RoundWinner | null;
   gameOver: GameOverData | null;
+  pendingGameOver: GameOverData | null;
   stepByStep: boolean;
   pendingBotMoves: QueuedBotEvent[];
   isReplayingBots: boolean;
@@ -62,6 +63,7 @@ export interface GameState {
   clearRoundWinner: () => void;
   clearDeckSlots: () => void;
   setGameOver: (gameOverData: GameOverData) => void;
+  setPendingGameOver: (gameOverData: GameOverData | null) => void;
   clearGameOver: () => void;
   applyCardPlayed: (playerId: string, cardIndex: number, nextTurn?: string) => void;
   setStepByStep: (active: boolean) => void;
@@ -83,6 +85,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   remainingCards: {},
   roundWinner: null,
   gameOver: null,
+  pendingGameOver: null,
   stepByStep: false,
   pendingBotMoves: [],
   isReplayingBots: false,
@@ -116,6 +119,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       remainingCards: {},
       roundWinner: null,
       gameOver: null,
+      pendingGameOver: null,
       stepByStep: false,
       pendingBotMoves: [],
       isReplayingBots: false,
@@ -144,6 +148,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   setGameOver: (gameOverData) =>
     set({ gameOver: gameOverData }),
+  setPendingGameOver: (gameOverData) =>
+    set({ pendingGameOver: gameOverData }),
   clearGameOver: () =>
     set({ gameOver: null }),
   applyCardPlayed: (playerId, cardIndex, nextTurn) => {
@@ -204,6 +210,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       const current = get();
       if (current.pendingBotMoves.length === 0) {
         set({ isReplayingBots: false, isBotChainActive: false, botReplayTimerId: null });
+        // If a game-over was deferred while the bot chain was replaying, apply
+        // it now that the last bot card (and round_pause) have been shown.
+        if (current.pendingGameOver) {
+          set({ gameOver: current.pendingGameOver, pendingGameOver: null });
+        }
         return;
       }
 
@@ -255,6 +266,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       isBotChainActive: false,
       botReplayTimerId: null,
       roundWinnerClearTimerId: null,
+      // If a game-over was deferred and the replay is being cancelled for any
+      // reason, apply it now so it is never lost.
+      ...(state.pendingGameOver
+        ? { gameOver: state.pendingGameOver, pendingGameOver: null }
+        : {}),
     });
   },
   flushPendingEvents: () => {
