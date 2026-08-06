@@ -18,6 +18,11 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     updatePlayerCards,
     players,
     bet,
+    addPendingEvent,
+    cancelBotReplay,
+    startBotReplay,
+    botThinkingDelayMs,
+    roundPauseDelayMs,
   } = useGameStore();
 
   const { showToast } = useToast();
@@ -37,8 +42,43 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     onMessage: (event: GameEvent) => {
       switch (event.type) {
         case 'card_played': {
-          applyCardPlayed(event.player_id, event.card_index, event.next_turn);
-          clearRoundWinner();
+          const state = useGameStore.getState();
+          const playerWhoPlayed = state.players.find(p => p.id === event.player_id);
+          const nextTurnPlayer = state.players.find(p => p.id === event.next_turn);
+
+          if (playerWhoPlayed?.type === 'human') {
+            cancelBotReplay();
+            applyCardPlayed(event.player_id, event.card_index, event.next_turn);
+            clearRoundWinner();
+            useGameStore.setState({ isBotChainActive: true });
+          } else if (state.isBotChainActive || state.isReplayingBots) {
+            const nextIsHuman = nextTurnPlayer?.type === 'human';
+            addPendingEvent({
+              kind: 'bot_play',
+              playerId: event.player_id,
+              cardIndex: event.card_index,
+              nextTurnPlayerId: event.next_turn ?? '',
+            });
+            if (nextIsHuman) {
+              useGameStore.setState({ isBotChainActive: false });
+              startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
+            }
+          } else {
+            applyCardPlayed(event.player_id, event.card_index, event.next_turn);
+            clearRoundWinner();
+          }
+          break;
+        }
+        case 'turn_changed': {
+          const state = useGameStore.getState();
+          if (state.isBotChainActive) {
+            // During active bot chain buffering, don't update the UI turn indicator
+          } else if (!state.isReplayingBots) {
+            const player = players.find((p) => p.id === event.current_turn);
+            if (player) {
+              setCurrentTurn(player.display_position ?? player.position);
+            }
+          }
           break;
         }
         case 'round_completed': {
@@ -46,7 +86,7 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             clearTimeout(deckClearTimerRef.current);
           }
           deckClearTimerRef.current = setTimeout(() => {
-          clearDeckSlots();
+            clearDeckSlots();
           }, 800);
 
           const winType = (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal';
@@ -64,9 +104,15 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           roundWinnerTimerRef.current = setTimeout(() => {
             clearRoundWinner();
           }, 3000);
+
+          const state = useGameStore.getState();
+          if (state.isBotChainActive || state.isReplayingBots) {
+            addPendingEvent({ kind: 'round_pause' });
+          }
           break;
         }
         case 'game_finished': {
+          cancelBotReplay();
           setGameStatus(event.status);
 
           const winner = event.winner_id ? players.find(p => p.id === event.winner_id) : null;
@@ -89,13 +135,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               const won = humanPlayer.id === event.winner_id;
               updateAnonymousStatsAfterGame(bet, won, event.status as 'finished' | 'kora' | 'doubleKora');
             }
-          }
-          break;
-        }
-        case 'turn_changed': {
-          const player = players.find((p) => p.id === event.current_turn);
-          if (player) {
-            setCurrentTurn(player.display_position ?? player.position);
           }
           break;
         }
@@ -131,6 +170,7 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           break;
         }
         case 'game_state_snapshot': {
+          cancelBotReplay();
           const store = useGameStore.getState();
           const existingPlayers = store.players;
           const existingRemaining = store.remainingCards;

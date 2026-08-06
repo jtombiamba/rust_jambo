@@ -147,7 +147,10 @@ async fn main() -> Result<()> {
         cli.games, cli.concurrency, cli.bot_delay, cli.duration
     );
 
-    // Apply CLI bot_delay as the BOT_THINKING_DELAY_MS so it actually controls bot speed
+    // Apply CLI bot_delay as the BOT_THINKING_DELAY_MS.
+    // Since the backend no longer injects an artificial sleep (the frontend
+    // handles bot-thinking delays now), this env var is effectively deprecated
+    // for load-testing but kept for backward compatibility.
     std::env::set_var("BOT_THINKING_DELAY_MS", cli.bot_delay.to_string());
 
     let config = Config::default();

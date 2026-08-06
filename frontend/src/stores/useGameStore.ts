@@ -30,6 +30,10 @@ export interface GameOverData {
 
 export type StepByStepPhase = 'idle' | 'human_turn' | 'bot_turn' | 'evaluate_round';
 
+export type QueuedBotEvent =
+  | { kind: 'bot_play'; playerId: string; cardIndex: number; nextTurnPlayerId: string }
+  | { kind: 'round_pause' };
+
 export interface GameState {
   gameId: string | null;
   players: Player[];
@@ -41,23 +45,31 @@ export interface GameState {
   roundWinner: RoundWinner | null;
   gameOver: GameOverData | null;
   stepByStep: boolean;
+  pendingBotMoves: QueuedBotEvent[];
+  isReplayingBots: boolean;
+  botReplayTimerId: ReturnType<typeof setTimeout> | null;
+  isBotChainActive: boolean;
+  botThinkingDelayMs: number;
+  roundPauseDelayMs: number;
   setGame: (gameId: string, players: Player[], status: string, currentTurn: number, bet: number, deckSlots?: (number | null)[] | null) => void;
   resetGame: () => void;
   updatePlayerCards: (playerId: string, cards: number[]) => void;
   setCurrentTurn: (turn: number) => void;
   setDeckSlots: (slots: (number | null)[]) => void;
   setGameStatus: (status: string) => void;
-  // Round completion
   setRoundWinner: (winner: RoundWinner | null) => void;
   clearRoundWinner: () => void;
   clearDeckSlots: () => void;
-  // Game completion
   setGameOver: (gameOverData: GameOverData) => void;
   clearGameOver: () => void;
-  // Helper to apply a CardPlayed event
   applyCardPlayed: (playerId: string, cardIndex: number, nextTurn?: string) => void;
-  // Step-by-step mode
   setStepByStep: (active: boolean) => void;
+  addPendingEvent: (event: QueuedBotEvent) => void;
+  clearPendingEvents: () => void;
+  startBotReplay: (botDelayMs: number, roundPauseMs: number) => void;
+  cancelBotReplay: () => void;
+  flushPendingEvents: () => void;
+  setBotDelays: (botThinkingDelayMs: number, roundPauseDelayMs: number) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -71,6 +83,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   roundWinner: null,
   gameOver: null,
   stepByStep: false,
+  pendingBotMoves: [],
+  isReplayingBots: false,
+  botReplayTimerId: null,
+  isBotChainActive: false,
+  botThinkingDelayMs: 800,
+  roundPauseDelayMs: 2500,
   setGame: (gameId, players, status, currentTurn, bet, deckSlots?) => {
     const remainingCards: Record<string, number> = {};
     const playersWithDisplay = players.map((p) => ({
@@ -97,6 +115,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       roundWinner: null,
       gameOver: null,
       stepByStep: false,
+      pendingBotMoves: [],
+      isReplayingBots: false,
+      isBotChainActive: false,
     }),
   updatePlayerCards: (playerId, cards) =>
     set((state) => ({
@@ -163,6 +184,72 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   setStepByStep: (active) =>
     set({ stepByStep: active }),
+  addPendingEvent: (event) =>
+    set((state) => ({
+      pendingBotMoves: [...state.pendingBotMoves, event],
+    })),
+  clearPendingEvents: () =>
+    set({ pendingBotMoves: [] }),
+  startBotReplay: (botDelayMs, roundPauseMs) => {
+    const state = get();
+    if (state.isReplayingBots) return;
+    if (state.pendingBotMoves.length === 0) return;
+
+    set({ isReplayingBots: true });
+
+    const replayNext = () => {
+      const current = get();
+      if (current.pendingBotMoves.length === 0) {
+        set({ isReplayingBots: false, isBotChainActive: false, botReplayTimerId: null });
+        return;
+      }
+
+      const [nextEvent, ...remaining] = current.pendingBotMoves;
+      set({ pendingBotMoves: remaining });
+
+      let nextDelay: number;
+
+      if (nextEvent.kind === 'round_pause') {
+        nextDelay = roundPauseMs;
+      } else {
+        current.applyCardPlayed(nextEvent.playerId, nextEvent.cardIndex, nextEvent.nextTurnPlayerId);
+        if (remaining.length > 0 && remaining[0].kind === 'round_pause') {
+          nextDelay = roundPauseMs;
+        } else {
+          nextDelay = botDelayMs;
+        }
+      }
+
+      const timerId = setTimeout(replayNext, nextDelay);
+      set({ botReplayTimerId: timerId });
+    };
+
+    const timerId = setTimeout(replayNext, botDelayMs);
+    set({ botReplayTimerId: timerId });
+  },
+  cancelBotReplay: () => {
+    const state = get();
+    if (state.botReplayTimerId !== null) {
+      clearTimeout(state.botReplayTimerId);
+    }
+    set({
+      pendingBotMoves: [],
+      isReplayingBots: false,
+      isBotChainActive: false,
+      botReplayTimerId: null,
+    });
+  },
+  flushPendingEvents: () => {
+    const state = get();
+    for (const event of state.pendingBotMoves) {
+      if (event.kind === 'bot_play') {
+        state.applyCardPlayed(event.playerId, event.cardIndex, event.nextTurnPlayerId);
+      }
+    }
+    state.cancelBotReplay();
+  },
+  setBotDelays: (botThinkingDelayMs, roundPauseDelayMs) =>
+    set({ botThinkingDelayMs, roundPauseDelayMs }),
 }));
 
 export const useStepByStepPhase = (): StepByStepPhase => {

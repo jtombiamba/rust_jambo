@@ -25,6 +25,13 @@ pub static BOT_THINKING_DELAY_MS: LazyLock<u64> = LazyLock::new(|| {
         .unwrap_or(800)
 });
 
+pub static ROUND_PAUSE_DELAY_MS: LazyLock<u64> = LazyLock::new(|| {
+    std::env::var("ROUND_PAUSE_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2500)
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
