@@ -45,6 +45,17 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           const playerWhoPlayed = state.players.find(p => p.id === event.player_id);
           const nextTurnPlayer = state.players.find(p => p.id === event.next_turn);
 
+          // In step-by-step mode the human advances bots one at a time, so every
+          // card play (human or bot) must be applied immediately. The bot-chain
+          // buffering/replay below is only for non-step-by-step games where the
+          // backend emits bot moves rapidly (thinking delay moved to the frontend).
+          if (state.stepByStep) {
+            cancelBotReplay();
+            applyCardPlayed(event.player_id, event.card_index, event.next_turn);
+            clearRoundWinner();
+            break;
+          }
+
           if (playerWhoPlayed?.type === 'human') {
             cancelBotReplay();
             applyCardPlayed(event.player_id, event.card_index, event.next_turn);
@@ -70,6 +81,15 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
         }
         case 'turn_changed': {
           const state = useGameStore.getState();
+          // In step-by-step mode the turn indicator must always reflect the
+          // current turn immediately (the human advances bots one at a time).
+          if (state.stepByStep) {
+            const player = players.find((p) => p.id === event.current_turn);
+            if (player) {
+              setCurrentTurn(player.display_position ?? player.position);
+            }
+            break;
+          }
           if (state.isBotChainActive) {
             // During active bot chain buffering, don't update the UI turn indicator
           } else if (!state.isReplayingBots) {
@@ -91,14 +111,10 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           };
 
           const state = useGameStore.getState();
-          if (state.isBotChainActive || state.isReplayingBots) {
-            // Defer deck-clear + winner declaration to the replay queue's
-            // round_pause barrier so the last card is fully shown first.
-            addPendingEvent({ kind: 'round_pause', winner });
-            // Ensure the replay runs to consume the round_pause even when no
-            // bot follows (e.g. the human starts the next round).
-            startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
-          } else {
+          // In step-by-step mode the round is evaluated on demand via the
+          // "Evaluate Round" button, so the winner must be shown immediately
+          // (no bot-chain buffering/replay involved).
+          if (state.stepByStep || (!state.isBotChainActive && !state.isReplayingBots)) {
             // No bot chain in flight — show the winner. The deck is NOT cleared
             // here so the CardCollectionAnimation can animate the played cards
             // toward the winner; it is cleared via onDeckAnimationComplete once
@@ -110,6 +126,13 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             roundWinnerTimerRef.current = setTimeout(() => {
               clearRoundWinner();
             }, 3000);
+          } else {
+            // Defer deck-clear + winner declaration to the replay queue's
+            // round_pause barrier so the last card is fully shown first.
+            addPendingEvent({ kind: 'round_pause', winner });
+            // Ensure the replay runs to consume the round_pause even when no
+            // bot follows (e.g. the human starts the next round).
+            startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
           }
           break;
         }
