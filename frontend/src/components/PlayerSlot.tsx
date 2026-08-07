@@ -89,6 +89,7 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
           selectedIndex={selectedCardIndex}
           compact={compact}
           playerType={type}
+          playerId={playerId}
         />
       );
     }
@@ -103,7 +104,7 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
               faceUp={cardsFaceUp}
               onClick={handleCardClick ? () => handleCardClick(cardIndex) : undefined}
               selected={selectedCardIndex === cardIndex || (cards[0] === cardIndex && selectedCardIndex === 0)}
-              layoutId={`hand-card-${cardIndex}`}
+              layoutId={`hand-card-${playerId}-${cardIndex}`}
               // Player-slot cards should appear immediately (no fade-in delay).
               animateIn={false}
             />

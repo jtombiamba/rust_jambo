@@ -13,6 +13,9 @@ export interface CardFanProps {
   selectedIndex?: number | null;
   compact?: boolean;
   playerType?: 'human' | 'bot';
+  /** Unique player id, used to scope framer-motion layoutIds so cards from
+   *  different players (especially bots with placeholder indices) don't collide. */
+  playerId?: string;
 }
 
 const CardFan: React.FC<CardFanProps> = ({
@@ -24,6 +27,7 @@ const CardFan: React.FC<CardFanProps> = ({
   selectedIndex = null,
   compact = false,
   playerType,
+  playerId,
 }) => {
   if (cards.length === 0) {
     return <div className="text-gray-500 italic text-sm">No cards</div>;
@@ -99,7 +103,7 @@ const CardFan: React.FC<CardFanProps> = ({
               faceUp={faceUp}
               onClick={onCardClick ? () => onCardClick(cardIndex) : undefined}
               selected={selectedIndex === i}
-              layoutId={`hand-card-${cardIndex}`}
+              layoutId={`hand-card-${playerId ?? playerType ?? 'p'}-${cardIndex}`}
               // The outer motion.div above already animates the entrance
               // (opacity/scale/y). Disable the inner fade-in so cards appear
               // immediately instead of compounding a double fade-in delay.
