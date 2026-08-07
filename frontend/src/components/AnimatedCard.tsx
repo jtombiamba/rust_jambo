@@ -10,6 +10,10 @@ export interface AnimatedCardProps {
   layoutId?: string;
   className?: string;
   style?: React.CSSProperties;
+  /** When false, the card renders immediately without an opacity fade-in.
+   *  Used when an outer wrapper (e.g. CardFan) already animates the entrance,
+   *  to avoid a double-nested fade-in delay. */
+  animateIn?: boolean;
 }
 
 const AnimatedCard = forwardRef<HTMLDivElement, AnimatedCardProps>(({
@@ -20,6 +24,7 @@ const AnimatedCard = forwardRef<HTMLDivElement, AnimatedCardProps>(({
   layoutId,
   className = '',
   style,
+  animateIn = true,
 }, ref) => {
   return (
     <motion.div
@@ -27,7 +32,7 @@ const AnimatedCard = forwardRef<HTMLDivElement, AnimatedCardProps>(({
       layoutId={layoutId}
       className={className}
       style={style}
-      initial={{ opacity: 0 }}
+      initial={animateIn ? { opacity: 0 } : false}
       animate={{
         opacity: 1,
         scale: 1,

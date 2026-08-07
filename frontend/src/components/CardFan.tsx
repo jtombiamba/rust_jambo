@@ -100,6 +100,10 @@ const CardFan: React.FC<CardFanProps> = ({
               onClick={onCardClick ? () => onCardClick(cardIndex) : undefined}
               selected={selectedIndex === i}
               layoutId={`hand-card-${cardIndex}`}
+              // The outer motion.div above already animates the entrance
+              // (opacity/scale/y). Disable the inner fade-in so cards appear
+              // immediately instead of compounding a double fade-in delay.
+              animateIn={false}
             />
           </motion.div>
         ))}
