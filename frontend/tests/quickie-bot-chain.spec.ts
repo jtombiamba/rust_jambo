@@ -474,4 +474,87 @@ test.describe('Quickie game — bot chain with delays', () => {
     const filledSlots = deckSlots.filter({ has: page.locator('[data-testid^="card-"]') });
     await expect(filledSlots).toHaveCount(4);
   });
+
+  test('step-by-step applies bot card_played and turn_changed immediately (no buffering)', async ({ page }) => {
+    // Override the quickie mock to start a step-by-step game.
+    await page.route('**/api/quickie', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          game_id: gameId,
+          players: [
+            { id: humanId, type: 'human', name: 'You', position: 0, cards: [0, 1, 2, 3, 4] },
+            { id: bot1Id, type: 'bot', name: 'Bot 1', position: 1, cards: [] },
+            { id: bot2Id, type: 'bot', name: 'Bot 2', position: 2, cards: [] },
+            { id: bot3Id, type: 'bot', name: 'Bot 3', position: 3, cards: [] },
+          ],
+          status: 'playing',
+          current_turn: 0,
+          bet: 10,
+          step_by_step: true,
+        }),
+      })
+    );
+
+    await page.goto('/');
+    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await page.getByRole('button', { name: 'Start a quick game' }).click();
+    await expect(page.getByText('Game Table')).toBeVisible();
+
+    // Sanity check: the game must actually be in step-by-step mode, otherwise
+    // this test would be exercising the non-step-by-step buffering path.
+    await expect(page.getByText('Step-by-Step Mode')).toBeVisible();
+
+    // Human plays a card.
+    const humanCards = page.locator('[data-testid="player-slot-player-human"] [data-testid^="card-"]');
+    await humanCards.first().click();
+
+    // Human's own CardPlayed event.
+    await page.evaluate(({ gid, hid, bid1 }: Record<string, string>) => {
+      (window as unknown as {
+        __mockWebSocket: { simulateMessage: (data: Record<string, unknown>) => void };
+      }).__mockWebSocket.simulateMessage({
+        type: 'card_played',
+        game_id: gid,
+        player_id: hid,
+        card_index: 0,
+        next_turn: bid1,
+      });
+    }, { gid: gameId, hid: humanId, bid1: bot1Id });
+
+    // Human's hand should drop to 4 cards.
+    await expect(humanCards).toHaveCount(4);
+
+    // Now the human advances bot 1 (step-by-step). The backend emits the bot's
+    // card_played + turn_changed. In step-by-step mode these MUST be applied
+    // immediately — NOT buffered behind the 800ms bot replay delay.
+    await page.evaluate(({ gid, bid1, bid2 }: Record<string, string>) => {
+      const mock = (window as unknown as {
+        __mockWebSocket: { simulateMessage: (data: Record<string, unknown>) => void };
+      }).__mockWebSocket;
+      mock.simulateMessage({
+        type: 'card_played',
+        game_id: gid,
+        player_id: bid1,
+        card_index: 5,
+        next_turn: bid2,
+      });
+      mock.simulateMessage({
+        type: 'turn_changed',
+        game_id: gid,
+        current_turn: bid2,
+      });
+    }, { gid: gameId, bid1: bot1Id, bid2: bot2Id });
+
+    // The bot's card must appear in the deck immediately (well before the
+    // 800ms bot replay delay would have delivered it). The placeholder exit
+    // animation is ~200ms, so allow up to 500ms — still well under 800ms.
+    const deckSlot1 = page.locator('[data-testid="deck-slot-1"]');
+    await expect(deckSlot1).not.toContainText('Slot 2', { timeout: 500 });
+
+    // The turn indicator must advance to bot 2 immediately (display_position 2).
+    const bot2Slot = page.locator('[data-testid="player-slot-player-bot-2"]');
+    await expect(bot2Slot).toHaveClass(/ring-4 ring-red-500 ring-offset-2/, { timeout: 300 });
+  });
 });
