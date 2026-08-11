@@ -175,7 +175,7 @@ const GameTable: React.FC<GameTableProps> = ({
             style={{ left: `${idx * step}px`, zIndex: idx }}
             data-testid={`${testIdPrefix}-${idx}`}
           >
-            <AnimatePresence mode="sync">
+            <AnimatePresence mode="wait">
               {card !== null ? (
                 <AnimatedCard
                   key={`card-${card}`}
@@ -254,14 +254,7 @@ const GameTable: React.FC<GameTableProps> = ({
               {(() => {
                 const westPlayer = findPlayerByPosition('west');
                 if (westPlayer) {
-                  return (
-                    <div className="flex flex-col items-center">
-                      <div className="text-xs font-semibold">{westPlayer.name} 🤖</div>
-                      <div className="text-[10px] text-gray-600">
-                        {remainingCards[westPlayer.id] ?? westPlayer.cards.length} {t('common.cards')}
-                      </div>
-                    </div>
-                  );
+                  return renderPlayerSlot(westPlayer, true);
                 }
                 return null;
               })()}
@@ -274,14 +267,7 @@ const GameTable: React.FC<GameTableProps> = ({
               {(() => {
                 const eastPlayer = findPlayerByPosition('east');
                 if (eastPlayer) {
-                  return (
-                    <div className="flex flex-col items-center">
-                      <div className="text-xs font-semibold">{eastPlayer.name} 🤖</div>
-                      <div className="text-[10px] text-gray-600">
-                        {remainingCards[eastPlayer.id] ?? eastPlayer.cards.length} {t('common.cards')}
-                      </div>
-                    </div>
-                  );
+                  return renderPlayerSlot(eastPlayer, true);
                 }
                 return null;
               })()}

@@ -38,7 +38,7 @@ const CardFan: React.FC<CardFanProps> = ({
       <div className="card-fan-compact" data-testid="card-fan-compact">
         <div className="card-fan-badge">{cards.length} cards</div>
         <div className="card-fan-mini">
-          {cards.slice(-3).map((cardIndex, i) => (
+          {cards.map((cardIndex, i) => (
             <motion.div
               key={`mini-${cardIndex}`}
               className="card-fan-mini-card"

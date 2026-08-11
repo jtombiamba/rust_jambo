@@ -23,14 +23,18 @@ pub async fn register(
 ) -> HttpResponse {
     let client_ip = req.extensions().get::<ClientIp>().cloned();
     let ip_hash = client_ip.map(|c| c.hash);
-
+    let config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let jwt_expiry_hours = match config {
+        Some(c) => c.jwt_expiry_hours,
+        None => 24,
+    };
     match service
         .register(body.into_inner(), ip_hash, i18n.lang)
         .await
     {
         Ok(result) => {
             let mut resp = HttpResponse::Created();
-            cookie::set_auth_cookie(&mut resp, &result.token);
+            cookie::set_auth_cookie(&mut resp, &result.token, jwt_expiry_hours);
             resp.json(result.response)
         }
         Err(e) => e.error_response(),
@@ -45,11 +49,15 @@ pub async fn login(
 ) -> HttpResponse {
     let client_ip = req.extensions().get::<ClientIp>().cloned();
     let ip_hash = client_ip.map(|c| c.hash);
-
+    let config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let jwt_expiry_hours = match config {
+        Some(c) => c.jwt_expiry_hours,
+        None => 24,
+    };
     match service.login(body.into_inner(), ip_hash, i18n.lang).await {
         Ok(result) => {
             let mut resp = HttpResponse::Ok();
-            cookie::set_auth_cookie(&mut resp, &result.token);
+            cookie::set_auth_cookie(&mut resp, &result.token, jwt_expiry_hours);
             resp.json(result.response)
         }
         Err(e) => e.error_response(),

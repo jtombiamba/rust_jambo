@@ -58,14 +58,6 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isOpen, onClose]);
 
-  // Auto-close after 10 seconds (give the player the responsability to close the modal)
-  // useEffect(() => {
-  //   if (!isOpen) return;
-  //   const timer = setTimeout(() => {
-  //     onClose();
-  //   }, 10000);
-  //   return () => clearTimeout(timer);
-  // }, [isOpen, onClose]);
 
   if (!isOpen) {
     return null;
@@ -134,27 +126,6 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
             )}
           </div>
 
-          {/* Game statistics */}
-          <div className="game-stats stats-animate">
-            <div className="stat-item">
-              <div className="stat-label">{t('game.roundsPlayed')}</div>
-              <div className="stat-value">{gameResult.roundsPlayed}</div>
-            </div>
-            {gameResult.finalScore !== undefined && (
-              <div className="stat-item">
-                <div className="stat-label">{t('game.finalScore')}</div>
-                <div className="stat-value">{gameResult.finalScore}</div>
-              </div>
-            )}
-            <div className="stat-item">
-              <div className="stat-label">{t('game.gameType')}</div>
-              <div className="stat-value">
-                {gameResult.status === 'finished' ? t('game.standard') :
-                 gameResult.status === 'kora' ? t('game.koraType') : t('game.doubleKoraType')}
-              </div>
-            </div>
-          </div>
-
           {/* Action buttons */}
           <div className="action-buttons buttons-animate">
             {onPlayNext && (
@@ -169,7 +140,10 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
             {showPlayAgain && !onPlayNext && (
             <button
               className="btn-primary"
-              onClick={onPlayAgain}
+              onClick={() => {
+                onPlayAgain()
+                onClose()
+              }}
               autoFocus
             >
               {t('game.playAgain')}
@@ -189,10 +163,6 @@ const GameOverModal: React.FC<GameOverModalProps> = ({
             </button>
           </div>
 
-          {/* Auto-close notice */}
-          {/* <div className="auto-close-notice">
-            {t('game.autoCloseNotice')}
-          </div> */}
         </div>
       </div>
     </>
