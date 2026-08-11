@@ -17,7 +17,7 @@ export default function Footer() {
         setDonateUrl(res.data.paypal_donate_url)
         if (res.data.bot_thinking_delay_ms || res.data.round_pause_delay_ms) {
           useGameStore.getState().setBotDelays(
-            res.data.bot_thinking_delay_ms ?? 800,
+            res.data.bot_thinking_delay_ms ?? 1500,
             res.data.round_pause_delay_ms ?? 2500,
           )
         }
