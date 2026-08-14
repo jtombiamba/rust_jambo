@@ -1,5 +1,6 @@
 import React from 'react';
-import Card from './Card';
+import { AnimatePresence } from 'framer-motion';
+import AnimatedCard from './AnimatedCard';
 import CardFan from './CardFan';
 
 export interface PlayerSlotProps {
@@ -15,6 +16,8 @@ export interface PlayerSlotProps {
   remainingCount?: number;
   /** Whether this player currently has the turn */
   isCurrentTurn?: boolean;
+  /** Whether this bot is currently thinking (bot chain replay in progress) */
+  isThinking?: boolean;
   /** Optional callback when a card is clicked (only relevant for human players) */
   onCardClick?: (cardIndex: number) => void;
   /** Whether to use compact mode (for mobile portrait) */
@@ -43,15 +46,24 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
   cardsFaceUp,
   remainingCount,
   isCurrentTurn = false,
+  isThinking = false,
   onCardClick,
   compact = false,
   selectedCardIndex = null,
   overlapCards = true,
 }) => {
+  // Determine the effective card count: use actual cards if available,
+  // otherwise fall back to remainingCount (which comes from the backend's cards_count)
+  const effectiveCardCount = cards.length > 0
+    ? cards.length
+    : (remainingCount !== undefined && remainingCount > 0 ? remainingCount : 0);
+
+  // Generate display cards: use actual card indices if available,
+  // otherwise generate placeholder indices (0..count-1) for face-down rendering
   const displayCards = cards.length > 0
     ? cards
-    : (remainingCount !== undefined && remainingCount > 0
-        ? Array.from({ length: remainingCount }, (_, i) => i)
+    : (effectiveCardCount > 0
+        ? Array.from({ length: effectiveCardCount }, (_, i) => i)
         : []);
 
   const handleCardClick = cards.length > 0 && onCardClick
@@ -77,21 +89,27 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
           selectedIndex={selectedCardIndex}
           compact={compact}
           playerType={type}
+          playerId={playerId}
         />
       );
     }
 
     return (
       <div className="flex flex-wrap gap-1 sm:gap-2 justify-center">
-        {displayCards.map((cardIndex) => (
-          <Card
-            key={cardIndex}
-            index={cardIndex}
-            faceUp={cardsFaceUp}
-            onClick={handleCardClick ? () => handleCardClick(cardIndex) : undefined}
-            selected={selectedCardIndex === cardIndex || (cards[0] === cardIndex && selectedCardIndex === 0)}
-          />
-        ))}
+        <AnimatePresence mode="popLayout">
+          {displayCards.map((cardIndex) => (
+            <AnimatedCard
+              key={cardIndex}
+              index={cardIndex}
+              faceUp={cardsFaceUp}
+              onClick={handleCardClick ? () => handleCardClick(cardIndex) : undefined}
+              selected={selectedCardIndex === cardIndex || (cards[0] === cardIndex && selectedCardIndex === 0)}
+              layoutId={`hand-card-${playerId}-${cardIndex}`}
+              // Player-slot cards should appear immediately (no fade-in delay).
+              animateIn={false}
+            />
+          ))}
+        </AnimatePresence>
       </div>
     );
   };
@@ -101,8 +119,11 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
       className={`flex flex-col items-center p-2 sm:p-4 ${positionStyles[position]} ${ringClass} rounded-lg`}
       data-testid={`player-slot-${playerId}`}
     >
-      <div className={`${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2`}>
+      <div className={`${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2 flex items-center gap-1`}>
         {name} {type === 'bot' && '🤖'}
+        {isThinking && (
+          <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse" title="thinking..." />
+        )}
       </div>
       <div className="flex justify-center w-full">
         {renderCards()}

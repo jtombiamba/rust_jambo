@@ -1,12 +1,14 @@
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
+    QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
 use crate::database::models::{game_card, GameCard};
 use crate::database::traits::GameCardRepoTrait;
 
+#[derive(Debug, Clone)]
 pub struct GameCardRepository {
     connection: DatabaseConnection,
 }
@@ -106,6 +108,15 @@ impl GameCardRepository {
     }
 
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn list_played_by_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::GameId.eq(game_id))
+            .filter(game_card::Column::Played.eq(true))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     #[allow(dead_code)]
     pub async fn list_by_player_and_round(
         &self,
@@ -118,6 +129,20 @@ impl GameCardRepository {
             .order_by_asc(game_card::Column::CardIndex)
             .all(&self.connection)
             .await
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn bulk_insert_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        cards: Vec<crate::database::models::game_card::ActiveModel>,
+    ) -> Result<(), DbErr> {
+        if !cards.is_empty() {
+            crate::database::models::game_card::Entity::insert_many(cards)
+                .exec(txn)
+                .await?;
+        }
+        Ok(())
     }
 }
 
@@ -152,5 +177,13 @@ impl GameCardRepoTrait for GameCardRepository {
 
     async fn list_by_game(&self, game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
         self.list_by_game(game_id).await
+    }
+
+    async fn bulk_insert_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        cards: Vec<crate::database::models::game_card::ActiveModel>,
+    ) -> Result<(), DbErr> {
+        self.bulk_insert_in_txn(txn, cards).await
     }
 }

@@ -146,11 +146,11 @@ test('WebSocket updates when card is played', async ({ page }) => {
 
   // Wait for dashboard and start game
   await expect(page.getByText('FapFap Card Game')).toBeVisible();
-  await page.getByRole('button', { name: 'Start a game' }).click();
+  await page.getByRole('button', { name: 'Start a quick game' }).click();
   await expect(page.getByText('Game Table')).toBeVisible();
 
   // Ensure the human player has 5 cards visible
-  const humanCards = page.locator('[data-testid="player-slot-player-human"] .card');
+  const humanCards = page.locator('[data-testid="player-slot-player-human"] [data-testid^="card-"]');
   await expect(humanCards).toHaveCount(5);
 
   // Click the first card (index 0)

@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
     QueryOrder, Set, TransactionTrait,
@@ -12,7 +12,7 @@ use crate::database::repositories::PlayerProfileRepository;
 use crate::error::GameError;
 use crate::game::distribution::distribute_cards;
 use crate::game::service::types::QuickGameOutcome;
-use crate::observability::CorrelationId;
+use crate::observability::{metrics, CorrelationId};
 
 use super::GameService;
 
@@ -134,7 +134,7 @@ impl GameService {
     ) -> Result<QuickGameOutcome, GameError> {
         let game_id = Uuid::now_v7();
         let now = chrono::Utc::now();
-        let initial_rank = rand::thread_rng().gen_range(0..4) as i32;
+        let initial_rank = rand::rng().random_range(0..4) as i32;
 
         let game_active = models::game::ActiveModel {
             id: Set(game_id),
@@ -301,6 +301,7 @@ impl GameService {
             .create_quick_game_in_txn(&txn, true, None, 0, step_by_step)
             .await?;
         txn.commit().await?;
+        metrics::ACTIVE_GAMES.inc();
 
         self.schedule_first_bot_if_needed(&outcome).await;
         Ok(outcome)

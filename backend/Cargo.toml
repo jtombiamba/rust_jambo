@@ -21,26 +21,27 @@ actix-http = "3"
 actix-ws = "0.3"
 actix-rt = "2.9"
 migration = { path = "migration" }
-sea-orm = { version = "2.0.0-rc", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "tracing-spans"] }
+sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "tracing-spans"] }
 lapin = { version = "4.0", features = ["tokio"] }
-redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.4", features = ["tokio-comp", "connection-manager"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 async-trait = "0.1"
 tokio = { version = "1.0", features = ["full"] }
 uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
-rand = "0.8"
+rand = "0.10"
 futures = "0.3"
 futures-util = "0.3"
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 dotenv = "0.15"
-config = "0.13"
+config = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 num_cpus = "1.16"
 argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
 jsonwebtoken = "9"
 cookie = "0.18"
 sha2 = "0.10"
@@ -57,7 +58,7 @@ handlebars = "6"
 clap = { version = "4", features = ["derive"] }
 sysinfo = "0.31"
 reqwest = { version = "0.12", features = ["json", "cookies"] }
-tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
 http = "1"
 
 [[bin]]
@@ -85,7 +86,7 @@ required-features = ["load-tests"]
 
 [dev-dependencies]
 actix-rt = "2.9"
-sea-orm = { version = "2.0.0-rc.38", features = ["mock"] }
+sea-orm = { version = "2.0.0", features = ["mock"] }
 serial_test = "3"
 
 [profile.dev]

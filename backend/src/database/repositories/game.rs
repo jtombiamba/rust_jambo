@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::database::models::{game, player, Game, GameMode, GameStatus, Player};
 use crate::database::traits::GameRepoTrait;
 
+#[derive(Debug, Clone)]
 pub struct GameRepository {
     connection: DatabaseConnection,
 }
@@ -154,6 +155,25 @@ impl GameRepository {
     }
 
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_by_ids(&self, ids: &[Uuid]) -> Result<Vec<Game>, DbErr> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        game::Entity::find()
+            .filter(game::Column::Id.is_in(ids.iter().copied()))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_active_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
+        game::Entity::find_by_id(id)
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .one(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_rank(&self, id: Uuid, rank: Option<i32>) -> Result<Game, DbErr> {
         let mut active: game::ActiveModel = game::Entity::find_by_id(id)
             .one(&self.connection)
@@ -222,6 +242,47 @@ impl GameRepository {
             .all(&self.connection)
             .await
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_game_for_run_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        bet: i32,
+        creator_id: Option<Uuid>,
+        player_positions: serde_json::Value,
+        num_players: i16,
+        run_id: Uuid,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Utc::now();
+        game::Entity::insert(game::ActiveModel {
+            id: Set(game_id),
+            status: Set(GameStatus::Active),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: Set(Some(0)),
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(player_positions),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: Set(creator_id),
+            game_mode: Set(GameMode::Multiplayer),
+            max_players: Set(num_players),
+            invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: Set(Some(run_id)),
+            step_by_step: Set(false),
+            kicked_players: Set(json!([])),
+        })
+        .exec(txn)
+        .await?;
+        Ok(())
+    }
 }
 
 #[tracing::instrument(skip(txn))]
@@ -279,5 +340,27 @@ impl GameRepoTrait for GameRepository {
 
     async fn list_players(&self, game_id: Uuid) -> Result<Vec<Player>, DbErr> {
         self.list_players(game_id).await
+    }
+
+    async fn create_game_for_run_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        bet: i32,
+        creator_id: Option<Uuid>,
+        player_positions: serde_json::Value,
+        num_players: i16,
+        run_id: Uuid,
+    ) -> Result<(), DbErr> {
+        self.create_game_for_run_in_txn(
+            txn,
+            game_id,
+            bet,
+            creator_id,
+            player_positions,
+            num_players,
+            run_id,
+        )
+        .await
     }
 }

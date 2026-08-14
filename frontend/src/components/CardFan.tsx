@@ -1,5 +1,7 @@
 import React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import Card from './Card';
+import AnimatedCard from './AnimatedCard';
 import './CardFan.css';
 
 export interface CardFanProps {
@@ -11,6 +13,9 @@ export interface CardFanProps {
   selectedIndex?: number | null;
   compact?: boolean;
   playerType?: 'human' | 'bot';
+  /** Unique player id, used to scope framer-motion layoutIds so cards from
+   *  different players (especially bots with placeholder indices) don't collide. */
+  playerId?: string;
 }
 
 const CardFan: React.FC<CardFanProps> = ({
@@ -22,6 +27,7 @@ const CardFan: React.FC<CardFanProps> = ({
   selectedIndex = null,
   compact = false,
   playerType,
+  playerId,
 }) => {
   if (cards.length === 0) {
     return <div className="text-gray-500 italic text-sm">No cards</div>;
@@ -32,14 +38,19 @@ const CardFan: React.FC<CardFanProps> = ({
       <div className="card-fan-compact" data-testid="card-fan-compact">
         <div className="card-fan-badge">{cards.length} cards</div>
         <div className="card-fan-mini">
-          {cards.slice(-3).map((cardIndex, i) => (
-            <div
-              key={i}
+          {cards.map((cardIndex, i) => (
+            <motion.div
+              key={`mini-${cardIndex}`}
               className="card-fan-mini-card"
               style={{ left: `${i * 12}px`, zIndex: i }}
+              layout
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.2 }}
             >
               <Card index={cardIndex} faceUp={false} />
-            </div>
+            </motion.div>
           ))}
         </div>
       </div>
@@ -58,25 +69,49 @@ const CardFan: React.FC<CardFanProps> = ({
       style={{ width: maxWidth || `${totalWidth}px`, minHeight: '80px' }}
       data-testid="card-fan"
     >
-      {cards.map((cardIndex, i) => (
-        <div
-          key={`${cardIndex}-${i}`}
-          className={`card-fan-card ${selectedIndex === i ? 'selected' : ''}`}
-          style={{
-            left: `${step * i}px`,
-            zIndex: i,
-            transition: 'transform 0.2s ease, translate 0.2s ease',
-          }}
-          data-testid={`card-fan-card-${i}`}
-        >
-          <Card
-            index={cardIndex}
-            faceUp={faceUp}
-            onClick={onCardClick ? () => onCardClick(cardIndex) : undefined}
-            selected={selectedIndex === i}
-          />
-        </div>
-      ))}
+      <AnimatePresence>
+        {cards.map((cardIndex, i) => (
+          <motion.div
+            key={`hand-card-${cardIndex}`}
+            className={`card-fan-card ${selectedIndex === i ? 'selected' : ''}`}
+            style={{
+              left: `${step * i}px`,
+              zIndex: i,
+            }}
+            layout
+            initial={{ opacity: 0, scale: 0.8, y: 20 }}
+            animate={{
+              opacity: 1,
+              scale: 1,
+              y: 0,
+            }}
+            exit={{
+              opacity: 0,
+              scale: 0.8,
+              y: -20,
+              transition: { duration: 0.3, ease: [0.34, 1.56, 0.64, 1] },
+            }}
+            transition={{
+              type: 'spring',
+              stiffness: 300,
+              damping: 25,
+            }}
+            data-testid={`card-fan-card-${i}`}
+          >
+            <AnimatedCard
+              index={cardIndex}
+              faceUp={faceUp}
+              onClick={onCardClick ? () => onCardClick(cardIndex) : undefined}
+              selected={selectedIndex === i}
+              layoutId={`hand-card-${playerId ?? playerType ?? 'p'}-${cardIndex}`}
+              // The outer motion.div above already animates the entrance
+              // (opacity/scale/y). Disable the inner fade-in so cards appear
+              // immediately instead of compounding a double fade-in delay.
+              animateIn={false}
+            />
+          </motion.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 };

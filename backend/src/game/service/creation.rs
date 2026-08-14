@@ -13,6 +13,9 @@ use crate::game::service::types::MultiplayerGameOutcome;
 use super::GameService;
 
 impl GameService {
+    // TODO: it seems we wiill loose track of game creation here as tracing is not effective here
+    // put all queries here in repositories in order to instrument db queries
+    // use transaction_runner also in this case
     pub async fn create_multiplayer_game(
         &self,
         creator_user_id: Uuid,
@@ -75,6 +78,7 @@ impl GameService {
         let now = chrono::Utc::now();
         let expires_at = now + chrono::Duration::minutes(INVITE_TIMEOUT_MINUTES);
 
+        // TODO: check if creation of game already exist in repositories and look how to update the method in order to call it here
         let game_active = game::ActiveModel {
             id: ActiveValue::Set(game_id),
             status: ActiveValue::Set(GameStatus::Pending),

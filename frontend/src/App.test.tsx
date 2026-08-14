@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 
-vi.mock('./stores/useAuthStore', () => ({
-  useAuthStore: vi.fn(() => ({
+vi.mock('./stores/useAuthStore', () => {
+  const state = {
     isAuthenticated: false,
     user: null,
     authModalOpen: false,
@@ -18,8 +18,17 @@ vi.mock('./stores/useAuthStore', () => ({
     login: vi.fn(),
     forgotPassword: vi.fn(),
     logout: vi.fn(),
-  })),
-}));
+  };
+  const useAuthStore = Object.assign(vi.fn(() => state), {
+    getState: () => state,
+  });
+  return {
+    useAuthStore,
+    __setAuthenticated: (value: boolean) => {
+      state.isAuthenticated = value;
+    },
+  };
+});
 
 vi.mock('axios', () => ({
   default: {

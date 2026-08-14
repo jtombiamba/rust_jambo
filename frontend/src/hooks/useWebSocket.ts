@@ -20,6 +20,7 @@ export interface GameStatePlayer {
   position: number;
   display_position: number;
   player_type: string;
+  cards_count: number;
 }
 
 export interface GameStateCard {
@@ -321,7 +322,7 @@ export function useWebSocket({
       const manager = WebSocketManager.getInstance(gameId);
       const status = manager.getConnectionStatus();
       setIsConnected(status === 'connected');
-    } catch (err) {
+    } catch {
       setIsConnected(false);
     }
   }, [gameId]);

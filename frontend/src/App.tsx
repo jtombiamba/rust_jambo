@@ -66,7 +66,8 @@ function AppContent() {
   const [lobbyGameId, setLobbyGameId] = useState<string | null>(null)
   const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
   const [wsToken, setWsToken] = useState<string | null>(null)
-  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver, setStepByStep } = useGameStore()
+  const [reachLimit, setReachLimit] = useState(false)
+  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver, setStepByStep, clearDeckSlots } = useGameStore()
   const isMultiplayer = players.length > 0 && players.every(p => p.type === 'human')
   const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite, user } = useAuthStore()
   const { isConnected } = useWebSocket({ gameId: gameId || '' })
@@ -198,9 +199,24 @@ function AppContent() {
       })
   }, [isAuthenticated, showToast, t])
 
-  const startGame = (stepByStepParam = false) => {
-    const useStepByStep = stepByStepParam || stepByStepToggle
-    console.log("use step by step = ", useStepByStep);
+  // make disappear the play again button when games played reach the limit
+  useEffect(() => {
+    const { isAuthenticated } = useAuthStore.getState();
+    if (isAuthenticated) {
+      setReachLimit(false)
+      return
+    }
+    const stats = getStoredStats();
+    if (!stats) return
+    const game_played = stats.games_played;
+    const games_allowed = stats.games_allowed;
+    if (game_played >= games_allowed) {
+      setReachLimit(true)
+    }
+  }, [gameOver?.isGameOver, isAuthenticated]);
+
+  const startGame = () => {
+    const useStepByStep = stepByStepToggle
     setStartingGame(true)
     setError(null)
     if (isAuthenticated) {
@@ -434,8 +450,9 @@ function AppContent() {
             remainingCards={remainingCards}
             roundWinner={roundWinner}
             gameOver={gameOver}
+            onDeckAnimationComplete={clearDeckSlots}
             onCardClick={handleCardClick}
-            showPlayAgain={!isMultiplayer && !runId}
+            showPlayAgain={!isMultiplayer && !runId && !reachLimit}
             onPlayAgain={runId ? handlePlayNextInRun : startGame}
             onReturnToLobby={() => {
               handleLocalStats()
@@ -590,6 +607,7 @@ function AppContent() {
               useRoomStore.getState().setCurrentRunGameId(gameIdVal)
               try {
                 const gameRes = await axios.get<QuickGameResponse>(`/api/me/games/${gameIdVal}`)
+                console.log("game Res data = ", gameRes.data)
                 if (gameRes.data.game_id && gameRes.data.players) {
                   setGameStore(
                     gameRes.data.game_id,

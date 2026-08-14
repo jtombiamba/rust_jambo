@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import axios from 'axios'
+import { useGameStore } from '../stores/useGameStore'
 import LegalMentions from './LegalMentions'
 import ContactForm from './ContactForm'
 
@@ -14,6 +15,12 @@ export default function Footer() {
     axios.get('/api/config')
       .then((res) => {
         setDonateUrl(res.data.paypal_donate_url)
+        if (res.data.bot_thinking_delay_ms || res.data.round_pause_delay_ms) {
+          useGameStore.getState().setBotDelays(
+            res.data.bot_thinking_delay_ms ?? 1500,
+            res.data.round_pause_delay_ms ?? 2500,
+          )
+        }
       })
       .catch(() => {
         // fallback to default URL

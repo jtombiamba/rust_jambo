@@ -59,10 +59,6 @@ repos:
         files: ^frontend/.*\.(ts|tsx)$
         types_or: [javascript, jsx, ts, tsx]
         args:
-          - --config
-          - frontend/.eslintrc.cjs
-          - --ext
-          - .ts,.tsx
           - --fix
           - --max-warnings
           - "0"

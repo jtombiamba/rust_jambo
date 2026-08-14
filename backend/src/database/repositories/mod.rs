@@ -2,6 +2,10 @@ pub mod dashboard;
 pub mod game;
 pub mod game_card;
 pub mod game_invite;
+pub mod game_run;
+pub mod game_run_event;
+pub mod game_run_game;
+pub mod game_run_player;
 pub mod player;
 pub mod player_profile;
 pub mod room;
@@ -11,10 +15,11 @@ pub use dashboard::DashboardRepository;
 pub use game::GameRepository;
 pub use game_card::GameCardRepository;
 pub use game_invite::GameInviteRepository;
+pub use game_run::GameRunRepository;
+pub use game_run_event::GameRunEventRepository;
+pub use game_run_game::GameRunGameRepository;
+pub use game_run_player::GameRunPlayerRepository;
 pub use player::PlayerRepository;
 pub use player_profile::PlayerProfileRepository;
-pub use room::{
-    GameRunEventRepository, GameRunGameRepository, GameRunPlayerRepository, GameRunRepository,
-    RoomMemberRepository, RoomRepository,
-};
+pub use room::{RoomMemberRepository, RoomRepository};
 pub use user::UserRepository;

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use rand::Rng;
+use rand::RngExt;
 use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
 use uuid::Uuid;
 
@@ -90,7 +90,7 @@ impl GameService {
 
         let game_id = Uuid::new_v4();
         let now = chrono::Utc::now();
-        let initial_rank = rand::thread_rng().gen_range(0..4) as i32;
+        let initial_rank = rand::rng().random_range(0..4) as i32;
 
         let game_active = game::ActiveModel {
             id: Set(game_id),

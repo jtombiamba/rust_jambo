@@ -1,20 +1,33 @@
+use std::collections::HashMap;
+use uuid::Uuid;
+
+use crate::api::dto::responses::{CreateRunResponse, JoinRunResponse};
+use crate::database::models::RunStatus;
+use crate::game::constants::KORA_CREDIT_MULTIPLIER;
+use crate::messaging::events::RoomEvent;
+use crate::room::error::RoomServiceError;
+use crate::room::service::RoomService;
+
 impl RoomService {
-    pub async fn create_run(
+    async fn validate_create_run(
         &self,
         room_id: Uuid,
         user_id: Uuid,
         num_games: i32,
         bet: i32,
         player_ids: &[Uuid],
-    ) -> Result<serde_json::Value, RoomServiceError> {
-        let _room = self
-            .room_repo
+    ) -> Result<Vec<Uuid>, RoomServiceError> {
+        self.room_repo
             .find_by_id(room_id)
             .await?
             .ok_or(RoomServiceError::RoomNotFound)?;
 
-        let member = self.member_repo.find_membership(room_id, user_id).await?;
-        if member.is_none() {
+        if self
+            .member_repo
+            .find_membership(room_id, user_id)
+            .await?
+            .is_none()
+        {
             return Err(RoomServiceError::NotMember);
         }
 
@@ -32,11 +45,9 @@ impl RoomService {
                 "bet must be positive".to_string(),
             ));
         }
-
         if player_ids.len() < 2 {
             return Err(RoomServiceError::NotEnoughPlayers);
         }
-
         if player_ids.len() > self.config.room_max_players as usize {
             return Err(RoomServiceError::TooManyPlayers {
                 max: self.config.room_max_players,
@@ -61,15 +72,19 @@ impl RoomService {
             }
         }
 
-        let total_cost = num_games * bet;
-        let required_credit = total_cost * KORA_CREDIT_MULTIPLIER;
+        Ok(player_ids)
+    }
 
-        let profiles = self.profile_repo.find_by_user_ids(&player_ids).await?;
-
+    async fn validate_players_credit(
+        &self,
+        player_ids: &[Uuid],
+        required_credit: i32,
+    ) -> Result<(), RoomServiceError> {
+        let profiles = self.profile_repo.find_by_user_ids(player_ids).await?;
         let profile_map: HashMap<Uuid, crate::database::models::PlayerProfile> =
             profiles.into_iter().map(|p| (p.user_id, p)).collect();
 
-        for &p_id in &player_ids {
+        for &p_id in player_ids {
             let profile = profile_map
                 .get(&p_id)
                 .ok_or_else(|| RoomServiceError::ProfileNotFound)?;
@@ -87,77 +102,49 @@ impl RoomService {
                 });
             }
         }
+        Ok(())
+    }
 
-        let txn = self.db.begin().await?;
+    pub async fn create_run(
+        &self,
+        room_id: Uuid,
+        user_id: Uuid,
+        num_games: i32,
+        bet: i32,
+        player_ids: &[Uuid],
+    ) -> Result<CreateRunResponse, RoomServiceError> {
+        let player_ids = self
+            .validate_create_run(room_id, user_id, num_games, bet, player_ids)
+            .await?;
+
+        let total_cost = num_games * bet;
+        let required_credit = total_cost * KORA_CREDIT_MULTIPLIER;
+        self.validate_players_credit(&player_ids, required_credit)
+            .await?;
+
+        let txn = self.txn_runner.begin().await?;
 
         let run_id = Uuid::now_v7();
         let now = chrono::Utc::now();
-        use crate::database::models::game_run;
-        let run_active = game_run::ActiveModel {
-            id: Set(run_id),
-            room_id: Set(room_id),
-            num_games: Set(num_games),
-            bet_per_game: Set(bet),
-            num_players: Set(0),
-            current_game_index: Set(0),
-            status: Set("active".to_string()),
-            created_by: Set(user_id),
-            next_game_auto_start_at: ActiveValue::NotSet,
-            stall_warning_sent_at: ActiveValue::NotSet,
-            stall_cancelled_at: ActiveValue::NotSet,
-            created_at: Set(now),
-            updated_at: Set(now),
-        };
-        game_run::Entity::insert(run_active).exec(&txn).await?;
+        self.run_repo
+            .create_in_txn(&txn, run_id, room_id, user_id, num_games, bet, now)
+            .await?;
 
         for (i, &p_id) in player_ids.iter().enumerate() {
-            let current_credit = profile_map.get(&p_id).unwrap().credit;
-            let new_credit = current_credit - total_cost;
-
-            use crate::database::models::player_profile;
-            player_profile::Entity::update_many()
-                .col_expr(
-                    player_profile::Column::Credit,
-                    sea_orm::sea_query::Expr::value(new_credit),
-                )
-                .col_expr(
-                    player_profile::Column::UpdatedAt,
-                    sea_orm::sea_query::Expr::value(now),
-                )
-                .filter(player_profile::Column::UserId.eq(p_id))
-                .exec(&txn)
+            self.profile_repo
+                .debit_in_txn(&txn, p_id, total_cost, now)
                 .await?;
-
-            use crate::database::models::game_run_player;
-            let rp_id = Uuid::now_v7();
-            game_run_player::Entity::insert(game_run_player::ActiveModel {
-                id: Set(rp_id),
-                game_run_id: Set(run_id),
-                user_id: Set(p_id),
-                position: Set(i as i32),
-                provisioned_credits: Set(total_cost),
-                kicked: Set(false),
-                joined_at: Set(now),
-            })
-            .exec(&txn)
-            .await?;
+            self.run_player_repo
+                .create_in_txn(&txn, run_id, p_id, i as i32, total_cost, now)
+                .await?;
         }
 
         let num_players = player_ids.len() as i32;
-        game_run::Entity::update_many()
-            .col_expr(
-                game_run::Column::NumPlayers,
-                sea_orm::sea_query::Expr::value(num_players),
-            )
-            .col_expr(
-                game_run::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
-            )
-            .filter(game_run::Column::Id.eq(run_id))
-            .exec(&txn)
+        self.run_repo
+            .update_num_players_in_txn(&txn, run_id, num_players, now)
             .await?;
 
-        txn.commit().await?;
+        self.txn_runner.clone().commit(txn).await?;
 
         self.run_event_repo
             .log(run_id, Some(user_id), "run_created", None)
@@ -171,44 +158,46 @@ impl RoomService {
         })
         .await;
 
-        Ok(serde_json::json!({
-            "run_id": run_id,
-            "room_id": room_id,
-            "num_games": num_games,
-            "bet_per_game": bet,
-            "num_players": num_players,
-            "status": "active",
-        }))
+        Ok(CreateRunResponse {
+            run_id,
+            room_id,
+            num_games,
+            bet_per_game: bet,
+            num_players,
+            status: "active".to_string(),
+        })
     }
 
     pub async fn join_run(
         &self,
         run_id: Uuid,
         user_id: Uuid,
-    ) -> Result<serde_json::Value, RoomServiceError> {
+    ) -> Result<JoinRunResponse, RoomServiceError> {
         let run = self
             .run_repo
             .find_by_id(run_id)
             .await?
             .ok_or(RoomServiceError::RunNotFound)?;
 
-        if run.status != "active" {
+        if run.status != RunStatus::Active {
             return Err(RoomServiceError::RunAlreadyActive);
         }
 
-        let member = self
+        if self
             .member_repo
             .find_membership(run.room_id, user_id)
-            .await?;
-        if member.is_none() {
+            .await?
+            .is_none()
+        {
             return Err(RoomServiceError::NotMember);
         }
 
-        let existing = self
+        if self
             .run_player_repo
             .find_by_run_and_user(run_id, user_id)
-            .await?;
-        if existing.is_some() {
+            .await?
+            .is_some()
+        {
             return Err(RoomServiceError::AlreadyMember);
         }
 
@@ -241,52 +230,30 @@ impl RoomService {
             });
         }
 
-        let txn = self.db.begin().await?;
+        let txn = self.txn_runner.begin().await?;
 
-        let current_credit = profile.credit;
-        let new_credit = current_credit - total_cost;
         let now = chrono::Utc::now();
-
-        use crate::database::models::player_profile;
-        player_profile::Entity::update_many()
-            .col_expr(
-                player_profile::Column::Credit,
-                sea_orm::sea_query::Expr::value(new_credit),
-            )
-            .col_expr(
-                player_profile::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
-            )
-            .filter(player_profile::Column::UserId.eq(user_id))
-            .exec(&txn)
+        self.profile_repo
+            .debit_in_txn(&txn, user_id, total_cost, now)
             .await?;
 
         let position = existing_players.len() as i32 + 1;
+        self.run_player_repo
+            .create_in_txn(&txn, run_id, user_id, position, total_cost, now)
+            .await?;
 
-        use crate::database::models::game_run_player;
-        game_run_player::Entity::insert(game_run_player::ActiveModel {
-            id: Set(Uuid::now_v7()),
-            game_run_id: Set(run_id),
-            user_id: Set(user_id),
-            position: Set(position),
-            provisioned_credits: Set(total_cost),
-            kicked: Set(false),
-            joined_at: Set(now),
-        })
-        .exec(&txn)
-        .await?;
-
-        txn.commit().await?;
+        self.txn_runner.clone().commit(txn).await?;
 
         self.run_event_repo
             .log(run_id, Some(user_id), "player_joined_run", None)
             .await?;
 
-        Ok(serde_json::json!({
-            "run_id": run_id,
-            "provisioned_credits": total_cost,
-            "profile_credit_remaining": new_credit,
-        }))
+        let new_credit = profile.credit - total_cost;
+        Ok(JoinRunResponse {
+            run_id,
+            provisioned_credits: total_cost,
+            profile_credit_remaining: new_credit,
+        })
     }
 
     pub async fn leave_run(&self, run_id: Uuid, user_id: Uuid) -> Result<(), RoomServiceError> {
@@ -302,66 +269,41 @@ impl RoomService {
             .await?
             .ok_or(RoomServiceError::NotRunPlayer)?;
 
-        // Check if player is in an active game within this run
         if run.current_game_index > 0 {
             if let Some(run_game) = self
                 .run_game_repo
                 .find_by_run_and_index(run_id, run.current_game_index - 1)
                 .await?
             {
-                use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
-                let active_game = game::Entity::find_by_id(run_game.game_id)
-                    .filter(game::Column::Status.eq(GameStatus::Active))
-                    .one(&self.db)
-                    .await?;
-                if active_game.is_some() {
-                    let has_player = player::Entity::find()
-                        .filter(player::Column::GameId.eq(run_game.game_id))
-                        .filter(player::Column::UserId.eq(user_id))
-                        .filter(player::Column::Kicked.eq(false))
-                        .one(&self.db)
-                        .await?;
-                    if has_player.is_some() {
-                        return Err(RoomServiceError::GameInProgress);
-                    }
+                if self
+                    .game_repo
+                    .find_active_by_id(run_game.game_id)
+                    .await?
+                    .is_some()
+                    && self
+                        .player_repo
+                        .find_active_player_in_game(run_game.game_id, user_id)
+                        .await?
+                        .is_some()
+                {
+                    return Err(RoomServiceError::GameInProgress);
                 }
             }
         }
 
         if run_player.provisioned_credits > 0 {
-            let txn = self.db.begin().await?;
+            let txn = self.txn_runner.begin().await?;
 
-            use crate::database::models::{game_run_player, player_profile};
-            game_run_player::Entity::delete_many()
-                .filter(game_run_player::Column::GameRunId.eq(run_id))
-                .filter(game_run_player::Column::UserId.eq(user_id))
-                .exec(&txn)
+            self.run_player_repo
+                .delete_in_txn(&txn, run_id, user_id)
                 .await?;
 
-            let profile = self
-                .profile_repo
-                .find_by_user_id(user_id)
-                .await?
-                .ok_or_else(|| RoomServiceError::ProfileNotFound)?;
-
-            let current_credit = profile.credit;
             let now = chrono::Utc::now();
-            player_profile::Entity::update_many()
-                .col_expr(
-                    player_profile::Column::Credit,
-                    sea_orm::sea_query::Expr::value(
-                        current_credit + run_player.provisioned_credits,
-                    ),
-                )
-                .col_expr(
-                    player_profile::Column::UpdatedAt,
-                    sea_orm::sea_query::Expr::value(now),
-                )
-                .filter(player_profile::Column::UserId.eq(user_id))
-                .exec(&txn)
+            self.profile_repo
+                .credit_in_txn(&txn, user_id, run_player.provisioned_credits, now)
                 .await?;
 
-            txn.commit().await?;
+            self.txn_runner.clone().commit(txn).await?;
         } else {
             self.run_player_repo.remove(run_id, user_id).await?;
         }
@@ -372,7 +314,9 @@ impl RoomService {
 
         let remaining = self.run_player_repo.list_all_by_run(run_id).await?;
         if remaining.len() < 2 {
-            self.run_repo.update_status(run_id, "cancelled").await?;
+            self.run_repo
+                .update_status(run_id, RunStatus::Cancelled)
+                .await?;
         }
 
         Ok(())

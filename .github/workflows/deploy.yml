@@ -380,9 +380,24 @@ jobs:
       - build-push-frontend       # only runs if build-push-backend and build-push-frontend succeeds
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Coolify deployment
+      - name: Extract branch or tag name
+        id: ref
         run: |
+          # github.ref format: refs/heads/main or refs/tags/v1.0.0
+          REF_TYPE=$(echo "${{ github.ref }}" | cut -d'/' -f2)   # heads or tags
+          REF_NAME=$(echo "${{ github.ref }}" | cut -d'/' -f3-)  # branch or tag name
+          echo "type=$REF_TYPE" >> $GITHUB_OUTPUT
+          echo "name=$REF_NAME" >> $GITHUB_OUTPUT
+
+      - name: Trigger Coolify deployment with branch/tag
+        run: |
+          if [ "${{ steps.ref.outputs.type }}" = "tags" ]; then
+            PAYLOAD='{"tag": "${{ steps.ref.outputs.name }}"}'
+          else
+            PAYLOAD='{"branch": "${{ steps.ref.outputs.name }}"}'
+          fi
+
           curl -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
             -H "X-Coolify-Token: ${{ secrets.COOLIFY_WEBHOOK_SECRET }}" \
-            -d '{}'
+            -d "$PAYLOAD"

@@ -47,8 +47,8 @@ vi.mock('../hooks/useWebSocket', () => ({
 import GameLobby from './GameLobby';
 
 describe('GameLobby', () => {
-  let onBack: ReturnType<typeof vi.fn>;
-  let onGameStart: ReturnType<typeof vi.fn>;
+  let onBack: ReturnType<typeof vi.fn<() => void>>;
+  let onGameStart: ReturnType<typeof vi.fn<(data: unknown) => void>>;
 
   const LOBBY_RESPONSE = {
     status: 'pending',
@@ -61,8 +61,8 @@ describe('GameLobby', () => {
   };
 
   beforeEach(() => {
-    onBack = vi.fn();
-    onGameStart = vi.fn();
+    onBack = vi.fn<() => void>();
+    onGameStart = vi.fn<(data: unknown) => void>();
     mockOnMessage = null;
     mockGet.mockReset();
     mockPost.mockReset();

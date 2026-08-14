@@ -1,5 +1,5 @@
 import { useEffect, useRef} from 'react';
-import { useGameStore, GameResult, Player } from '../stores/useGameStore';
+import { useGameStore, GameResult, Player, RoundWinner, GameOverData } from '../stores/useGameStore';
 import { useWebSocket, GameEvent } from './useWebSocket';
 import { updateAnonymousStatsAfterGame } from '../utils/storage';
 import { useAuthStore } from '../stores/useAuthStore';
@@ -13,16 +13,20 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     setGameStatus,
     setRoundWinner,
     clearRoundWinner,
-    clearDeckSlots,
     setGameOver,
+    setPendingGameOver,
     updatePlayerCards,
     players,
     bet,
+    addPendingEvent,
+    cancelBotReplay,
+    startBotReplay,
+    botThinkingDelayMs,
+    roundPauseDelayMs,
   } = useGameStore();
 
   const { showToast } = useToast();
   const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  const deckClearTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Find the human player's id and position for WebSocket identity
   const humanPlayer = players.find((p) => p.type === 'human');
@@ -37,33 +41,99 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     onMessage: (event: GameEvent) => {
       switch (event.type) {
         case 'card_played': {
-          applyCardPlayed(event.player_id, event.card_index, event.next_turn);
-          clearRoundWinner();
+          const state = useGameStore.getState();
+          const playerWhoPlayed = state.players.find(p => p.id === event.player_id);
+          const nextTurnPlayer = state.players.find(p => p.id === event.next_turn);
+
+          // In step-by-step mode the human advances bots one at a time, so every
+          // card play (human or bot) must be applied immediately. The bot-chain
+          // buffering/replay below is only for non-step-by-step games where the
+          // backend emits bot moves rapidly (thinking delay moved to the frontend).
+          if (state.stepByStep) {
+            cancelBotReplay();
+            applyCardPlayed(event.player_id, event.card_index, event.next_turn);
+            clearRoundWinner();
+            break;
+          }
+
+          if (playerWhoPlayed?.type === 'human') {
+            cancelBotReplay();
+            applyCardPlayed(event.player_id, event.card_index, event.next_turn);
+            clearRoundWinner();
+            useGameStore.setState({ isBotChainActive: true });
+          } else if (state.isBotChainActive || state.isReplayingBots) {
+            const nextIsHuman = nextTurnPlayer?.type === 'human';
+            addPendingEvent({
+              kind: 'bot_play',
+              playerId: event.player_id,
+              cardIndex: event.card_index,
+              nextTurnPlayerId: event.next_turn ?? '',
+            });
+            if (nextIsHuman) {
+              useGameStore.setState({ isBotChainActive: false });
+              startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
+            }
+          } else {
+            applyCardPlayed(event.player_id, event.card_index, event.next_turn);
+            clearRoundWinner();
+          }
+          break;
+        }
+        case 'turn_changed': {
+          const state = useGameStore.getState();
+          // In step-by-step mode the turn indicator must always reflect the
+          // current turn immediately (the human advances bots one at a time).
+          if (state.stepByStep) {
+            const player = players.find((p) => p.id === event.current_turn);
+            if (player) {
+              setCurrentTurn(player.display_position ?? player.position);
+            }
+            break;
+          }
+          if (state.isBotChainActive) {
+            // During active bot chain buffering, don't update the UI turn indicator
+          } else if (!state.isReplayingBots) {
+            const player = players.find((p) => p.id === event.current_turn);
+            if (player) {
+              setCurrentTurn(player.display_position ?? player.position);
+            }
+          }
           break;
         }
         case 'round_completed': {
-          if (deckClearTimerRef.current) {
-            clearTimeout(deckClearTimerRef.current);
-          }
-          deckClearTimerRef.current = setTimeout(() => {
-          clearDeckSlots();
-          }, 800);
-
           const winType = (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal';
           const winnerPlayer = players.find((p) => p.id === event.winner_id);
           const winnerDisplayPos = winnerPlayer?.display_position ?? event.winner_position;
-          setRoundWinner({
+          const winner: RoundWinner = {
             playerId: event.winner_id,
             position: winnerDisplayPos,
             winType,
-          });
+          };
 
-          if (roundWinnerTimerRef.current) {
-            clearTimeout(roundWinnerTimerRef.current);
+          const state = useGameStore.getState();
+          // In step-by-step mode the round is evaluated on demand via the
+          // "Evaluate Round" button, so the winner must be shown immediately
+          // (no bot-chain buffering/replay involved).
+          if (state.stepByStep || (!state.isBotChainActive && !state.isReplayingBots)) {
+            // No bot chain in flight — show the winner. The deck is NOT cleared
+            // here so the CardCollectionAnimation can animate the played cards
+            // toward the winner; it is cleared via onDeckAnimationComplete once
+            // the collection animation finishes.
+            setRoundWinner(winner);
+            if (roundWinnerTimerRef.current) {
+              clearTimeout(roundWinnerTimerRef.current);
+            }
+            roundWinnerTimerRef.current = setTimeout(() => {
+              clearRoundWinner();
+            }, 3000);
+          } else {
+            // Defer deck-clear + winner declaration to the replay queue's
+            // round_pause barrier so the last card is fully shown first.
+            addPendingEvent({ kind: 'round_pause', winner });
+            // Ensure the replay runs to consume the round_pause even when no
+            // bot follows (e.g. the human starts the next round).
+            startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
           }
-          roundWinnerTimerRef.current = setTimeout(() => {
-            clearRoundWinner();
-          }, 3000);
           break;
         }
         case 'game_finished': {
@@ -76,11 +146,27 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             roundsPlayed: event.rounds_played,
           };
 
-          setGameOver({
+          const gameOverData: GameOverData = {
             isGameOver: true,
             winner: winner || null,
             result: gameResult,
-          });
+          };
+
+          const state = useGameStore.getState();
+          if (state.isBotChainActive || state.isReplayingBots) {
+            // A bot chain is still buffering/replaying. Defer the game-over
+            // modal until the queued bot cards (and round_pause) have been
+            // visually replayed, so the last bots are shown playing before the
+            // modal appears. The replay loop applies it once the queue drains.
+            setPendingGameOver(gameOverData);
+            // Ensure the replay runs to drain the queue and apply the deferred
+            // game-over, even when the game ends before the last bot plays
+            // (so startBotReplay was never triggered by a human turn).
+            startBotReplay(botThinkingDelayMs, roundPauseDelayMs);
+          } else {
+            cancelBotReplay();
+            setGameOver(gameOverData);
+          }
 
           const { isAuthenticated } = useAuthStore.getState();
           if (!isAuthenticated) {
@@ -89,13 +175,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               const won = humanPlayer.id === event.winner_id;
               updateAnonymousStatsAfterGame(bet, won, event.status as 'finished' | 'kora' | 'doubleKora');
             }
-          }
-          break;
-        }
-        case 'turn_changed': {
-          const player = players.find((p) => p.id === event.current_turn);
-          if (player) {
-            setCurrentTurn(player.display_position ?? player.position);
           }
           break;
         }
@@ -131,12 +210,20 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           break;
         }
         case 'game_state_snapshot': {
+          cancelBotReplay();
           const store = useGameStore.getState();
           const existingPlayers = store.players;
           const existingRemaining = store.remainingCards;
 
           const snapshotPlayers: Player[] = event.players.map((p) => {
             const existing = existingPlayers.find((ep) => ep.id === p.id);
+            // Preserve actual cards from existing player data (e.g., human player's hand).
+            // For bots or players without existing cards, generate placeholder indices
+            // based on cards_count so the UI can render the correct number of face-down cards.
+            const cardsCount = p.cards_count ?? existing?.cards_count ?? 0;
+            // const cards = existing?.cards && existing.cards.length > 0
+            //   ? existing.cards
+            //   : Array.from({ length: cardsCount }, (_, i) => i);
             return {
               id: p.id,
               type: p.player_type as 'human' | 'bot',
@@ -144,12 +231,14 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               position: p.position,
               display_position: p.display_position,
               cards: existing?.cards ?? [],
-              cards_count: existing?.cards_count,
+              cards_count: cardsCount,
             };
           });
 
           const remainingCards: Record<string, number> = {};
           snapshotPlayers.forEach((p) => {
+            // Use cards_count as the authoritative source for remaining card count
+            // remainingCards[p.id] = p.cards_count ?? existingRemaining[p.id] ?? p.cards.length;
             remainingCards[p.id] = existingRemaining[p.id] ?? p.cards.length;
           });
 
@@ -162,7 +251,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               currentTurn = currentPlayer.display_position;
             }
           }
-
           store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, deckSlots);
           if (event.step_by_step !== undefined) {
             store.setStepByStep(event.step_by_step);
@@ -211,9 +299,6 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     return () => {
       if (roundWinnerTimerRef.current) {
         clearTimeout(roundWinnerTimerRef.current);
-      }
-      if (deckClearTimerRef.current) {
-        clearTimeout(deckClearTimerRef.current);
       }
     };
   }, []);

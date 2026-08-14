@@ -10,6 +10,7 @@ pub mod mailer;
 pub mod messaging;
 pub mod observability;
 pub mod payment;
+pub mod room;
 pub mod scheduler;
 pub mod websocket;
 

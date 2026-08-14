@@ -80,6 +80,22 @@ impl RedisClient {
         Ok(result.is_some())
     }
 
+    pub async fn compare_and_delete(&mut self, key: &str, expected: &str) -> RedisResult<bool> {
+        let script = redis::Script::new(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then\n\
+                 return redis.call('del', KEYS[1])\n\
+             else\n\
+                 return 0\n\
+             end",
+        );
+        let result: i64 = script
+            .key(key)
+            .arg(expected)
+            .invoke_async(&mut self.connection_manager)
+            .await?;
+        Ok(result == 1)
+    }
+
     /// Set a string value by key (no expiry).
     #[allow(dead_code)]
     pub async fn set(&mut self, key: &str, value: &str) -> RedisResult<()> {
@@ -287,8 +303,7 @@ impl RedisClient {
     /// This is a simplified subscription that yields messages as they arrive.
     #[allow(dead_code)]
     pub async fn subscribe(&mut self, channels: &[&str]) -> RedisResult<redis::aio::PubSub> {
-        let mut pubsub: redis::aio::PubSub =
-            self.client.get_async_connection().await?.into_pubsub();
+        let mut pubsub: redis::aio::PubSub = self.client.get_async_pubsub().await?;
         for channel in channels {
             pubsub.subscribe(*channel).await?;
         }
@@ -326,8 +341,7 @@ impl RedisClient {
 
     /// Subscribe to Redis patterns and return a subscription object.
     pub async fn psubscribe(&mut self, patterns: &[&str]) -> RedisResult<redis::aio::PubSub> {
-        let mut pubsub: redis::aio::PubSub =
-            self.client.get_async_connection().await?.into_pubsub();
+        let mut pubsub: redis::aio::PubSub = self.client.get_async_pubsub().await?;
         for pattern in patterns {
             pubsub.psubscribe(*pattern).await?;
         }

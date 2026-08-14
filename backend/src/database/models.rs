@@ -177,6 +177,32 @@ pub enum InviteStatus {
     Declined,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(
+    rs_type = "String",
+    db_type = "String(StringLen::None)",
+    enum_name = "run_status"
+)]
+pub enum RunStatus {
+    #[sea_orm(string_value = "active")]
+    Active,
+    #[sea_orm(string_value = "cancelled")]
+    Cancelled,
+    #[sea_orm(string_value = "completed")]
+    Completed,
+}
+
+impl std::fmt::Display for RunStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            RunStatus::Active => "active",
+            RunStatus::Cancelled => "cancelled",
+            RunStatus::Completed => "completed",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 impl std::fmt::Display for GameStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -376,7 +402,7 @@ pub mod game_run {
         pub bet_per_game: i32,
         pub num_players: i32,
         pub current_game_index: i32,
-        pub status: String,
+        pub status: super::RunStatus,
         pub created_by: Uuid,
         pub next_game_auto_start_at: Option<DateTime<Utc>>,
         pub stall_warning_sent_at: Option<DateTime<Utc>>,
@@ -450,7 +476,7 @@ pub mod game_run_game {
         pub game_run_id: Uuid,
         pub game_id: Uuid,
         pub game_index: i32,
-        pub status: String,
+        pub status: super::RunStatus,
         pub created_at: DateTime<Utc>,
     }
 

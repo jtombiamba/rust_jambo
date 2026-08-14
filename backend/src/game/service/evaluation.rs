@@ -403,6 +403,7 @@ impl GameService {
             }
 
             if result.game_ended {
+                metrics::ACTIVE_GAMES.dec();
                 metrics::GAMES_FINISHED_TOTAL
                     .with_label_values(&[&result.final_status.to_string()])
                     .inc();

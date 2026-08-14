@@ -50,6 +50,7 @@ pub struct GameStatePlayer {
     pub position: i32,
     pub display_position: i32,
     pub player_type: String,
+    pub cards_count: i32,
 }
 
 // #[warn(dead_code)]

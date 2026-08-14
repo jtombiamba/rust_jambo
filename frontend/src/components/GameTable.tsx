@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AnimatePresence, motion } from 'framer-motion';
 import PlayerSlot, { PlayerSlotProps } from './PlayerSlot';
-import Card from './Card';
+import AnimatedCard from './AnimatedCard';
+import CardCollectionAnimation from './CardCollectionAnimation';
 import WinnerRing from './WinnerRing';
 import GameOverModal from './GameOverModal';
 import GameRules from './GameRules';
-import { RoundWinner, GameOverData, useStepByStepPhase } from '../stores/useGameStore';
+import { RoundWinner, GameOverData, useStepByStepPhase, useGameStore } from '../stores/useGameStore';
 
 export interface GamePlayer {
   id: string;
@@ -24,6 +26,7 @@ export interface GameTableProps {
   roundWinner?: RoundWinner | null;
   gameOver?: GameOverData | null;
   onCardClick?: (playerId: string, cardIndex: number) => void;
+  onDeckAnimationComplete?: () => void;
   onPlayAgain?: () => void;
   onReturnToLobby?: () => void;
   onCloseGameOver?: () => void;
@@ -58,6 +61,7 @@ const GameTable: React.FC<GameTableProps> = ({
   roundWinner = null,
   gameOver = null,
   onCardClick,
+  onDeckAnimationComplete,
   onPlayAgain,
   onReturnToLobby,
   onCloseGameOver,
@@ -67,6 +71,8 @@ const GameTable: React.FC<GameTableProps> = ({
 }) => {
   const { t } = useTranslation();
   const phase = useStepByStepPhase();
+  const isReplayingBots = useGameStore((s) => s.isReplayingBots);
+  const isBotChainActive = useGameStore((s) => s.isBotChainActive);
 
   const getLayoutMode = (): LayoutMode => {
     if (typeof window === 'undefined') return 'desktop';
@@ -117,7 +123,12 @@ const GameTable: React.FC<GameTableProps> = ({
     const displayPos = getDisplayPos(player);
     const position = positionMap[displayPos] || 'south';
     const isCurrentTurn = currentTurn !== undefined && displayPos === currentTurn;
+    const isBotThinking = player.type === 'bot'
+      && (isReplayingBots || isBotChainActive)
+      && isCurrentTurn;
     const isWinner = isPlayerRoundWinner(displayPos);
+    // Human players see their own cards face-up; bots' cards are face-down
+    // const cardsFaceUp = player.type === 'human';
 
     return (
       <div key={player.id} className="relative">
@@ -130,7 +141,8 @@ const GameTable: React.FC<GameTableProps> = ({
           cardsFaceUp={player.cards.length > 0}
           remainingCount={remainingCards[player.id]}
           isCurrentTurn={isCurrentTurn}
-          onCardClick={(cardIndex) => onCardClick?.(player.id, cardIndex)}
+          isThinking={isBotThinking}
+          onCardClick={(cardIndex) => isReplayingBots ? undefined : onCardClick?.(player.id, cardIndex)}
           compact={compact}
           orientation={layoutMode === 'mobile-portrait' ? 'portrait' : 'landscape'}
         />
@@ -163,13 +175,27 @@ const GameTable: React.FC<GameTableProps> = ({
             style={{ left: `${idx * step}px`, zIndex: idx }}
             data-testid={`${testIdPrefix}-${idx}`}
           >
-            {card !== null ? (
-              <Card index={card} faceUp={true} />
-            ) : (
-              <div className={placeholderClass}>
-                <div className={labelClass}>S{idx + 1}</div>
-              </div>
-            )}
+            <AnimatePresence mode="wait">
+              {card !== null ? (
+                <AnimatedCard
+                  key={`card-${card}`}
+                  index={card}
+                  faceUp={true}
+                  layoutId={`deck-card-${card}`}
+                />
+              ) : (
+                <motion.div
+                  key={`placeholder-${idx}`}
+                  className={placeholderClass}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <div className={labelClass}>S{idx + 1}</div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         ))}
       </div>
@@ -188,7 +214,30 @@ const GameTable: React.FC<GameTableProps> = ({
         </button>
       </div>
 
-      <div className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px]">
+      <div
+        className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px] rounded-xl overflow-hidden"
+        style={{
+          backgroundImage: 'url(/table_background_green.png)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+        }}
+      >
+        <div className="absolute inset-0 bg-black/20 pointer-events-none"></div>
+
+        {roundWinner && (
+          <CardCollectionAnimation
+            cards={deckSlots}
+            winnerPosition={
+              roundWinner.position !== null
+                ? positionMap[roundWinner.position] || null
+                : null
+            }
+            onAnimationComplete={onDeckAnimationComplete}
+          />
+        )}
+
+        <div className="relative z-10">
 
         {/* Mobile portrait layout */}
         {layoutMode === 'mobile-portrait' && (
@@ -205,14 +254,7 @@ const GameTable: React.FC<GameTableProps> = ({
               {(() => {
                 const westPlayer = findPlayerByPosition('west');
                 if (westPlayer) {
-                  return (
-                    <div className="flex flex-col items-center">
-                      <div className="text-xs font-semibold">{westPlayer.name} 🤖</div>
-                      <div className="text-[10px] text-gray-600">
-                        {remainingCards[westPlayer.id] ?? westPlayer.cards.length} {t('common.cards')}
-                      </div>
-                    </div>
-                  );
+                  return renderPlayerSlot(westPlayer, true);
                 }
                 return null;
               })()}
@@ -225,14 +267,7 @@ const GameTable: React.FC<GameTableProps> = ({
               {(() => {
                 const eastPlayer = findPlayerByPosition('east');
                 if (eastPlayer) {
-                  return (
-                    <div className="flex flex-col items-center">
-                      <div className="text-xs font-semibold">{eastPlayer.name} 🤖</div>
-                      <div className="text-[10px] text-gray-600">
-                        {remainingCards[eastPlayer.id] ?? eastPlayer.cards.length} {t('common.cards')}
-                      </div>
-                    </div>
-                  );
+                  return renderPlayerSlot(eastPlayer, true);
                 }
                 return null;
               })()}
@@ -315,9 +350,13 @@ const GameTable: React.FC<GameTableProps> = ({
               const displayPos = getDisplayPos(player);
               const position = positionMap[displayPos] || 'south';
               const isCurrentTurn = currentTurn !== undefined && displayPos === currentTurn;
+              const isBotThinking = player.type === 'bot'
+                && (isReplayingBots || isBotChainActive)
+                && isCurrentTurn;
               const isWinner = isPlayerRoundWinner(displayPos);
+              // const cardsFaceUp = player.type === 'human';
 
-              let gridClass = '';
+              let gridClass: string;
               switch (position) {
                 case 'south':
                   gridClass = 'col-start-2 row-start-3';
@@ -346,7 +385,8 @@ const GameTable: React.FC<GameTableProps> = ({
                     cardsFaceUp={player.cards.length > 0}
                     remainingCount={remainingCards[player.id]}
                     isCurrentTurn={isCurrentTurn}
-                    onCardClick={(cardIndex) => onCardClick?.(player.id, cardIndex)}
+                    isThinking={isBotThinking}
+                    onCardClick={(cardIndex) => isReplayingBots ? undefined : onCardClick?.(player.id, cardIndex)}
                     overlapCards={false}
                   />
                   {isWinner && roundWinner && (
@@ -370,11 +410,26 @@ const GameTable: React.FC<GameTableProps> = ({
                     className="w-16 h-24 border-2 border-dashed border-gray-400 rounded-lg flex items-center justify-center bg-gray-100"
                     data-testid={`deck-slot-${idx}`}
                   >
-                    {card !== null ? (
-                      <Card index={card} faceUp={true} />
-                    ) : (
-                      <div className="text-gray-400">{t('common.slot')} {idx + 1}</div>
-                    )}
+                    <AnimatePresence mode="wait">
+                      {card !== null ? (
+                        <AnimatedCard
+                          key={`card-${card}`}
+                          index={card}
+                          faceUp={true}
+                          layoutId={`deck-card-${card}`}
+                        />
+                      ) : (
+                        <motion.div
+                          key={`placeholder-${idx}`}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <div className="text-gray-400">{t('common.slot')} {idx + 1}</div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 ))}
               </div>
@@ -386,6 +441,7 @@ const GameTable: React.FC<GameTableProps> = ({
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {phase !== 'idle' && (

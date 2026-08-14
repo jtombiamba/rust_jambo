@@ -1,5 +1,5 @@
+use rand::rng;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
 use uuid::Uuid;
 
 use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
@@ -24,7 +24,7 @@ pub fn distribute_cards(player_ids: &[Uuid]) -> Vec<(Uuid, i32)> {
     );
 
     // Generate a random permutation of all card indices (0..TOTAL_CARDS)
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let mut cards: Vec<i32> = (0..TOTAL_CARDS as i32).collect();
     cards.shuffle(&mut rng);
 

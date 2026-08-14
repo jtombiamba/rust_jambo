@@ -289,9 +289,9 @@ services:
           memory: 512M
 
   http-load-test:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
+    # Uses the image built by infra/scripts/run-load-test.sh, which contains the
+    # load-test binaries (the default Dockerfile does NOT build them).
+    image: jambo-backend:load-test
     command:
       - "http-load-test"
       - "--target-url=http://backend:5000"
@@ -321,9 +321,9 @@ services:
           memory: 256M
 
   ws-load-test:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
+    # Uses the image built by infra/scripts/run-load-test.sh, which contains the
+    # load-test binaries (the default Dockerfile does NOT build them).
+    image: jambo-backend:load-test
     command:
       - "ws-load-test"
       - "--target-url=http://backend:5000"

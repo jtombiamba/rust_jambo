@@ -505,8 +505,7 @@ async fn build_game_state_response(
 
     let players_json: Vec<PlayerInfoDto> = all_players
         .iter()
-        .enumerate()
-        .map(|(idx, player)| {
+        .map(|player| {
             let player_type = match player.player_type {
                 PlayerType::Human => "human",
                 PlayerType::Bot => "bot",
@@ -514,7 +513,8 @@ async fn build_game_state_response(
             let is_me = player.user_id == Some(user_id);
             let cards = if is_me { my_cards.clone() } else { Vec::new() };
             let cards_count = *remaining_counts.get(&player.id).unwrap_or(&0) as i32;
-            let display_pos = compute_display_position(idx, num_players, my_position);
+            let display_pos =
+                compute_display_position(player.position as usize, num_players, my_position);
             PlayerInfoDto {
                 id: player.id,
                 player_type: player_type.to_string(),

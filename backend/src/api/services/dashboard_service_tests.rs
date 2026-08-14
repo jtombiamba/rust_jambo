@@ -3,7 +3,7 @@ use crate::api::dto::dashboard::GameFilter;
 use crate::database::models::{Game, GameCard, GameStatus, Player, PlayerProfile};
 use crate::database::traits::{GameCardRepoTrait, GameRepoTrait};
 use async_trait::async_trait;
-use sea_orm::DbErr;
+use sea_orm::{DatabaseTransaction, DbErr};
 use std::sync::Mutex;
 
 struct MockGameRepo;
@@ -27,6 +27,18 @@ impl GameRepoTrait for MockGameRepo {
     }
     async fn list_players(&self, _game_id: Uuid) -> Result<Vec<Player>, DbErr> {
         Ok(vec![])
+    }
+    async fn create_game_for_run_in_txn(
+        &self,
+        _txn: &DatabaseTransaction,
+        _game_id: Uuid,
+        _bet: i32,
+        _creator_id: Option<Uuid>,
+        _player_positions: serde_json::Value,
+        _num_players: i16,
+        _run_id: Uuid,
+    ) -> Result<(), DbErr> {
+        unimplemented!()
     }
 }
 
@@ -58,6 +70,13 @@ impl GameCardRepoTrait for MockCardRepo {
     }
     async fn list_by_game(&self, _game_id: Uuid) -> Result<Vec<GameCard>, DbErr> {
         Ok(vec![])
+    }
+    async fn bulk_insert_in_txn(
+        &self,
+        _txn: &DatabaseTransaction,
+        _cards: Vec<crate::database::models::game_card::ActiveModel>,
+    ) -> Result<(), DbErr> {
+        Ok(())
     }
 }
 
