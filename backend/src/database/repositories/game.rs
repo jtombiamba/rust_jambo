@@ -155,6 +155,25 @@ impl GameRepository {
     }
 
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_by_ids(&self, ids: &[Uuid]) -> Result<Vec<Game>, DbErr> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        game::Entity::find()
+            .filter(game::Column::Id.is_in(ids.iter().copied()))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_active_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
+        game::Entity::find_by_id(id)
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .one(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_rank(&self, id: Uuid, rank: Option<i32>) -> Result<Game, DbErr> {
         let mut active: game::ActiveModel = game::Entity::find_by_id(id)
             .one(&self.connection)

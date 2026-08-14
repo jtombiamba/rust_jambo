@@ -122,6 +122,20 @@ impl PlayerRepository {
             .await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_active_player_in_game(
+        &self,
+        game_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<Player>, DbErr> {
+        player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .filter(player::Column::UserId.eq(user_id))
+            .filter(player::Column::Kicked.eq(false))
+            .one(&self.connection)
+            .await
+    }
+
     #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
     #[allow(clippy::too_many_arguments)]
     pub async fn create_player_for_run_in_txn(

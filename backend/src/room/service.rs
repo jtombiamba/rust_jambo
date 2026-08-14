@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::api::dto::responses::{
+    ActiveRunSummary, RoomDetailResponse, RoomGameInfo, RoomListItem, RoomMemberInfo,
+};
 use crate::config::Config;
 use crate::database::repositories::{
     GameCardRepository, GameRepository, GameRunEventRepository, GameRunGameRepository,
@@ -30,7 +33,6 @@ pub(crate) struct EmailTask {
 }
 
 pub struct RoomService {
-    pub(crate) db: sea_orm::DatabaseConnection,
     pub(crate) room_repo: RoomRepository,
     pub(crate) member_repo: RoomMemberRepository,
     pub(crate) run_repo: GameRunRepository,
@@ -38,13 +40,14 @@ pub struct RoomService {
     pub(crate) run_game_repo: GameRunGameRepository,
     pub(crate) run_event_repo: GameRunEventRepository,
     pub(crate) profile_repo: PlayerProfileRepository,
-    #[allow(dead_code)]
+    pub(crate) game_repo: GameRepository,
     pub(crate) player_repo: PlayerRepository,
     pub(crate) user_repo: UserRepository,
     mailer: Arc<dyn Mailer>,
     pub(crate) config: Config,
     redis_client: Option<RedisClient>,
     pub(crate) start_next_game_svc: Arc<StartNextGameService>,
+    pub(crate) txn_runner: Arc<dyn TransactionRunner>,
     email_tx: tokio::sync::mpsc::Sender<EmailTask>,
     email_rx: tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<EmailTask>>>,
 }
@@ -76,7 +79,7 @@ impl RoomService {
             Arc::new(SeaOrmTransactionRunner::new(db.clone()));
 
         let start_next_game_svc = Self::build_start_next_game(
-            game_repo,
+            game_repo.clone(),
             card_repo,
             run_repo.clone(),
             run_player_repo.clone(),
@@ -87,11 +90,10 @@ impl RoomService {
             user_repo.clone(),
             event_publisher,
             lock_service,
-            txn_runner,
+            txn_runner.clone(),
         );
 
         Self {
-            db: db.clone(),
             room_repo: RoomRepository::new(db.clone()),
             member_repo: RoomMemberRepository::new(db.clone()),
             run_repo,
@@ -99,12 +101,14 @@ impl RoomService {
             run_game_repo,
             run_event_repo,
             profile_repo,
+            game_repo,
             player_repo,
             user_repo,
             mailer,
             config,
             redis_client,
             start_next_game_svc,
+            txn_runner,
             email_tx,
             email_rx: tokio::sync::Mutex::new(Some(email_rx)),
         }
@@ -120,7 +124,6 @@ impl RoomService {
     ) -> Self {
         let (email_tx, email_rx) = tokio::sync::mpsc::channel(EMAIL_CHANNEL_CAPACITY);
         Self {
-            db: db.clone(),
             room_repo: RoomRepository::new(db.clone()),
             member_repo: RoomMemberRepository::new(db.clone()),
             run_repo: GameRunRepository::new(db.clone()),
@@ -128,12 +131,14 @@ impl RoomService {
             run_game_repo: GameRunGameRepository::new(db.clone()),
             run_event_repo: GameRunEventRepository::new(db.clone()),
             profile_repo: PlayerProfileRepository::new(db.clone()),
+            game_repo: GameRepository::new(db.clone()),
             player_repo: PlayerRepository::new(db.clone()),
             user_repo: UserRepository::new(db.clone(), config.default_credit),
             mailer,
             config,
             redis_client,
             start_next_game_svc,
+            txn_runner: Arc::new(SeaOrmTransactionRunner::new(db.clone())),
             email_tx,
             email_rx: tokio::sync::Mutex::new(Some(email_rx)),
         }
@@ -238,11 +243,10 @@ impl RoomService {
         Ok(room)
     }
 
-    // TODO: make a real DTO for response
     pub async fn list_user_rooms(
         &self,
         user_id: Uuid,
-    ) -> Result<Vec<serde_json::Value>, RoomServiceError> {
+    ) -> Result<Vec<RoomListItem>, RoomServiceError> {
         let rooms = self.room_repo.list_by_user(user_id).await?;
 
         if rooms.is_empty() {
@@ -256,28 +260,25 @@ impl RoomService {
             .iter()
             .map(|room| {
                 let member_count = counts.get(&room.id).copied().unwrap_or(0);
-                serde_json::json!({
-                    "id": room.id,
-                    "name": room.name,
-                    "creator_id": room.creator_id,
-                    "invitation_code": room.invitation_code,
-                    "created_at": room.created_at.to_rfc3339(),
-                    "member_count": member_count,
-                })
+                RoomListItem {
+                    id: room.id,
+                    name: room.name.clone(),
+                    creator_id: room.creator_id,
+                    invitation_code: room.invitation_code.clone(),
+                    created_at: room.created_at.to_rfc3339(),
+                    member_count,
+                }
             })
             .collect();
 
         Ok(result)
     }
 
-    // TODO: make a real DTO for response, all sub elements of the final output value should be defined
-    // as when member_infos.push
-    // convert everything that are serde_json in DTO
     pub async fn get_room_detail(
         &self,
         room_id: Uuid,
         user_id: Uuid,
-    ) -> Result<serde_json::Value, RoomServiceError> {
+    ) -> Result<RoomDetailResponse, RoomServiceError> {
         let room = self
             .room_repo
             .find_by_id(room_id)
@@ -302,54 +303,57 @@ impl RoomService {
         };
         let user_map: HashMap<Uuid, String> = users.into_iter().map(|u| (u.id, u.pseudo)).collect();
 
-        let mut member_infos = Vec::new();
-        for m in &members {
-            member_infos.push(serde_json::json!({
-                "user_id": m.user_id,
-                "pseudo": user_map.get(&m.user_id).cloned().unwrap_or_default(),
-                "joined_at": m.joined_at.to_rfc3339(),
-            }));
-        }
+        let member_infos: Vec<RoomMemberInfo> = members
+            .iter()
+            .map(|m| RoomMemberInfo {
+                user_id: m.user_id,
+                pseudo: user_map.get(&m.user_id).cloned().unwrap_or_default(),
+                joined_at: m.joined_at.to_rfc3339(),
+            })
+            .collect();
+
+        let member_count = members.len();
 
         let active_run = self.run_repo.find_active_by_room(room_id).await?;
 
-        let current_game_info = if let Some(ref run) = active_run {
-            if run.current_game_index > 0 {
-                self.run_game_repo
-                    .find_by_run_and_index(run.id, run.current_game_index - 1)
-                    .await?
-                    .map(|rg| {
-                        serde_json::json!({
-                            "game_id": rg.game_id,
-                            "game_index": rg.game_index,
-                            "status": rg.status,
+        let active_run_summary = match active_run {
+            Some(r) => {
+                let current_game = if r.current_game_index > 0 {
+                    self.run_game_repo
+                        .find_by_run_and_index(r.id, r.current_game_index - 1)
+                        .await?
+                        .map(|rg| RoomGameInfo {
+                            game_id: rg.game_id,
+                            game_index: rg.game_index,
+                            status: rg.status.to_string(),
                         })
-                    })
-            } else {
-                None
+                } else {
+                    None
+                };
+
+                Some(ActiveRunSummary {
+                    id: r.id,
+                    num_games: r.num_games,
+                    bet_per_game: r.bet_per_game,
+                    current_game_index: r.current_game_index,
+                    status: r.status.to_string(),
+                    all_games_created: r.current_game_index >= r.num_games,
+                    current_game,
+                })
             }
-        } else {
-            None
+            None => None,
         };
 
-        Ok(serde_json::json!({
-            "id": room.id,
-            "name": room.name,
-            "creator_id": room.creator_id,
-            "invitation_code": room.invitation_code,
-            "created_at": room.created_at.to_rfc3339(),
-            "members": member_infos,
-            "member_count": members.len(),
-            "active_run": active_run.map(|r| serde_json::json!({
-                "id": r.id,
-                "num_games": r.num_games,
-                "bet_per_game": r.bet_per_game,
-                "current_game_index": r.current_game_index,
-                "status": r.status.to_string(),
-                "all_games_created": r.current_game_index >= r.num_games,
-                "current_game": current_game_info,
-            })),
-        }))
+        Ok(RoomDetailResponse {
+            id: room.id,
+            name: room.name,
+            creator_id: room.creator_id,
+            invitation_code: room.invitation_code,
+            created_at: room.created_at.to_rfc3339(),
+            members: member_infos,
+            member_count,
+            active_run: active_run_summary,
+        })
     }
 
     pub async fn join_room(

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DbErr, EntityTrait, QueryFilter, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
+    QueryFilter, Set,
 };
 use uuid::Uuid;
 
@@ -80,6 +81,51 @@ impl PlayerProfileRepository {
         active.frozen_until = Set(frozen_until);
         active.updated_at = Set(chrono::Utc::now());
         active.update(&self.connection).await
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn debit_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        user_id: Uuid,
+        amount: i32,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DbErr> {
+        use sea_orm::sea_query::Expr;
+        use sea_orm::sea_query::ExprTrait;
+        player_profile::Entity::update_many()
+            .col_expr(
+                player_profile::Column::Credit,
+                Expr::col(player_profile::Column::Credit).sub(amount),
+            )
+            .col_expr(player_profile::Column::UpdatedAt, Expr::value(now))
+            .filter(player_profile::Column::UserId.eq(user_id))
+            .filter(player_profile::Column::Credit.gte(amount))
+            .exec(txn)
+            .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn credit_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        user_id: Uuid,
+        amount: i32,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DbErr> {
+        use sea_orm::sea_query::Expr;
+        use sea_orm::sea_query::ExprTrait;
+        player_profile::Entity::update_many()
+            .col_expr(
+                player_profile::Column::Credit,
+                Expr::col(player_profile::Column::Credit).add(amount),
+            )
+            .col_expr(player_profile::Column::UpdatedAt, Expr::value(now))
+            .filter(player_profile::Column::UserId.eq(user_id))
+            .exec(txn)
+            .await?;
+        Ok(())
     }
 }
 

@@ -139,6 +139,105 @@ impl GameRunRepository {
             .await?;
         Ok(())
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        run_id: Uuid,
+        room_id: Uuid,
+        created_by: Uuid,
+        num_games: i32,
+        bet_per_game: i32,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), sea_orm::DbErr> {
+        game_run::Entity::insert(game_run::ActiveModel {
+            id: Set(run_id),
+            room_id: Set(room_id),
+            num_games: Set(num_games),
+            bet_per_game: Set(bet_per_game),
+            num_players: Set(0),
+            current_game_index: Set(0),
+            status: Set(RunStatus::Active),
+            created_by: Set(created_by),
+            next_game_auto_start_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            stall_cancelled_at: ActiveValue::NotSet,
+            created_at: Set(now),
+            updated_at: Set(now),
+        })
+        .exec(txn)
+        .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn update_num_players_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        run_id: Uuid,
+        num_players: i32,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), sea_orm::DbErr> {
+        use sea_orm::sea_query::Expr;
+        game_run::Entity::update_many()
+            .col_expr(game_run::Column::NumPlayers, Expr::value(num_players))
+            .col_expr(game_run::Column::UpdatedAt, Expr::value(now))
+            .filter(game_run::Column::Id.eq(run_id))
+            .exec(txn)
+            .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_stalled_active(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<GameRun>, sea_orm::DbErr> {
+        game_run::Entity::find()
+            .filter(game_run::Column::Status.eq(RunStatus::Active))
+            .filter(game_run::Column::UpdatedAt.lt(cutoff))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn cancel(
+        &self,
+        run_id: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let model = game_run::Entity::find_by_id(run_id)
+            .one(&self.connection)
+            .await?;
+        if let Some(model) = model {
+            let mut active: game_run::ActiveModel = model.into();
+            active.status = Set(RunStatus::Cancelled);
+            active.stall_cancelled_at = Set(Some(now));
+            active.updated_at = Set(now);
+            active.update(&self.connection).await?;
+        }
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn mark_stall_warning_sent(
+        &self,
+        run_id: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), sea_orm::DbErr> {
+        let model = game_run::Entity::find_by_id(run_id)
+            .one(&self.connection)
+            .await?;
+        if let Some(model) = model {
+            let mut active: game_run::ActiveModel = model.into();
+            active.stall_warning_sent_at = Set(Some(now));
+            active.updated_at = Set(now);
+            active.update(&self.connection).await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]

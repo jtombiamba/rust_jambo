@@ -68,6 +68,17 @@ impl GameRunGameRepository {
     }
 
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn list_by_runs(&self, run_ids: &[Uuid]) -> Result<Vec<GameRunGame>, sea_orm::DbErr> {
+        if run_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        game_run_game::Entity::find()
+            .filter(game_run_game::Column::GameRunId.is_in(run_ids.iter().copied()))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn update_status(
         &self,
         run_game_id: Uuid,

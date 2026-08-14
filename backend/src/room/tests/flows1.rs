@@ -262,7 +262,7 @@ async fn get_room_detail_success() {
     let result = service.get_room_detail(room_id, user_id).await;
     assert!(result.is_ok());
     let detail = result.unwrap();
-    assert_eq!(detail["id"], serde_json::json!(room_id));
-    assert_eq!(detail["name"], serde_json::json!("Test Room"));
-    assert_eq!(detail["member_count"], serde_json::json!(1));
+    assert_eq!(detail.id, room_id);
+    assert_eq!(detail.name, "Test Room");
+    assert_eq!(detail.member_count, 1);
 }

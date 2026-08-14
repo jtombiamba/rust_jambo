@@ -25,6 +25,80 @@ pub struct CurrentGameResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct CreateRunResponse {
+    pub run_id: Uuid,
+    pub room_id: Uuid,
+    pub num_games: i32,
+    pub bet_per_game: i32,
+    pub num_players: i32,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JoinRunResponse {
+    pub run_id: Uuid,
+    pub provisioned_credits: i32,
+    pub profile_credit_remaining: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoomListItem {
+    pub id: Uuid,
+    pub name: String,
+    pub creator_id: Uuid,
+    pub invitation_code: String,
+    pub created_at: String,
+    pub member_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoomMemberInfo {
+    pub user_id: Uuid,
+    pub pseudo: String,
+    pub joined_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoomGameInfo {
+    pub game_id: Uuid,
+    pub game_index: i32,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ActiveRunSummary {
+    pub id: Uuid,
+    pub num_games: i32,
+    pub bet_per_game: i32,
+    pub current_game_index: i32,
+    pub status: String,
+    pub all_games_created: bool,
+    pub current_game: Option<RoomGameInfo>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoomDetailResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub creator_id: Uuid,
+    pub invitation_code: String,
+    pub created_at: String,
+    pub members: Vec<RoomMemberInfo>,
+    pub member_count: usize,
+    pub active_run: Option<ActiveRunSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RunListItem {
+    pub id: Uuid,
+    pub num_games: i32,
+    pub bet_per_game: i32,
+    pub current_game_index: i32,
+    pub status: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct PlayCardResponse {
     pub success: bool,
     pub message: String,

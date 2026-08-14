@@ -144,6 +144,74 @@ impl GameRunPlayerRepository {
             .await?;
         Ok(())
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn create_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        run_id: Uuid,
+        user_id: Uuid,
+        position: i32,
+        provisioned_credits: i32,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), sea_orm::DbErr> {
+        game_run_player::Entity::insert(game_run_player::ActiveModel {
+            id: Set(Uuid::now_v7()),
+            game_run_id: Set(run_id),
+            user_id: Set(user_id),
+            position: Set(position),
+            provisioned_credits: Set(provisioned_credits),
+            kicked: Set(false),
+            joined_at: Set(now),
+        })
+        .exec(txn)
+        .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn delete_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        run_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), sea_orm::DbErr> {
+        game_run_player::Entity::delete_many()
+            .filter(game_run_player::Column::GameRunId.eq(run_id))
+            .filter(game_run_player::Column::UserId.eq(user_id))
+            .exec(txn)
+            .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn list_by_runs(
+        &self,
+        run_ids: &[Uuid],
+    ) -> Result<Vec<GameRunPlayer>, sea_orm::DbErr> {
+        if run_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        game_run_player::Entity::find()
+            .filter(game_run_player::Column::GameRunId.is_in(run_ids.iter().copied()))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn list_active_by_runs(
+        &self,
+        run_ids: &[Uuid],
+    ) -> Result<Vec<GameRunPlayer>, sea_orm::DbErr> {
+        if run_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        game_run_player::Entity::find()
+            .filter(game_run_player::Column::GameRunId.is_in(run_ids.iter().copied()))
+            .filter(game_run_player::Column::Kicked.eq(false))
+            .all(&self.connection)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
