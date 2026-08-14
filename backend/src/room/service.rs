@@ -2,180 +2,49 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
-
-use crate::api::dto::responses::ApiErrorResponse;
 use crate::config::Config;
-use crate::database::models::{game, player, GameMode, GameStatus};
 use crate::database::repositories::{
-    GameRunEventRepository, GameRunGameRepository, GameRunPlayerRepository, GameRunRepository,
-    PlayerProfileRepository, PlayerRepository, RoomMemberRepository, RoomRepository,
-    UserRepository,
+    GameCardRepository, GameRepository, GameRunEventRepository, GameRunGameRepository,
+    GameRunPlayerRepository, GameRunRepository, PlayerProfileRepository, PlayerRepository,
+    RoomMemberRepository, RoomRepository, UserRepository,
 };
-use crate::game::constants::KORA_CREDIT_MULTIPLIER;
 use crate::i18n::Lang;
 use crate::mailer::Mailer;
 use crate::messaging::events::RoomEvent;
 use crate::messaging::redis::PublishResult;
 use crate::messaging::RedisClient;
+use crate::room::error::RoomServiceError;
+use crate::room::event_publisher::{RedisRoomEventPublisher, RoomEventPublisher};
+use crate::room::start_game_lock::{RedisStartGameLock, StartGameLock};
+use crate::room::start_next_game::StartNextGameService;
+use crate::room::transaction_runner::{SeaOrmTransactionRunner, TransactionRunner};
 
 const EMAIL_CHANNEL_CAPACITY: usize = 256;
 
-struct EmailTask {
-    email: String,
-    pseudo: String,
-    room_name: String,
-    code: String,
-    lang: Lang,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RoomServiceError {
-    #[error("Room not found")]
-    RoomNotFound,
-    #[error("User is not a member of this room")]
-    NotMember,
-    #[error("User is already a member of this room")]
-    AlreadyMember,
-    #[error("Invalid invitation code")]
-    InvalidCode,
-    #[error("A game run is already active in this room")]
-    RunAlreadyActive,
-    #[error("Game run not found")]
-    RunNotFound,
-    #[error("Not part of this game run")]
-    NotRunPlayer,
-    #[error("Insufficient credits: need {required} but have {current}")]
-    InsufficientCredits { required: i32, current: i32 },
-    #[error("User not found")]
-    UserNotFound,
-    #[error("Database error: {0}")]
-    Database(#[from] sea_orm::DbErr),
-    #[error("Internal error: {0}")]
-    Internal(String),
-    #[error("Account frozen")]
-    AccountFrozen,
-    #[error("Game not found")]
-    GameNotFound,
-    #[error("Not enough players to start")]
-    NotEnoughPlayers,
-    #[error("All games in run have been played")]
-    RunCompleted,
-    #[error("Game run is not active (current status: {status})")]
-    RunNotActive { status: String },
-    #[error("Room is full (max {max} players)")]
-    RoomFull { max: i32 },
-    #[error("Too many players (max {max})")]
-    TooManyPlayers { max: i32 },
-    #[error("Must leave active run before leaving room")]
-    LeaveBlockedByRun,
-    #[error("Name is required")]
-    NameRequired,
-    #[error("Player profile not found")]
-    ProfileNotFound,
-    #[error("Cannot leave run while a game is in progress")]
-    GameInProgress,
-    #[error("Game is already being started in this run")]
-    StartAlreadyInProgress,
-}
-
-impl RoomServiceError {
-    pub fn source(&self) -> &'static str {
-        match self {
-            RoomServiceError::RoomNotFound => "room:room_not_found",
-            RoomServiceError::NotMember => "room:not_member",
-            RoomServiceError::AlreadyMember => "room:already_member",
-            RoomServiceError::InvalidCode => "room:invalid_code",
-            RoomServiceError::RunAlreadyActive => "room:run_already_active",
-            RoomServiceError::RunNotFound => "room:run_not_found",
-            RoomServiceError::NotRunPlayer => "room:not_run_player",
-            RoomServiceError::InsufficientCredits { .. } => "room:insufficient_credits",
-            RoomServiceError::UserNotFound => "room:user_not_found",
-            RoomServiceError::Database(_) => "room:database",
-            RoomServiceError::Internal(_) => "room:internal",
-            RoomServiceError::AccountFrozen => "room:account_frozen",
-            RoomServiceError::GameNotFound => "room:game_not_found",
-            RoomServiceError::NotEnoughPlayers => "room:not_enough_players",
-            RoomServiceError::RunCompleted => "room:run_completed",
-            RoomServiceError::RunNotActive { .. } => "room:run_not_active",
-            RoomServiceError::RoomFull { .. } => "room:room_full",
-            RoomServiceError::TooManyPlayers { .. } => "room:too_many_players",
-            RoomServiceError::LeaveBlockedByRun => "room:leave_blocked_by_run",
-            RoomServiceError::NameRequired => "room:name_required",
-            RoomServiceError::ProfileNotFound => "room:profile_not_found",
-            RoomServiceError::GameInProgress => "room:game_in_progress",
-            RoomServiceError::StartAlreadyInProgress => "room:start_already_in_progress",
-        }
-    }
-}
-
-impl actix_web::ResponseError for RoomServiceError {
-    fn status_code(&self) -> actix_web::http::StatusCode {
-        use actix_web::http::StatusCode;
-        match self {
-            RoomServiceError::RoomNotFound
-            | RoomServiceError::RunNotFound
-            | RoomServiceError::ProfileNotFound => StatusCode::NOT_FOUND,
-            RoomServiceError::NotMember | RoomServiceError::NotRunPlayer => StatusCode::FORBIDDEN,
-            RoomServiceError::AlreadyMember
-            | RoomServiceError::RunAlreadyActive
-            | RoomServiceError::LeaveBlockedByRun
-            | RoomServiceError::RoomFull { .. }
-            | RoomServiceError::GameInProgress
-            | RoomServiceError::StartAlreadyInProgress => StatusCode::CONFLICT,
-            RoomServiceError::InsufficientCredits { .. } => StatusCode::PAYMENT_REQUIRED,
-            RoomServiceError::InvalidCode
-            | RoomServiceError::NameRequired
-            | RoomServiceError::NotEnoughPlayers
-            | RoomServiceError::TooManyPlayers { .. } => StatusCode::BAD_REQUEST,
-            RoomServiceError::AccountFrozen => StatusCode::FORBIDDEN,
-            RoomServiceError::RunCompleted | RoomServiceError::RunNotActive { .. } => {
-                StatusCode::BAD_REQUEST
-            }
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-
-    fn error_response(&self) -> actix_web::HttpResponse {
-        let status = self.status_code();
-        let is_server_error = status.is_server_error();
-        let msg = if is_server_error {
-            "Internal server error".to_string()
-        } else {
-            self.to_string()
-        };
-        let request_id = crate::observability::CORRELATION_ID
-            .try_with(|id| id.to_string())
-            .ok();
-        if is_server_error {
-            tracing::error!(error = ?self, request_id = ?request_id, "Room service error occurred");
-        }
-        actix_web::HttpResponse::build(status).json(ApiErrorResponse {
-            success: false,
-            error: msg,
-            field: None,
-            source: self.source().to_string(),
-            request_id,
-        })
-    }
+pub(crate) struct EmailTask {
+    pub email: String,
+    pub pseudo: String,
+    pub room_name: String,
+    pub code: String,
+    pub lang: Lang,
 }
 
 pub struct RoomService {
-    db: sea_orm::DatabaseConnection,
-    room_repo: RoomRepository,
-    member_repo: RoomMemberRepository,
-    run_repo: GameRunRepository,
-    run_player_repo: GameRunPlayerRepository,
-    run_game_repo: GameRunGameRepository,
-    run_event_repo: GameRunEventRepository,
-    profile_repo: PlayerProfileRepository,
+    pub(crate) db: sea_orm::DatabaseConnection,
+    pub(crate) room_repo: RoomRepository,
+    pub(crate) member_repo: RoomMemberRepository,
+    pub(crate) run_repo: GameRunRepository,
+    pub(crate) run_player_repo: GameRunPlayerRepository,
+    pub(crate) run_game_repo: GameRunGameRepository,
+    pub(crate) run_event_repo: GameRunEventRepository,
+    pub(crate) profile_repo: PlayerProfileRepository,
     #[allow(dead_code)]
-    player_repo: PlayerRepository,
-    user_repo: UserRepository,
+    pub(crate) player_repo: PlayerRepository,
+    pub(crate) user_repo: UserRepository,
     mailer: Arc<dyn Mailer>,
-    config: Config,
+    pub(crate) config: Config,
     redis_client: Option<RedisClient>,
-    start_game_locks: tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
+    pub(crate) start_next_game_svc: Arc<StartNextGameService>,
     email_tx: tokio::sync::mpsc::Sender<EmailTask>,
     email_rx: tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<EmailTask>>>,
 }
@@ -186,6 +55,68 @@ impl RoomService {
         mailer: Arc<dyn Mailer>,
         config: Config,
         redis_client: Option<RedisClient>,
+    ) -> Self {
+        let (email_tx, email_rx) = tokio::sync::mpsc::channel(EMAIL_CHANNEL_CAPACITY);
+
+        let game_repo = GameRepository::new(db.clone());
+        let card_repo = GameCardRepository::new(db.clone());
+        let run_repo = GameRunRepository::new(db.clone());
+        let run_player_repo = GameRunPlayerRepository::new(db.clone());
+        let run_game_repo = GameRunGameRepository::new(db.clone());
+        let run_event_repo = GameRunEventRepository::new(db.clone());
+        let profile_repo = PlayerProfileRepository::new(db.clone());
+        let player_repo = PlayerRepository::new(db.clone());
+        let user_repo = UserRepository::new(db.clone(), config.default_credit);
+
+        let event_publisher: Arc<dyn RoomEventPublisher> =
+            Arc::new(RedisRoomEventPublisher::new(redis_client.clone()));
+        let lock_service: Arc<dyn StartGameLock> =
+            Arc::new(RedisStartGameLock::new(redis_client.clone()));
+        let txn_runner: Arc<dyn TransactionRunner> =
+            Arc::new(SeaOrmTransactionRunner::new(db.clone()));
+
+        let start_next_game_svc = Self::build_start_next_game(
+            game_repo,
+            card_repo,
+            run_repo.clone(),
+            run_player_repo.clone(),
+            run_game_repo.clone(),
+            run_event_repo.clone(),
+            profile_repo.clone(),
+            player_repo.clone(),
+            user_repo.clone(),
+            event_publisher,
+            lock_service,
+            txn_runner,
+        );
+
+        Self {
+            db: db.clone(),
+            room_repo: RoomRepository::new(db.clone()),
+            member_repo: RoomMemberRepository::new(db.clone()),
+            run_repo,
+            run_player_repo,
+            run_game_repo,
+            run_event_repo,
+            profile_repo,
+            player_repo,
+            user_repo,
+            mailer,
+            config,
+            redis_client,
+            start_next_game_svc,
+            email_tx,
+            email_rx: tokio::sync::Mutex::new(Some(email_rx)),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn new_with_start_next_game(
+        db: sea_orm::DatabaseConnection,
+        mailer: Arc<dyn Mailer>,
+        config: Config,
+        redis_client: Option<RedisClient>,
+        start_next_game_svc: Arc<StartNextGameService>,
     ) -> Self {
         let (email_tx, email_rx) = tokio::sync::mpsc::channel(EMAIL_CHANNEL_CAPACITY);
         Self {
@@ -202,10 +133,47 @@ impl RoomService {
             mailer,
             config,
             redis_client,
-            start_game_locks: tokio::sync::Mutex::new(HashMap::new()),
+            start_next_game_svc,
             email_tx,
             email_rx: tokio::sync::Mutex::new(Some(email_rx)),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_start_next_game(
+        game_repo: GameRepository,
+        card_repo: GameCardRepository,
+        run_repo: GameRunRepository,
+        run_player_repo: GameRunPlayerRepository,
+        run_game_repo: GameRunGameRepository,
+        run_event_repo: GameRunEventRepository,
+        profile_repo: PlayerProfileRepository,
+        player_repo: PlayerRepository,
+        user_repo: UserRepository,
+        event_publisher: Arc<dyn RoomEventPublisher>,
+        lock_service: Arc<dyn StartGameLock>,
+        txn_runner: Arc<dyn TransactionRunner>,
+    ) -> Arc<StartNextGameService> {
+        use crate::database::traits::{
+            GameCardRepoTrait, GameRepoTrait, GameRunEventRepoTrait, GameRunGameRepoTrait,
+            GameRunPlayerRepoTrait, GameRunRepoTrait, PlayerProfileRepoTrait, PlayerRepoTrait,
+            UserRepoTrait,
+        };
+
+        Arc::new(StartNextGameService::new(
+            Arc::new(run_repo) as Arc<dyn GameRunRepoTrait>,
+            Arc::new(run_player_repo) as Arc<dyn GameRunPlayerRepoTrait>,
+            Arc::new(run_game_repo) as Arc<dyn GameRunGameRepoTrait>,
+            Arc::new(game_repo) as Arc<dyn GameRepoTrait>,
+            Arc::new(player_repo) as Arc<dyn PlayerRepoTrait>,
+            Arc::new(card_repo) as Arc<dyn GameCardRepoTrait>,
+            Arc::new(profile_repo) as Arc<dyn PlayerProfileRepoTrait>,
+            Arc::new(user_repo) as Arc<dyn UserRepoTrait>,
+            event_publisher,
+            Arc::new(run_event_repo) as Arc<dyn GameRunEventRepoTrait>,
+            lock_service,
+            txn_runner,
+        ))
     }
 
     pub async fn start_email_consumer(self: &Arc<Self>) {
@@ -233,16 +201,7 @@ impl RoomService {
         });
     }
 
-    fn generate_invitation_code() -> String {
-        use rand::Rng;
-        let chars: Vec<char> = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".chars().collect();
-        let mut rng = rand::thread_rng();
-        (0..8)
-            .map(|_| chars[rng.gen_range(0..chars.len())])
-            .collect()
-    }
-
-    async fn publish_event(&self, event: &RoomEvent) {
+    pub(crate) async fn publish_event(&self, event: &RoomEvent) {
         if let Some(mut redis) = self.redis_client.clone() {
             match redis.publish_room_event_with_retry(event).await {
                 PublishResult::Published => {}
@@ -253,27 +212,13 @@ impl RoomService {
         }
     }
 
-    async fn acquire_start_game_lock(&self, run_id: Uuid) -> Result<(), RoomServiceError> {
-        if let Some(mut redis) = self.redis_client.clone() {
-            let key = format!("start_game_lock:{}", run_id);
-            let instance_id = Uuid::now_v7().to_string();
-            let acquired = redis
-                .set_nx_ex(&key, &instance_id, 30)
-                .await
-                .map_err(|e| RoomServiceError::Internal(format!("Redis lock error: {}", e)))?;
-            if !acquired {
-                return Err(RoomServiceError::StartAlreadyInProgress);
-            }
-            return Ok(());
-        }
-        Ok(())
-    }
-
-    async fn release_start_game_lock(&self, run_id: Uuid) {
-        if let Some(mut redis) = self.redis_client.clone() {
-            let key = format!("start_game_lock:{}", run_id);
-            let _ = redis.del(&key).await;
-        }
+    fn generate_invitation_code() -> String {
+        use rand::Rng;
+        let chars: Vec<char> = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".chars().collect();
+        let mut rng = rand::thread_rng();
+        (0..8)
+            .map(|_| chars[rng.gen_range(0..chars.len())])
+            .collect()
     }
 
     pub async fn create_room(
@@ -293,6 +238,7 @@ impl RoomService {
         Ok(room)
     }
 
+    // TODO: make a real DTO for response
     pub async fn list_user_rooms(
         &self,
         user_id: Uuid,
@@ -324,6 +270,9 @@ impl RoomService {
         Ok(result)
     }
 
+    // TODO: make a real DTO for response, all sub elements of the final output value should be defined
+    // as when member_infos.push
+    // convert everything that are serde_json in DTO
     pub async fn get_room_detail(
         &self,
         room_id: Uuid,
@@ -396,7 +345,7 @@ impl RoomService {
                 "num_games": r.num_games,
                 "bet_per_game": r.bet_per_game,
                 "current_game_index": r.current_game_index,
-                "status": r.status,
+                "status": r.status.to_string(),
                 "all_games_created": r.current_game_index >= r.num_games,
                 "current_game": current_game_info,
             })),
@@ -464,7 +413,7 @@ impl RoomService {
             .map_err(|_| RoomServiceError::UserNotFound)?
             .ok_or(RoomServiceError::UserNotFound)?;
 
-        let lang = crate::i18n::Lang::parse(&user.language).unwrap_or_default();
+        let lang = Lang::parse(&user.language).unwrap_or_default();
 
         let task = EmailTask {
             email: email.to_string(),
@@ -546,11 +495,3 @@ impl RoomService {
         Ok(())
     }
 }
-
-include!("room_service_runs.rs");
-include!("room_service_games.rs");
-include!("room_service_stall.rs");
-
-#[cfg(test)]
-#[path = "room_service_tests.rs"]
-mod room_service_tests;

@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::database::models::{player_profile, user, PlayerProfile, PlayerType, User};
 use crate::database::traits::UserRepoTrait;
 
+#[derive(Debug, Clone)]
 pub struct UserRepository {
     connection: DatabaseConnection,
     default_credit: i32,
@@ -171,6 +172,10 @@ impl UserRepoTrait for UserRepository {
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>, DbErr> {
         self.find_by_id(id).await
+    }
+
+    async fn find_by_ids(&self, ids: &[Uuid]) -> Result<Vec<User>, DbErr> {
+        self.find_by_ids(ids).await
     }
 
     async fn find_by_pseudo(&self, pseudo: &str) -> Result<Option<User>, DbErr> {

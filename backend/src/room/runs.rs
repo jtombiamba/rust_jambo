@@ -1,4 +1,19 @@
+use std::collections::HashMap;
+use uuid::Uuid;
+
+use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
+
+use crate::database::models::{
+    game, game_run, game_run_player, player, player_profile, GameStatus, RunStatus,
+};
+use crate::game::constants::KORA_CREDIT_MULTIPLIER;
+use crate::messaging::events::RoomEvent;
+use crate::room::error::RoomServiceError;
+use crate::room::service::RoomService;
+
+// TODO: queries here into repositories for easy tracing
 impl RoomService {
+    // TODO: respect SOLID principles
     pub async fn create_run(
         &self,
         room_id: Uuid,
@@ -88,11 +103,11 @@ impl RoomService {
             }
         }
 
+        // TODO: refactor with transaction_runner
         let txn = self.db.begin().await?;
 
         let run_id = Uuid::now_v7();
         let now = chrono::Utc::now();
-        use crate::database::models::game_run;
         let run_active = game_run::ActiveModel {
             id: Set(run_id),
             room_id: Set(room_id),
@@ -100,7 +115,7 @@ impl RoomService {
             bet_per_game: Set(bet),
             num_players: Set(0),
             current_game_index: Set(0),
-            status: Set("active".to_string()),
+            status: Set(RunStatus::Active),
             created_by: Set(user_id),
             next_game_auto_start_at: ActiveValue::NotSet,
             stall_warning_sent_at: ActiveValue::NotSet,
@@ -114,7 +129,6 @@ impl RoomService {
             let current_credit = profile_map.get(&p_id).unwrap().credit;
             let new_credit = current_credit - total_cost;
 
-            use crate::database::models::player_profile;
             player_profile::Entity::update_many()
                 .col_expr(
                     player_profile::Column::Credit,
@@ -128,7 +142,6 @@ impl RoomService {
                 .exec(&txn)
                 .await?;
 
-            use crate::database::models::game_run_player;
             let rp_id = Uuid::now_v7();
             game_run_player::Entity::insert(game_run_player::ActiveModel {
                 id: Set(rp_id),
@@ -171,6 +184,7 @@ impl RoomService {
         })
         .await;
 
+        // TODO: create a real DTO
         Ok(serde_json::json!({
             "run_id": run_id,
             "room_id": room_id,
@@ -192,7 +206,7 @@ impl RoomService {
             .await?
             .ok_or(RoomServiceError::RunNotFound)?;
 
-        if run.status != "active" {
+        if run.status != RunStatus::Active {
             return Err(RoomServiceError::RunAlreadyActive);
         }
 
@@ -247,7 +261,6 @@ impl RoomService {
         let new_credit = current_credit - total_cost;
         let now = chrono::Utc::now();
 
-        use crate::database::models::player_profile;
         player_profile::Entity::update_many()
             .col_expr(
                 player_profile::Column::Credit,
@@ -263,7 +276,6 @@ impl RoomService {
 
         let position = existing_players.len() as i32 + 1;
 
-        use crate::database::models::game_run_player;
         game_run_player::Entity::insert(game_run_player::ActiveModel {
             id: Set(Uuid::now_v7()),
             game_run_id: Set(run_id),
@@ -302,14 +314,12 @@ impl RoomService {
             .await?
             .ok_or(RoomServiceError::NotRunPlayer)?;
 
-        // Check if player is in an active game within this run
         if run.current_game_index > 0 {
             if let Some(run_game) = self
                 .run_game_repo
                 .find_by_run_and_index(run_id, run.current_game_index - 1)
                 .await?
             {
-                use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
                 let active_game = game::Entity::find_by_id(run_game.game_id)
                     .filter(game::Column::Status.eq(GameStatus::Active))
                     .one(&self.db)
@@ -331,7 +341,6 @@ impl RoomService {
         if run_player.provisioned_credits > 0 {
             let txn = self.db.begin().await?;
 
-            use crate::database::models::{game_run_player, player_profile};
             game_run_player::Entity::delete_many()
                 .filter(game_run_player::Column::GameRunId.eq(run_id))
                 .filter(game_run_player::Column::UserId.eq(user_id))
@@ -372,7 +381,9 @@ impl RoomService {
 
         let remaining = self.run_player_repo.list_all_by_run(run_id).await?;
         if remaining.len() < 2 {
-            self.run_repo.update_status(run_id, "cancelled").await?;
+            self.run_repo
+                .update_status(run_id, RunStatus::Cancelled)
+                .await?;
         }
 
         Ok(())

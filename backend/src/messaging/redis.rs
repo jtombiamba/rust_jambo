@@ -80,6 +80,22 @@ impl RedisClient {
         Ok(result.is_some())
     }
 
+    pub async fn compare_and_delete(&mut self, key: &str, expected: &str) -> RedisResult<bool> {
+        let script = redis::Script::new(
+            "if redis.call('get', KEYS[1]) == ARGV[1] then\n\
+                 return redis.call('del', KEYS[1])\n\
+             else\n\
+                 return 0\n\
+             end",
+        );
+        let result: i64 = script
+            .key(key)
+            .arg(expected)
+            .invoke_async(&mut self.connection_manager)
+            .await?;
+        Ok(result == 1)
+    }
+
     /// Set a string value by key (no expiry).
     #[allow(dead_code)]
     pub async fn set(&mut self, key: &str, value: &str) -> RedisResult<()> {

@@ -15,7 +15,7 @@ use crate::database::repositories::DashboardRepository;
 use crate::error::AppError;
 use crate::i18n::I18n;
 use crate::mailer::Mailer;
-use crate::observability::CorrelationId;
+use crate::observability::{metrics, CorrelationId};
 
 pub type DashboardServiceType = DashboardService<DashboardRepository>;
 
@@ -90,6 +90,7 @@ pub async fn create_game(
                 .await
             {
                 Ok(outcome) => {
+                    metrics::ACTIVE_GAMES.inc();
                     let response: crate::api::dto::responses::MultiplayerGameResponse =
                         outcome.into();
                     HttpResponse::Created().json(response)
@@ -114,6 +115,7 @@ pub async fn create_game(
                 .await
             {
                 Ok(outcome) => {
+                    metrics::ACTIVE_GAMES.inc();
                     let response: crate::api::dto::responses::QuickGameResponse = outcome.into();
                     HttpResponse::Created().json(response)
                 }

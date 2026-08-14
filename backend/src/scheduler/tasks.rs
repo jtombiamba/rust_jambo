@@ -330,7 +330,7 @@ pub async fn check_stalled_runs_loop(
                 let start = std::time::Instant::now();
                 match tokio::time::timeout(
                     Duration::from_secs(30),
-                    crate::api::services::room_service::RoomService::check_stalled_runs(
+                    crate::room::RoomService::check_stalled_runs(
                         db.clone(),
                         mailer.clone(),
                         timeout_secs,

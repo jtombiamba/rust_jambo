@@ -1,3 +1,15 @@
+use std::sync::Arc;
+use uuid::Uuid;
+
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+
+use crate::database::models::{
+    game, game_run, game_run_game, game_run_player, user, GameStatus, RunStatus,
+};
+use crate::mailer::Mailer;
+use crate::room::service::RoomService;
+
+// TODO: queries here into repositories
 impl RoomService {
     #[allow(dead_code)]
     pub async fn check_stalled_runs(
@@ -5,15 +17,12 @@ impl RoomService {
         mailer: Arc<dyn Mailer>,
         timeout_secs: u64,
     ) -> u64 {
-        use crate::database::models::{game, game_run, game_run_game, game_run_player, user};
-        use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
-
         let now = chrono::Utc::now();
         let cutoff = now - chrono::Duration::seconds(timeout_secs as i64);
         let cancel_cutoff = now - chrono::Duration::seconds(timeout_secs as i64 * 2);
 
         let stalled_runs = match game_run::Entity::find()
-            .filter(game_run::Column::Status.eq("active"))
+            .filter(game_run::Column::Status.eq(RunStatus::Active))
             .filter(game_run::Column::UpdatedAt.lt(cutoff))
             .all(&db)
             .await
@@ -27,6 +36,7 @@ impl RoomService {
 
         let mut processed = 0u64;
 
+        // TODO: N + 1 queries here? why not fetch all last games all in one?
         for run in stalled_runs {
             if run.current_game_index >= run.num_games {
                 continue;
@@ -58,9 +68,7 @@ impl RoomService {
 
             let is_finished = matches!(
                 current_game.status,
-                crate::database::models::GameStatus::Finished
-                    | crate::database::models::GameStatus::Kora
-                    | crate::database::models::GameStatus::DoubleKora
+                GameStatus::Finished | GameStatus::Kora | GameStatus::DoubleKora
             );
 
             if !is_finished {
@@ -76,7 +84,7 @@ impl RoomService {
                     stall_seconds
                 );
                 let mut active: game_run::ActiveModel = run.clone().into();
-                active.status = Set("cancelled".to_string());
+                active.status = Set(RunStatus::Cancelled);
                 active.stall_cancelled_at = Set(Some(now));
                 active.updated_at = Set(now);
                 if let Err(e) = active.update(&db).await {
@@ -128,7 +136,7 @@ impl RoomService {
                     }
                 }
             };
-            let user_map: std::collections::HashMap<Uuid, &crate::database::models::User> =
+            let user_map: std::collections::HashMap<Uuid, &user::Model> =
                 users.iter().map(|u| (u.id, u)).collect();
 
             let remaining_secs = (cancel_cutoff - run.updated_at).num_seconds().max(0);

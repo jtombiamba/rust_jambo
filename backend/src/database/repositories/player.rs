@@ -1,13 +1,14 @@
 use async_trait::async_trait;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait,
-    QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr,
+    EntityTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
 use crate::database::models::{player, Player, PlayerType};
 use crate::database::traits::PlayerRepoTrait;
 
+#[derive(Debug, Clone)]
 pub struct PlayerRepository {
     connection: DatabaseConnection,
 }
@@ -120,6 +121,48 @@ impl PlayerRepository {
             .one(&self.connection)
             .await
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_player_for_run_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        player_id: Uuid,
+        game_id: Uuid,
+        user_id: Uuid,
+        name: &str,
+        position: i32,
+        credits: i32,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Utc::now();
+        player::Entity::insert(player::ActiveModel {
+            id: Set(player_id),
+            game_id: Set(game_id),
+            player_type: Set(PlayerType::Human),
+            name: Set(name.to_string()),
+            position: Set(position),
+            credits: Set(credits),
+            created_at: Set(now),
+            user_id: Set(Some(user_id)),
+            kicked: Set(false),
+            kicked_at: ActiveValue::NotSet,
+        })
+        .exec(txn)
+        .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn list_by_game_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+    ) -> Result<Vec<Player>, DbErr> {
+        player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .all(txn)
+            .await
+    }
 }
 
 #[async_trait]
@@ -157,5 +200,27 @@ impl PlayerRepoTrait for PlayerRepository {
         user_id: Uuid,
     ) -> Result<Option<Player>, DbErr> {
         self.find_by_game_and_user(game_id, user_id).await
+    }
+
+    async fn create_player_for_run_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        player_id: Uuid,
+        game_id: Uuid,
+        user_id: Uuid,
+        name: &str,
+        position: i32,
+        credits: i32,
+    ) -> Result<(), DbErr> {
+        self.create_player_for_run_in_txn(txn, player_id, game_id, user_id, name, position, credits)
+            .await
+    }
+
+    async fn list_by_game_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+    ) -> Result<Vec<Player>, DbErr> {
+        self.list_by_game_in_txn(txn, game_id).await
     }
 }

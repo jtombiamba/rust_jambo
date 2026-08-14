@@ -607,6 +607,7 @@ function AppContent() {
               useRoomStore.getState().setCurrentRunGameId(gameIdVal)
               try {
                 const gameRes = await axios.get<QuickGameResponse>(`/api/me/games/${gameIdVal}`)
+                console.log("game Res data = ", gameRes.data)
                 if (gameRes.data.game_id && gameRes.data.players) {
                   setGameStore(
                     gameRes.data.game_id,

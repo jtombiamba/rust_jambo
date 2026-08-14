@@ -14,6 +14,7 @@ mod mailer;
 mod messaging;
 mod observability;
 mod payment;
+mod room;
 mod routes;
 mod websocket;
 

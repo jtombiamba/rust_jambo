@@ -3,8 +3,8 @@ use std::sync::Arc;
 use actix_web::{web, HttpResponse, ResponseError};
 use uuid::Uuid;
 
-use crate::api::services::room_service::RoomService;
 use crate::auth::extractors::AuthenticatedUser;
+use crate::room::service::RoomService;
 
 #[derive(serde::Deserialize)]
 pub struct CreateRoomRequest {

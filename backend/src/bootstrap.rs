@@ -7,7 +7,6 @@ use tracing::info;
 use crate::api::auth::AuthServiceType;
 use crate::api::dashboard::DashboardServiceType;
 use crate::api::middleware::rate_limiter::RateLimitConfigs;
-use crate::api::services::room_service::RoomService;
 use crate::auth::config::AuthConfig;
 use crate::auth::middleware::AuthMiddleware;
 use crate::cache::UserCache;
@@ -23,6 +22,7 @@ use crate::i18n::Translator;
 use crate::mailer::{self, Mailer, MailerConfig};
 use crate::messaging::{self, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
 use crate::payment::PaymentService;
+use crate::room::RoomService;
 use crate::websocket::manager::WebSocketManager;
 
 #[derive(Clone)]
@@ -110,8 +110,10 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     ));
     let dashboard_repo = Arc::new(DashboardRepository::new(db_connection.clone()));
     let game_repo: Arc<dyn GameRepoTrait> = Arc::new(GameRepository::new(db_connection.clone()));
+    let game_repo_dashboard: Arc<dyn GameRepoTrait> = game_repo.clone();
     let card_repo: Arc<dyn GameCardRepoTrait> =
         Arc::new(GameCardRepository::new(db_connection.clone()));
+    let card_repo_dashboard: Arc<dyn GameCardRepoTrait> = card_repo.clone();
     let translator = Arc::new(Translator::new());
     let auth_service: Arc<AuthServiceType> =
         Arc::new(crate::api::services::auth_service::AuthService::new(
@@ -129,8 +131,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         Some(rc) => Arc::new(
             crate::api::services::dashboard_service::DashboardService::new_with_redis(
                 dashboard_repo,
-                game_repo,
-                card_repo,
+                game_repo_dashboard,
+                card_repo_dashboard,
                 user_cache.clone(),
                 rc,
                 config.default_credit,
@@ -139,8 +141,8 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         None => Arc::new(
             crate::api::services::dashboard_service::DashboardService::new(
                 dashboard_repo,
-                game_repo,
-                card_repo,
+                game_repo_dashboard,
+                card_repo_dashboard,
                 user_cache.clone(),
                 config.default_credit,
             ),

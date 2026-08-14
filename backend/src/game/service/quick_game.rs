@@ -12,7 +12,7 @@ use crate::database::repositories::PlayerProfileRepository;
 use crate::error::GameError;
 use crate::game::distribution::distribute_cards;
 use crate::game::service::types::QuickGameOutcome;
-use crate::observability::CorrelationId;
+use crate::observability::{metrics, CorrelationId};
 
 use super::GameService;
 
@@ -301,6 +301,7 @@ impl GameService {
             .create_quick_game_in_txn(&txn, true, None, 0, step_by_step)
             .await?;
         txn.commit().await?;
+        metrics::ACTIVE_GAMES.inc();
 
         self.schedule_first_bot_if_needed(&outcome).await;
         Ok(outcome)

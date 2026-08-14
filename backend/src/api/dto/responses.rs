@@ -1,7 +1,28 @@
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::database::models::RunStatus;
 use crate::game::service::types::{MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome};
+
+#[derive(Debug, Serialize)]
+pub struct StartNextGameResponse {
+    pub game_id: Uuid,
+    pub game_index: i32,
+    pub total_games: i32,
+    pub current_game_index: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_games_created: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CurrentGameResponse {
+    pub run_id: Uuid,
+    pub game_id: Uuid,
+    pub game_index: i32,
+    pub status: RunStatus,
+}
 
 #[derive(Debug, Serialize)]
 pub struct PlayCardResponse {
