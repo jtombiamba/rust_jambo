@@ -152,11 +152,11 @@ impl StartNextGameService {
         let user_map: HashMap<Uuid, String> = users.into_iter().map(|u| (u.id, u.pseudo)).collect();
 
         let bet = run.bet_per_game;
+        use rand::rng;
         use rand::seq::SliceRandom;
-        use rand::thread_rng;
 
         let mut shuffled_positions: Vec<usize> = (0..player_ids.len()).collect();
-        shuffled_positions.shuffle(&mut thread_rng());
+        shuffled_positions.shuffle(&mut rng());
 
         let game_id = Uuid::now_v7();
 
@@ -226,7 +226,7 @@ impl StartNextGameService {
 
         let cards: Vec<i32> = {
             let mut cards: Vec<i32> = (0..crate::game::constants::TOTAL_CARDS as i32).collect();
-            cards.shuffle(&mut thread_rng());
+            cards.shuffle(&mut rng());
             cards
         };
 

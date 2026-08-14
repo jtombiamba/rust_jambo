@@ -1,5 +1,5 @@
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::rng;
+use rand::seq::IndexedRandom;
 
 /// Strategy choices mirroring the Python `StrategyChoice` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,7 +19,7 @@ impl StrategyChoice {
     pub fn random_high() -> Self {
         use StrategyChoice::*;
         let choices = [LongUp, LongDown, MidUp, MidDown];
-        *choices.choose(&mut thread_rng()).unwrap()
+        *choices.choose(&mut rng()).unwrap()
     }
 }
 
@@ -178,7 +178,7 @@ fn compute_simple(
     }
     if current_winning_card.is_none() {
         // random choice when no suit to follow
-        *unplayed_cards.choose(&mut thread_rng()).unwrap()
+        *unplayed_cards.choose(&mut rng()).unwrap()
     } else {
         pick_best_card_from_strategy_choice(
             unplayed_cards,
@@ -200,7 +200,7 @@ fn compute_high(
         return -1;
     }
     if current_winning_card.is_none() {
-        *unplayed_cards.choose(&mut thread_rng()).unwrap()
+        *unplayed_cards.choose(&mut rng()).unwrap()
     } else {
         let strategy = StrategyChoice::random_high();
         pick_best_card_from_strategy_choice(unplayed_cards, current_winning_card, strategy)

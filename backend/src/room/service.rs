@@ -218,11 +218,11 @@ impl RoomService {
     }
 
     fn generate_invitation_code() -> String {
-        use rand::Rng;
+        use rand::RngExt;
         let chars: Vec<char> = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".chars().collect();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         (0..8)
-            .map(|_| chars[rng.gen_range(0..chars.len())])
+            .map(|_| chars[rng.random_range(0..chars.len())])
             .collect()
     }
 

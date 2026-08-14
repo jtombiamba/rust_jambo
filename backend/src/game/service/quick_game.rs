@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
     QueryOrder, Set, TransactionTrait,
@@ -134,7 +134,7 @@ impl GameService {
     ) -> Result<QuickGameOutcome, GameError> {
         let game_id = Uuid::now_v7();
         let now = chrono::Utc::now();
-        let initial_rank = rand::thread_rng().gen_range(0..4) as i32;
+        let initial_rank = rand::rng().random_range(0..4) as i32;
 
         let game_active = models::game::ActiveModel {
             id: Set(game_id),

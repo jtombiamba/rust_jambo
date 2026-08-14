@@ -405,11 +405,11 @@ impl GameService {
 
     pub async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
         let _timer = GameCreationTimer::new("quick");
-        use rand::{seq::SliceRandom, thread_rng};
+        use rand::{rng, seq::SliceRandom};
 
         let cards: Vec<i32> = {
             let mut cards: Vec<i32> = (0..TOTAL_CARDS as i32).collect();
-            let mut rng = thread_rng();
+            let mut rng = rng();
             cards.shuffle(&mut rng);
             cards
         };

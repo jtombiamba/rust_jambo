@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use tracing::error;
 use uuid::Uuid;
 
@@ -189,7 +189,7 @@ pub fn spawn_game_task(
             };
             let playable = pick_playable_cards_in_round(remaining, current_winning_card);
             let card_index = playable
-                .choose(&mut rand::thread_rng())
+                .choose(&mut rand::rng())
                 .copied()
                 .unwrap_or(remaining[0]);
             remaining.retain(|c| *c != card_index);
