@@ -322,7 +322,7 @@ export function useWebSocket({
       const manager = WebSocketManager.getInstance(gameId);
       const status = manager.getConnectionStatus();
       setIsConnected(status === 'connected');
-    } catch (err) {
+    } catch {
       setIsConnected(false);
     }
   }, [gameId]);

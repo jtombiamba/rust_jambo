@@ -356,7 +356,7 @@ const GameTable: React.FC<GameTableProps> = ({
               const isWinner = isPlayerRoundWinner(displayPos);
               // const cardsFaceUp = player.type === 'human';
 
-              let gridClass = '';
+              let gridClass: string;
               switch (position) {
                 case 'south':
                   gridClass = 'col-start-2 row-start-3';
