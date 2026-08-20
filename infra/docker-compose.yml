@@ -107,8 +107,9 @@ services:
       SMTP_FROM_EMAIL: noreply@fapfap.local
       SMTP_FROM_NAME: "FapFap Game"
       FREEZE_DURATION_SECS: 1800  # 86400
-      PAYPAL_CLIENT_ID: "AQ2JP_GOYN9CvyrMMZBDdgmcekmOCU5nN_AsBZ9DcPmV7p6fpS38XDQ5nltjy6QAo8e2AFRDIS-EfZOS"
-      PAYPAL_CLIENT_SECRET: "EH3PT62FDJ0RIWIHU6CIUNdJFtmm8If9QYyxICy7yYyY9ccT7TGi8W97H2tradvjPfAU3Oh8DTXTIw00"
+      # PayPal credentials come from the gitignored .env file (see .env.example).
+      PAYPAL_CLIENT_ID: "${PAYPAL_CLIENT_ID:-}"
+      PAYPAL_CLIENT_SECRET: "${PAYPAL_CLIENT_SECRET:-}"
       PAYPAL_MODE: sandbox
       PAYPAL_UNFREEZE_AMOUNT_EUR: "1.00"
       PAYPAL_TOPUP_AMOUNT_EUR: "1.00"

@@ -123,6 +123,7 @@ This project is a complete rewrite of the original Python/Django **FapFap** impl
 | **Redis 7** | Pub/Sub event bus, caching, rate limiting, leaderboard |
 | **RabbitMQ 3** | Async AI bot task dispatch |
 | **Docker Compose** | Local development orchestration |
+| **Kubernetes** | Minikube (local) + production cluster (Kustomize overlays, see [`k8s/`](k8s/)) |
 | **Coolify** | Production deployment |
 | **Nginx** | Reverse proxy (application + monitoring on separate containers) |
 | **Prometheus** | Metrics collection (behind nginx auth) |
@@ -363,6 +364,11 @@ jambo/
 │   └── PERFORMANCE.md          # Performance benchmarks
 │
 ├── infra/                      # Docker Compose configuration
+├── k8s/                        # Kubernetes manifests (Kustomize base + overlays)
+│   ├── base/                   # Shared manifests (namespace, configmap, secret, services)
+│   └── overlays/               # local (minikube build) and ghcr (CI-pulled) overlays
+├── scripts/
+│   └── minikube-up.sh          # One-shot local minikube bring-up
 ├── .github/                    # CI/CD workflows
 └── plans/                      # Development plans
 ```
@@ -429,6 +435,7 @@ See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for detailed benchmarks against
 
 - **[`docs/DESIGN.md`](docs/DESIGN.md)** — 1800+ line comprehensive design document covering architecture diagrams, all module roles, 18 event types, 12 use cases, WebSocket/Redis mechanisms, AI worker, scheduler, caching, scalability, fallbacks, metrics, i18n, logging, database schema, and performance expectations.
 - **[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)** — Benchmarks comparing Rust vs Python/Django.
+- **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)** — How to launch the stack locally (minikube) and in production (Kubernetes / GHCR). See also [`k8s/README.md`](k8s/README.md) for the manifest layout.
 
 ---
 

@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-pvc
+  namespace: jambo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: jambo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: jambo-alertmanager:local
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+          ports:
+            - containerPort: 9093
+          env:
+            - name: SMTP_SMARTHOST
+              value: "mailhog:1025"
+            - name: SMTP_FROM
+              value: "alerts@jambo.local"
+            - name: SMTP_REQUIRE_TLS
+              value: "false"
+            - name: SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-secrets
+                  key: SMTP_USERNAME
+                  optional: true
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-secrets
+                  key: SMTP_PASSWORD
+                  optional: true
+            - name: EMAIL_ONCALL
+              value: "oncall@jambo.local"
+            - name: EMAIL_TEAM
+              value: "team@jambo.local"
+            - name: RESOLVE_TIMEOUT
+              value: "5m"
+            - name: ALERTMANAGER_URL
+              value: "http://alertmanager:9093"
+            - name: SLACK_CRITICAL_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-secrets
+                  key: SLACK_CRITICAL_WEBHOOK_URL
+            - name: SLACK_WARNING_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-secrets
+                  key: SLACK_WARNING_WEBHOOK_URL
+            - name: SLACK_CRITICAL_CHANNEL
+              value: "#alerts-critical"
+            - name: SLACK_WARNING_CHANNEL
+              value: "#alerts-warning"
+          volumeMounts:
+            - name: data
+              mountPath: /alertmanager
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: alertmanager-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: jambo
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093

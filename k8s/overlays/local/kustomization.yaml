@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: jambo-backend
+    newName: jambo-backend
+    newTag: local
+  - name: jambo-frontend
+    newName: jambo-frontend
+    newTag: local
+  - name: jambo-loki
+    newName: jambo-loki
+    newTag: local
+  - name: jambo-promtail
+    newName: jambo-promtail
+    newTag: local
+  - name: jambo-tempo
+    newName: jambo-tempo
+    newTag: local
+  - name: jambo-grafana
+    newName: jambo-grafana
+    newTag: local
+  - name: jambo-alertmanager
+    newName: jambo-alertmanager
+    newTag: local
+  - name: jambo-prometheus
+    newName: jambo-prometheus
+    newTag: local
+  - name: jambo-monitoring-nginx
+    newName: jambo-monitoring-nginx
+    newTag: local

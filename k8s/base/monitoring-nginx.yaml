@@ -1,0 +1,124 @@
+# NOTE: The `monitoring-nginx-secrets` Secret referenced by the Deployment below
+# is NOT declared here. It is created at deploy time by scripts/minikube-up.sh
+# from the gitignored `.env` file (see k8s/base/secret.yaml.example) so that no
+# credentials are committed to the repository.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitoring-nginx-config
+  namespace: jambo
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+
+    events {
+        worker_connections 256;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        server {
+            listen 8888;
+            server_name localhost;
+
+            location /prometheus/ {
+                auth_basic "Prometheus";
+                auth_basic_user_file /etc/nginx/.htpasswd_prometheus;
+                proxy_pass http://prometheus:9090/prometheus/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            location /grafana/ {
+                proxy_pass http://grafana:3000/grafana/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            location /alertmanager/ {
+                auth_basic "Alertmanager";
+                auth_basic_user_file /etc/nginx/.htpasswd_prometheus;
+                proxy_pass http://alertmanager:9093/;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-nginx
+  namespace: jambo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring-nginx
+  template:
+    metadata:
+      labels:
+        app: monitoring-nginx
+    spec:
+      containers:
+        - name: monitoring-nginx
+          image: jambo-monitoring-nginx:local
+          ports:
+            - containerPort: 8888
+          env:
+            - name: PROMETHEUS_USER
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-nginx-secrets
+                  key: PROMETHEUS_USER
+            - name: PROMETHEUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-nginx-secrets
+                  key: PROMETHEUS_PASSWORD
+            - name: GRAFANA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-nginx-secrets
+                  key: GRAFANA_USER
+            - name: GRAFANA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: monitoring-nginx-secrets
+                  key: GRAFANA_PASSWORD
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+      volumes:
+        - name: config
+          configMap:
+            name: monitoring-nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-nginx
+  namespace: jambo
+spec:
+  selector:
+    app: monitoring-nginx
+  ports:
+    - port: 8888
+      targetPort: 8888

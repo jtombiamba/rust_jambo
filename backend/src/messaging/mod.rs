@@ -394,7 +394,10 @@ impl RabbitMQClient {
                     let _ = ch
                         .queue_declare(
                             queue_name.clone(),
-                            QueueDeclareOptions::default(),
+                            QueueDeclareOptions {
+                                durable: true,
+                                ..Default::default()
+                            },
                             queue_args,
                         )
                         .await?;
@@ -465,7 +468,10 @@ impl RabbitMQClient {
         let _ = channel
             .queue_declare(
                 queue_name.clone(),
-                QueueDeclareOptions::default(),
+                QueueDeclareOptions {
+                    durable: true,
+                    ..Default::default()
+                },
                 queue_args,
             )
             .await?;
