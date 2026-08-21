@@ -112,6 +112,10 @@ services:
       - internal
     expose:
       - "5000"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     # Optional: labels for Coolify
     labels:
       - "coolify.service.name=jambo-backend"
@@ -129,6 +133,12 @@ services:
       - internal
     expose:
       - "80"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     labels:
       - "coolify.service.name=jambo-frontend"
       - "coolify.service.port=80"
@@ -185,6 +195,10 @@ services:
       - internal
     expose:
       - "7000"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 10s
@@ -237,6 +251,10 @@ services:
     expose:
       - "6000"
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6000/metrics"]
       interval: 30s
@@ -249,7 +267,7 @@ services:
   # ── Monitoring (optional: use --profile monitoring to enable) ──────────
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
     profiles: ["monitoring"]
     volumes:
       - ${PWD}/prometheus:/etc/prometheus
@@ -265,7 +283,7 @@ services:
       - "9090"
 
   dozzle:
-    image: amir20/dozzle:latest
+    image: amir20/dozzle:v10.7.3
     profiles: ["monitoring"]
     environment:
       DOZZLE_BASE: /dozzle

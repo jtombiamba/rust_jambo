@@ -57,7 +57,7 @@ services:
           memory: 256M
 
   mailhog:
-    image: mailhog/mailhog:latest
+    image: mailhog/mailhog:v1.0.1
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -253,7 +253,7 @@ services:
           memory: 512M
 
   node_exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.12.1
     ports:
       - "9100:9100"
     volumes:
@@ -271,7 +271,7 @@ services:
           memory: 128M
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
     ports:
       - "9090:9090"
     volumes:

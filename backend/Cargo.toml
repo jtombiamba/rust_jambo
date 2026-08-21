@@ -1,8 +1,8 @@
 [package]
 name = "jambo-backend"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-authors = ["Developer"]
+authors = ["katika.appname@gmail.com"]
 description = "Rust Actix Web backend for the FapFap card game"
 license = "MIT"
 repository = ""

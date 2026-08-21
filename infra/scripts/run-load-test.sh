@@ -166,7 +166,7 @@ if [[ "${DO_BUILD}" == true ]]; then
         -f - "${INFRA_DIR}/../backend" <<'EOF'
 FROM rust:1.94-bookworm AS builder
 WORKDIR /usr/src/app
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY templates ./templates
@@ -180,8 +180,21 @@ RUN cargo build --release --features load-tests \
     --bin ws-load-test
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libssl3 ca-certificates curl && rm -rf /var/lib/apt/lists/*
-RUN groupadd -r jambo && useradd -r -g jambo -s /sbin/nologin jambo
+
+ARG USER_ID=10002
+ARG GROUP_ID=10002
+ARG IMAGE_SOURCE
+ARG IMAGE_REVISION
+
+# curl is kept in the runtime image because the compose healthchecks rely on
+# `curl --fail http://localhost:<port>/...`.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r -g "${GROUP_ID}" jambo \
+    && useradd -r -u "${USER_ID}" -g jambo -s /sbin/nologin jambo
+
 WORKDIR /app
 COPY --from=builder /usr/src/app/target/release/jambo-backend /usr/local/bin/jambo-backend
 COPY --from=builder /usr/src/app/target/release/ai-worker /usr/local/bin/ai-worker
@@ -192,8 +205,14 @@ COPY --from=builder --chown=jambo:jambo /usr/src/app/migration ./migration
 # Use the dedicated load-test entrypoint (allows the load-test binaries)
 COPY docker-entrypoint-load-test.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-ENV RUST_LOG=${RUST_LOG}
+
 EXPOSE 5000
+
+LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}"
+
+STOPSIGNAL SIGTERM
+
 USER jambo
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["jambo-backend"]

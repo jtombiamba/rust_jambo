@@ -1,0 +1,12 @@
+node_modules
+dist
+test-results
+playwright-report
+.git
+.gitignore
+*.tsbuildinfo
+.env
+.env.*
+playwright.config.ts
+playwright.live.config.ts
+vitest.config.ts

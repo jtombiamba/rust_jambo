@@ -43,7 +43,7 @@ services:
       retries: 5
 
   mailhog:
-    image: mailhog/mailhog:latest
+    image: mailhog/mailhog:v1.0.1
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -121,6 +121,10 @@ services:
       - "5000:5000"
     volumes:
       - ../backend/migration:/app/migration:ro
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "curl --fail http://localhost:5000/health || exit 1"]
       interval: 10s
@@ -139,6 +143,12 @@ services:
     environment:
       - VITE_API_BASE_URL=http://localhost:5000
       - DEV=true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
 
   ai-worker:
     build:
@@ -195,6 +205,10 @@ services:
     restart: unless-stopped
     volumes:
       - ../backend/migration:/app/migration:ro
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 10s
@@ -243,6 +257,10 @@ services:
     expose:
       - "6000"
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6000/metrics"]
       interval: 30s
@@ -250,7 +268,7 @@ services:
       retries: 3
 
   dozzle:
-    image: amir20/dozzle:latest
+    image: amir20/dozzle:v10.7.3
     environment:
       DOZZLE_BASE: /dozzle
       DOZZLE_ENABLE_ACTIONS: "false"
@@ -332,8 +350,8 @@ services:
     volumes:
       - alertmanager_data:/alertmanager
     environment:
-      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL}
-      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL}
+      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL:-}
+      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL:-}
       SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-#alerts-critical}
       SLACK_WARNING_CHANNEL: ${SLACK_WARNING_CHANNEL:-#alerts-warning}
       SMTP_SMARTHOST: ${SMTP_SMARTHOST:-mailhog:1025}
@@ -344,7 +362,7 @@ services:
       RESOLVE_TIMEOUT: ${RESOLVE_TIMEOUT:-5m}
       ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
     command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--config.file=/tmp/alertmanager.yml"
       - "--storage.path=/alertmanager"
     restart: unless-stopped
 

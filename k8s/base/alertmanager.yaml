@@ -28,7 +28,7 @@ spec:
         - name: alertmanager
           image: jambo-alertmanager:local
           args:
-            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--config.file=/tmp/alertmanager.yml"
             - "--storage.path=/alertmanager"
           ports:
             - containerPort: 9093

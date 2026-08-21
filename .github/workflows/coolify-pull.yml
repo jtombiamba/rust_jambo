@@ -26,6 +26,7 @@ jobs:
       - name: Pull images and launch core services
         working-directory: infra
         env:
+          IMAGE_TAG: sha-${{ github.sha }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -43,6 +44,7 @@ jobs:
         if: ${{ github.event.inputs.monitoring == 'true' }}
         working-directory: infra
         env:
+          IMAGE_TAG: sha-${{ github.sha }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}

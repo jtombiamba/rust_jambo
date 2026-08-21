@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
 
   backend:
-    image: ghcr.io/jtombiamba/rust_jambo-backend:latest
+    image: ghcr.io/jtombiamba/rust_jambo-backend:${IMAGE_TAG:-latest}
     pull_policy: always
     depends_on:
       postgres:
@@ -113,6 +113,10 @@ services:
     #   - internal
     expose:
       - "5000"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     labels:
       - "coolify.service.name=jambo-backend"
       # - "coolify.service.port=5000"
@@ -122,7 +126,7 @@ services:
       # - "traefik.http.middlewares.cors-headers.headers.accesscontrolalloworiginlist=https://jambo.tombislab.com"
 
   frontend:
-    image: ghcr.io/jtombiamba/rust_jambo-frontend:latest
+    image: ghcr.io/jtombiamba/rust_jambo-frontend:${IMAGE_TAG:-latest}
     pull_policy: always
     depends_on:
       - backend
@@ -132,13 +136,19 @@ services:
     #   - internal
     expose:
       - "80"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     labels:
       - "traefik.enable=true"
       - "coolify.service.name=jambo-frontend"
       # - "coolify.service.port=3000"
 
   ai-worker:
-    image: ghcr.io/jtombiamba/rust_jambo-backend:latest
+    image: ghcr.io/jtombiamba/rust_jambo-backend:${IMAGE_TAG:-latest}
     pull_policy: always
     command: ["ai-worker"]
     depends_on:
@@ -189,6 +199,10 @@ services:
     expose:
       - "7000"
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 15s
@@ -199,7 +213,7 @@ services:
       - "coolify.service.port=0"
 
   scheduler-worker:
-    image: ghcr.io/jtombiamba/rust_jambo-backend:latest
+    image: ghcr.io/jtombiamba/rust_jambo-backend:${IMAGE_TAG:-latest}
     pull_policy: always
     command: ["scheduler-worker"]
     depends_on:
@@ -240,6 +254,10 @@ services:
     expose:
       - "6000"
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6000/metrics"]
       interval: 30s
@@ -252,7 +270,7 @@ services:
   # ── LGTM Stack ──────────────────────────────────────────────
 
   loki:
-    image: ghcr.io/jtombiamba/rust_jambo-loki:latest
+    image: ghcr.io/jtombiamba/rust_jambo-loki:${IMAGE_TAG:-latest}
     volumes:
       - loki_data:/loki
     command: -config.file=/etc/loki/loki-config.yml
@@ -262,7 +280,7 @@ services:
     restart: unless-stopped
 
   promtail:
-    image: ghcr.io/jtombiamba/rust_jambo-promtail:latest
+    image: ghcr.io/jtombiamba/rust_jambo-promtail:${IMAGE_TAG:-latest}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     command: -config.file=/etc/promtail/promtail-config.yml
@@ -272,7 +290,7 @@ services:
     restart: unless-stopped
 
   tempo:
-    image: ghcr.io/jtombiamba/rust_jambo-tempo:latest
+    image: ghcr.io/jtombiamba/rust_jambo-tempo:${IMAGE_TAG:-latest}
     volumes:
       - tempo_data:/tmp/tempo
     command: -config.file=/etc/tempo/tempo-config.yml
@@ -282,7 +300,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: ghcr.io/jtombiamba/rust_jambo-grafana:latest
+    image: ghcr.io/jtombiamba/rust_jambo-grafana:${IMAGE_TAG:-latest}
     volumes:
       - grafana_data:/var/lib/grafana
     environment:
@@ -299,7 +317,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: ghcr.io/jtombiamba/rust_jambo-prometheus:latest
+    image: ghcr.io/jtombiamba/rust_jambo-prometheus:${IMAGE_TAG:-latest}
     volumes:
       - prometheus_data:/prometheus
     command:
@@ -314,7 +332,7 @@ services:
       - "coolify.service.name=jambo-prometheus"
 
   alertmanager:
-    image: ghcr.io/jtombiamba/rust_jambo-alertmanager:latest
+    image: ghcr.io/jtombiamba/rust_jambo-alertmanager:${IMAGE_TAG:-latest}
     pull_policy: always
     restart: unless-stopped
     environment:
@@ -330,7 +348,7 @@ services:
       RESOLVE_TIMEOUT: ${RESOLVE_TIMEOUT:-5m}
       ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
     command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--config.file=/tmp/alertmanager.yml"
       - "--storage.path=/alertmanager"
     volumes:
       - alertmanager_data:/alertmanager
@@ -339,7 +357,7 @@ services:
       - "coolify.service.name=jambo-alertmanager"
 
   dozzle:
-    image: amir20/dozzle:latest
+    image: amir20/dozzle:v10.7.3
     restart: unless-stopped
     environment:
       DOZZLE_BASE: /dozzle
@@ -357,7 +375,7 @@ services:
     #   - "traefik.http.services.dozzle.loadbalancer.server.port=5000"
 
   monitoring-nginx:
-    image: ghcr.io/jtombiamba/rust_jambo-monitoring-nginx:latest
+    image: ghcr.io/jtombiamba/rust_jambo-monitoring-nginx:${IMAGE_TAG:-latest}
     environment:
       PROMETHEUS_USER: ${PROMETHEUS_USER:-admin}
       PROMETHEUS_PASSWORD: ${PROMETHEUS_PASSWORD:?PROMETHEUS_PASSWORD must be set}

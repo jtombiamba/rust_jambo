@@ -8,23 +8,24 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/nginx.conf
-# Copy runtime env config entrypoint script
-COPY env-config.sh /docker-entrypoint.d/40-env-config.sh
-RUN chmod +x /docker-entrypoint.d/40-env-config.sh
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+FROM nginx:1.28-alpine
 
-# FROM node:22-alpine AS runner
-# RUN addgroup --system --gid 1001 nodejs
-# RUN adduser --system --uid 1001 nextjs
-# COPY --from=builder /app/public ./public
-# # COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-# # COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# USER nextjs
-# EXPOSE 3000
-# ENV PORT=3000
-# ENV HOSTNAME="0.0.0.0"
-# CMD ["npm", "run" , "dev"]
+ARG IMAGE_SOURCE
+ARG IMAGE_REVISION
+
+# The nginx user (UID 101) needs write access to its cache/log dirs and to the
+# pid path (see `pid /tmp/nginx.pid;` in nginx.conf).
+RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx /tmp
+
+COPY --chown=nginx:nginx --from=builder /app/dist /usr/share/nginx/html
+COPY --chown=nginx:nginx nginx.conf /etc/nginx/nginx.conf
+# Copy runtime env config entrypoint script
+COPY --chown=nginx:nginx env-config.sh /docker-entrypoint.d/40-env-config.sh
+RUN chmod +x /docker-entrypoint.d/40-env-config.sh
+
+LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}"
+
+EXPOSE 80
+USER nginx
+CMD ["nginx", "-g", "daemon off;"]
