@@ -3,6 +3,7 @@ mod benchmark;
 mod caching;
 pub(crate) mod card_play;
 mod creation;
+pub(crate) mod credit;
 mod evaluation;
 mod events;
 mod gameplay;
@@ -19,6 +20,7 @@ mod recovery;
 mod tests;
 mod trait_impl;
 pub mod types;
+pub(crate) mod validation;
 
 use std::collections::HashMap;
 use std::sync::Arc;

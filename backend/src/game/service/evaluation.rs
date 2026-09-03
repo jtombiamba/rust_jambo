@@ -9,7 +9,8 @@ use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::database::models::{game, game_card, player, player_profile, GameStatus};
+use crate::database::models::{game, game_card, player, GameStatus};
+use crate::database::repositories::PlayerProfileRepository;
 use crate::error::GameError;
 use crate::game::card_mapping::Card;
 use crate::game::constants::{
@@ -302,6 +303,8 @@ impl GameService {
 
         let credits = calculate_payment(winner_position, total_players, bet);
 
+        let profile_repo = PlayerProfileRepository::new(self.db.clone());
+
         for (idx, player) in players.iter().enumerate() {
             let new_credits = player.credits + game_model.bet + credits[idx];
             let mut player_active: player::ActiveModel = player.clone().into();
@@ -309,40 +312,18 @@ impl GameService {
             player_active.update(txn).await?;
 
             if let Some(user_id) = player.user_id {
-                let profile = player_profile::Entity::find()
-                    .filter(player_profile::Column::UserId.eq(user_id))
-                    .one(txn)
+                let won = player.id == winner_id;
+                let delta = game_model.bet + credits[idx];
+                let _new_credit = profile_repo
+                    .apply_game_settlement_in_txn(
+                        txn,
+                        user_id,
+                        delta,
+                        won,
+                        is_kora,
+                        self.freeze_duration_secs,
+                    )
                     .await?;
-
-                if let Some(profile_model) = profile {
-                    let won = player.id == winner_id;
-                    let was_frozen = profile_model.frozen_until.is_some();
-                    let mut profile_active: player_profile::ActiveModel = profile_model.into();
-                    profile_active.credit = ActiveValue::Set(new_credits);
-                    profile_active.game_played =
-                        ActiveValue::Set(profile_active.game_played.unwrap() + 1);
-                    if won {
-                        profile_active.wins = ActiveValue::Set(profile_active.wins.unwrap() + 1);
-                        profile_active.winning_streak =
-                            ActiveValue::Set(profile_active.winning_streak.unwrap() + 1);
-                    } else {
-                        profile_active.winning_streak = ActiveValue::Set(0);
-                    }
-                    if won && is_kora {
-                        profile_active.kora_wins =
-                            ActiveValue::Set(profile_active.kora_wins.unwrap() + 1);
-                    }
-                    if new_credits <= 0 {
-                        profile_active.frozen_until = ActiveValue::Set(Some(
-                            chrono::Utc::now()
-                                + chrono::Duration::seconds(self.freeze_duration_secs as i64),
-                        ));
-                    } else if was_frozen {
-                        profile_active.frozen_until = ActiveValue::Set(None);
-                    }
-                    profile_active.updated_at = ActiveValue::Set(chrono::Utc::now());
-                    profile_active.update(txn).await?;
-                }
             }
         }
 

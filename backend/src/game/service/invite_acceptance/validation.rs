@@ -1,11 +1,8 @@
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use uuid::Uuid;
 
-use crate::database::models::{
-    game, game_invite, player, player_profile, GameStatus, InviteStatus,
-};
+use crate::database::models::{game, game_invite, player, GameStatus, InviteStatus};
 use crate::error::GameError;
-use crate::game::constants::KORA_CREDIT_MULTIPLIER;
 
 pub(crate) fn validate_game_pending(game: &game::Model) -> Result<(), GameError> {
     if game.status != GameStatus::Pending {
@@ -66,40 +63,6 @@ pub(crate) async fn validate_game_not_full<C: ConnectionTrait>(
     Ok(count)
 }
 
-pub(crate) async fn load_and_validate_profile<C: ConnectionTrait>(
-    txn: &C,
-    user_id: Uuid,
-) -> Result<player_profile::Model, GameError> {
-    let profile = player_profile::Entity::find()
-        .filter(player_profile::Column::UserId.eq(user_id))
-        .one(txn)
-        .await?
-        .ok_or(GameError::ProfileNotFound)?;
-
-    if let Some(frozen_until) = profile.frozen_until {
-        if frozen_until > chrono::Utc::now() {
-            return Err(GameError::AccountFrozen {
-                until: frozen_until.to_rfc3339(),
-            });
-        }
-    }
-    Ok(profile)
-}
-
-pub(crate) fn validate_sufficient_credit(
-    profile: &player_profile::Model,
-    bet: i32,
-) -> Result<(), GameError> {
-    let required_credit = bet * KORA_CREDIT_MULTIPLIER;
-    if profile.credit < required_credit {
-        return Err(GameError::InsufficientCredits {
-            required: required_credit,
-            current: profile.credit,
-        });
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,26 +91,6 @@ mod tests {
             game_run_id: None,
             step_by_step: false,
             kicked_players: serde_json::Value::Null,
-        }
-    }
-
-    fn make_profile(credit: i32) -> player_profile::Model {
-        player_profile::Model {
-            id: Uuid::now_v7(),
-            user_id: Uuid::now_v7(),
-            player_type: crate::database::models::PlayerType::Human,
-            credit,
-            game_played: 0,
-            wins: 0,
-            kora_wins: 0,
-            winning_streak: 0,
-            latitude: None,
-            longitude: None,
-            country_code: None,
-            city: None,
-            frozen_until: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
         }
     }
 
@@ -181,21 +124,6 @@ mod tests {
         assert!(matches!(
             validate_not_creator(&game, creator),
             Err(GameError::CreatorCannotJoin)
-        ));
-    }
-
-    #[test]
-    fn test_validate_sufficient_credit_ok() {
-        let profile = make_profile(500);
-        assert!(validate_sufficient_credit(&profile, 100).is_ok());
-    }
-
-    #[test]
-    fn test_validate_sufficient_credit_fails() {
-        let profile = make_profile(50);
-        assert!(matches!(
-            validate_sufficient_credit(&profile, 100),
-            Err(GameError::InsufficientCredits { .. })
         ));
     }
 }

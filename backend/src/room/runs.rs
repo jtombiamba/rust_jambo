@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::api::dto::responses::{CreateRunResponse, JoinRunResponse};
+use crate::api::dto::responses::{
+    ActiveRunGameInfo, ActiveRunPlayerInfo, ActiveRunResponse, CreateRunResponse, JoinRunResponse,
+};
 use crate::database::models::RunStatus;
 use crate::game::constants::KORA_CREDIT_MULTIPLIER;
 use crate::messaging::events::RoomEvent;
@@ -131,9 +133,23 @@ impl RoomService {
             .await?;
 
         for (i, &p_id) in player_ids.iter().enumerate() {
-            self.profile_repo
+            let rows = self
+                .profile_repo
                 .debit_in_txn(&txn, p_id, total_cost, now)
                 .await?;
+            if rows == 0 {
+                let current = self
+                    .profile_repo
+                    .find_by_user_id_in_txn(&txn, p_id)
+                    .await?
+                    .map(|p| p.credit)
+                    .unwrap_or(0);
+                txn.rollback().await.ok();
+                return Err(RoomServiceError::InsufficientCredits {
+                    required: total_cost,
+                    current,
+                });
+            }
             self.run_player_repo
                 .create_in_txn(&txn, run_id, p_id, i as i32, total_cost, now)
                 .await?;
@@ -233,9 +249,23 @@ impl RoomService {
         let txn = self.txn_runner.begin().await?;
 
         let now = chrono::Utc::now();
-        self.profile_repo
+        let rows = self
+            .profile_repo
             .debit_in_txn(&txn, user_id, total_cost, now)
             .await?;
+        if rows == 0 {
+            let current = self
+                .profile_repo
+                .find_by_user_id_in_txn(&txn, user_id)
+                .await?
+                .map(|p| p.credit)
+                .unwrap_or(0);
+            txn.rollback().await.ok();
+            return Err(RoomServiceError::InsufficientCredits {
+                required: total_cost,
+                current,
+            });
+        }
 
         let position = existing_players.len() as i32 + 1;
         self.run_player_repo
@@ -326,7 +356,7 @@ impl RoomService {
         &self,
         room_id: Uuid,
         user_id: Uuid,
-    ) -> Result<serde_json::Value, RoomServiceError> {
+    ) -> Result<ActiveRunResponse, RoomServiceError> {
         let member = self.member_repo.find_membership(room_id, user_id).await?;
         if member.is_none() {
             return Err(RoomServiceError::NotMember);
@@ -354,30 +384,35 @@ impl RoomService {
 
         let games = self.run_game_repo.list_by_run(run.id).await?;
 
-        let mut player_infos = Vec::new();
-        for rp in &players {
-            player_infos.push(serde_json::json!({
-                "user_id": rp.user_id,
-                "pseudo": user_map.get(&rp.user_id).cloned().unwrap_or_default(),
-                "position": rp.position,
-                "provisioned_credits": rp.provisioned_credits,
-                "kicked": rp.kicked,
-            }));
-        }
+        let players = players
+            .iter()
+            .map(|rp| ActiveRunPlayerInfo {
+                user_id: rp.user_id,
+                pseudo: user_map.get(&rp.user_id).cloned().unwrap_or_default(),
+                position: rp.position,
+                provisioned_credits: rp.provisioned_credits,
+                kicked: rp.kicked,
+            })
+            .collect();
 
-        Ok(serde_json::json!({
-            "id": run.id,
-            "room_id": run.room_id,
-            "num_games": run.num_games,
-            "bet_per_game": run.bet_per_game,
-            "current_game_index": run.current_game_index,
-            "status": run.status,
-            "players": player_infos,
-            "games": games.iter().map(|g| serde_json::json!({
-                "game_id": g.game_id,
-                "game_index": g.game_index,
-                "status": g.status,
-            })).collect::<Vec<_>>(),
-        }))
+        let games = games
+            .iter()
+            .map(|g| ActiveRunGameInfo {
+                game_id: g.game_id,
+                game_index: g.game_index,
+                status: g.status,
+            })
+            .collect();
+
+        Ok(ActiveRunResponse {
+            id: run.id,
+            room_id: run.room_id,
+            num_games: run.num_games,
+            bet_per_game: run.bet_per_game,
+            current_game_index: run.current_game_index,
+            status: run.status,
+            players,
+            games,
+        })
     }
 }

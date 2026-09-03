@@ -43,6 +43,15 @@ pub trait PlayerProfileRepoTrait: Send + Sync {
         wins_delta: i32,
         kora_wins_delta: i32,
     ) -> Result<PlayerProfile, DbErr>;
+    async fn apply_game_settlement_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        user_id: Uuid,
+        delta: i32,
+        won: bool,
+        is_kora: bool,
+        freeze_duration_secs: u64,
+    ) -> Result<Option<i32>, DbErr>;
 }
 
 /// Repository trait for Game entity operations.

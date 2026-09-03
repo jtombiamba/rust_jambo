@@ -1,4 +1,3 @@
-mod credit;
 mod events;
 mod validation;
 
@@ -13,15 +12,15 @@ use crate::database::models::{
 use crate::error::GameError;
 use crate::messaging::RedisClient;
 
-use credit::CreditCalculator;
 use events::{publish_game_ready_if_needed, publish_player_joined};
 use validation::{
-    load_and_validate_profile, validate_game_not_full, validate_game_pending,
-    validate_not_already_in_game, validate_not_creator, validate_pending_invite_exists,
-    validate_sufficient_credit,
+    validate_game_not_full, validate_game_pending, validate_not_already_in_game,
+    validate_not_creator, validate_pending_invite_exists,
 };
 
+use super::credit::CreditCalculator;
 use super::is_unique_violation;
+use super::validation::{load_and_validate_profile, validate_sufficient_credit};
 
 pub(crate) struct AcceptInviteOrchestrator {
     db: sea_orm::DatabaseConnection,

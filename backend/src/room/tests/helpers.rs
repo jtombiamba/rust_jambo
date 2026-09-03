@@ -327,6 +327,17 @@ impl PlayerProfileRepoTrait for StubProfileRepo {
     ) -> Result<PlayerProfile, sea_orm::DbErr> {
         Err(sea_orm::DbErr::Custom("stub".into()))
     }
+    async fn apply_game_settlement_in_txn(
+        &self,
+        _txn: &sea_orm::DatabaseTransaction,
+        _user_id: Uuid,
+        _delta: i32,
+        _won: bool,
+        _is_kora: bool,
+        _freeze_duration_secs: u64,
+    ) -> Result<Option<i32>, sea_orm::DbErr> {
+        Ok(None)
+    }
 }
 
 pub(super) struct StubUserRepo;

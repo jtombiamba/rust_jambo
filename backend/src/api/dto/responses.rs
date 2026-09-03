@@ -42,6 +42,34 @@ pub struct JoinRunResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ActiveRunPlayerInfo {
+    pub user_id: Uuid,
+    pub pseudo: String,
+    pub position: i32,
+    pub provisioned_credits: i32,
+    pub kicked: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ActiveRunGameInfo {
+    pub game_id: Uuid,
+    pub game_index: i32,
+    pub status: RunStatus,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ActiveRunResponse {
+    pub id: Uuid,
+    pub room_id: Uuid,
+    pub num_games: i32,
+    pub bet_per_game: i32,
+    pub current_game_index: i32,
+    pub status: RunStatus,
+    pub players: Vec<ActiveRunPlayerInfo>,
+    pub games: Vec<ActiveRunGameInfo>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct RoomListItem {
     pub id: Uuid,
     pub name: String,

@@ -283,6 +283,47 @@ impl GameRepository {
         .await?;
         Ok(())
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_multiplayer_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        bet: i32,
+        creator_id: Uuid,
+        max_players: i16,
+        invite_expires_at: chrono::DateTime<chrono::Utc>,
+        player_positions: serde_json::Value,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Utc::now();
+        game::Entity::insert(game::ActiveModel {
+            id: Set(game_id),
+            status: Set(GameStatus::Pending),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(player_positions),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: Set(Some(creator_id)),
+            game_mode: Set(GameMode::Multiplayer),
+            max_players: Set(max_players),
+            invite_expires_at: Set(Some(invite_expires_at)),
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
+            kicked_players: Set(json!([])),
+        })
+        .exec_without_returning(txn)
+        .await?;
+        Ok(())
+    }
 }
 
 #[tracing::instrument(skip(txn))]
