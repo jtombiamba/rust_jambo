@@ -1,0 +1,275 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Production uses managed PostgreSQL and Redis (provisioned by Terraform), and
+# the in-cluster RabbitMQ Cluster Operator. Connection URLs (DATABASE_URL,
+# REDIS_URL, RABBITMQ_URL) come from HCP Vault via the External Secrets
+# Operator; they are NOT defined here.
+#
+# CI (.github/workflows/deploy.yml, prod path) updates `newTag` to `sha-<sha>`
+# on every push to `prod`, and ArgoCD syncs the change into the cluster.
+resources:
+  - ../../base
+  - rabbitmq-cluster.yaml
+  - external-secret.yaml
+images:
+  - name: jambo-backend
+    newName: ghcr.io/jtombiamba/rust_jambo-backend
+    newTag: latest
+  - name: jambo-frontend
+    newName: ghcr.io/jtombiamba/rust_jambo-frontend
+    newTag: latest
+  - name: jambo-loki
+    newName: ghcr.io/jtombiamba/rust_jambo-loki
+    newTag: latest
+  - name: jambo-promtail
+    newName: ghcr.io/jtombiamba/rust_jambo-promtail
+    newTag: latest
+  - name: jambo-tempo
+    newName: ghcr.io/jtombiamba/rust_jambo-tempo
+    newTag: latest
+  - name: jambo-grafana
+    newName: ghcr.io/jtombiamba/rust_jambo-grafana
+    newTag: latest
+  - name: jambo-alertmanager
+    newName: ghcr.io/jtombiamba/rust_jambo-alertmanager
+    newTag: latest
+  - name: jambo-prometheus
+    newName: ghcr.io/jtombiamba/rust_jambo-prometheus
+    newTag: latest
+  - name: jambo-monitoring-nginx
+    newName: ghcr.io/jtombiamba/rust_jambo-monitoring-nginx
+    newTag: latest
+patches:
+  # Private GHCR pull secret on every Deployment / DaemonSet.
+  - target:
+      kind: Deployment
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: unused
+      spec:
+        template:
+          spec:
+            imagePullSecrets:
+              - name: ghcr-pull
+  - target:
+      kind: DaemonSet
+    patch: |-
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: unused
+      spec:
+        template:
+          spec:
+            imagePullSecrets:
+              - name: ghcr-pull
+  # Managed PostgreSQL (Terraform) replaces the in-cluster StatefulSet.
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres
+  - target:
+      kind: Service
+      name: postgres
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: postgres
+  # Managed Redis (Terraform) replaces the in-cluster Deployment.
+  - target:
+      kind: Deployment
+      name: redis
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: redis
+  - target:
+      kind: Service
+      name: redis
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: redis
+  # RabbitMQ Cluster Operator replaces the plain Deployment/Service.
+  - target:
+      kind: Deployment
+      name: rabbitmq
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rabbitmq
+  - target:
+      kind: Service
+      name: rabbitmq
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: rabbitmq
+  # No MailHog in production (real SMTP relay).
+  - target:
+      kind: Deployment
+      name: mailhog
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: mailhog
+  - target:
+      kind: Service
+      name: mailhog
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: mailhog
+  # Terraform-managed StorageClass for all PVCs.
+  - target:
+      kind: PersistentVolumeClaim
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: unused
+      spec:
+        storageClassName: jambo-sc
+  # Environment-specific application config.
+  - target:
+      kind: ConfigMap
+      name: jambo-config
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: jambo-config
+      data:
+        FRONTEND_URL: "https://tombislab.com"
+        CORS_ALLOWED_ORIGINS: "https://tombislab.com"
+        SMTP_HOST: "smtp.gmail.com"
+        SMTP_PORT: "587"
+        SMTP_TLS: "true"
+        SMTP_FROM_EMAIL: "noreply.tombislab@gmail.com"
+        PAYPAL_MODE: "live"
+  # Frontend runtime API base URL.
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: frontend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: frontend
+                env:
+                  - name: VITE_API_BASE_URL
+                    value: "https://api.tombislab.com"
+  # Alertmanager SMTP (real relay; mailhog is removed in prod).
+  - target:
+      kind: Deployment
+      name: alertmanager
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: alertmanager
+      spec:
+        template:
+          spec:
+            containers:
+              - name: alertmanager
+                env:
+                  - name: SMTP_SMARTHOST
+                    value: "smtp.gmail.com:587"
+                  - name: SMTP_FROM
+                    value: "noreply.tombislab@gmail.com"
+                  - name: SMTP_REQUIRE_TLS
+                    value: "true"
+                  - name: EMAIL_ONCALL
+                    value: "oncall@tombislab.com"
+                  - name: EMAIL_TEAM
+                    value: "team@tombislab.com"
+  # Ingress hosts + TLS (cert-manager http01).
+  - target:
+      kind: Ingress
+      name: jambo-ingress
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: jambo-ingress
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt-prod
+      spec:
+        rules:
+          - host: tombislab.com
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: frontend
+                      port:
+                        number: 80
+          - host: api.tombislab.com
+            http:
+              paths:
+                - path: /api
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: backend
+                      port:
+                        number: 5000
+                - path: /ws
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: backend
+                      port:
+                        number: 5000
+                - path: /health
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: backend
+                      port:
+                        number: 5000
+          - host: monitoring.tombislab.com
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: monitoring-nginx
+                      port:
+                        number: 8888
+        tls:
+          - hosts:
+              - tombislab.com
+              - api.tombislab.com
+              - monitoring.tombislab.com
+            secretName: jambo-prod-tls

@@ -6,6 +6,12 @@ This document describes how to launch the Jambo stack in two environments:
 2. **Production** — a real Kubernetes cluster, using the CI-built images from
    GitHub Container Registry (GHCR).
 
+> **Automated cloud GitOps (DOKS/EKS):** the Terraform + ArgoCD + External
+> Secrets Operator flow for `staging` and `prod` overlays is documented in
+> [`docs/GITOPS.md`](GITOPS.md) (see also [`argocd/`](../argocd/) and
+> [`terraform/`](../terraform/)). The steps below cover manual/manifest-level
+> deployment.
+
 Both environments use the **same Kubernetes manifests** under [`k8s/`](../k8s/)
 (see [`k8s/README.md`](../k8s/README.md) for the directory layout). The backend
 is fully environment-variable driven ([`backend/src/config.rs`](../backend/src/config.rs))
@@ -251,6 +257,89 @@ Deployment.
 
 ---
 
+## 7. Database backups (S3-compatible storage)
+
+The stack includes an automated PostgreSQL backup that dumps the database daily,
+compresses it with gzip, uploads it to any S3-compatible object store (AWS S3,
+MinIO, Cloudflare R2, Backblaze B2, …), and prunes dumps older than the
+configured retention.
+
+It is implemented by a single shared script,
+[`scripts/db-backup.sh`](../scripts/db-backup.sh), which is reused by both
+deployment models:
+
+- **Kubernetes** — a `CronJob` (`k8s/base/db-backup-cronjob.yaml`) runs the
+  script on a schedule. The script is mounted from the
+  `db-backup-script` ConfigMap (`k8s/base/db-backup-script.yaml`).
+- **Docker Compose / Coolify** — a dedicated `backup` service
+  (`infra/docker-compose.yml`, `infra/docker-compose.coolify.yml`) runs a
+  busybox `crond` daemon in the foreground, so the container stays up and the
+  cron fires on schedule.
+
+### Configuration
+
+The backup is driven entirely by environment variables (see
+[`.env.example`](../.env.example) and the `jambo-secrets` Secret):
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `S3_ENDPOINT` | S3-compatible endpoint URL (e.g. `https://s3.eu-west-1.amazonaws.com` or `http://minio:9000`) | *(required)* |
+| `S3_BUCKET` | Bucket name to store dumps in | *(required)* |
+| `S3_PREFIX` | Object key prefix inside the bucket | `backups` |
+| `S3_ACCESS_KEY` | Access key / access key ID | *(required)* |
+| `S3_SECRET_KEY` | Secret key | *(required)* |
+| `S3_REGION` | Region for the endpoint | `us-east-1` |
+| `S3_INSECURE` | `true` to skip TLS verification (self-signed / plain HTTP) | `false` |
+| `BACKUP_RETENTION_DAYS` | Number of days of dumps to keep | `14` |
+| `BACKUP_CRON_SCHEDULE` | Cron schedule (Compose only; K8s uses the CronJob `schedule`) | `0 2 * * *` |
+
+The database connection is taken from `DATABASE_URL` (or the standard `PG*`
+variables). In Kubernetes this comes from the `jambo-config` ConfigMap; in
+Compose it is built from the `POSTGRES_*` variables.
+
+### Kubernetes
+
+The `db-backup` CronJob is part of the base manifests, so it is deployed with
+the rest of the stack. It reads its S3 credentials from the `jambo-secrets`
+Secret (see section 2 and [`scripts/minikube-up.sh`](../scripts/minikube-up.sh)).
+Set the `S3_*` and `BACKUP_*` keys there before applying.
+
+To run a backup immediately (outside the schedule):
+
+```bash
+kubectl -n jambo create job --from=cronjob/db-backup db-backup-manual
+```
+
+### Docker Compose / Coolify
+
+Set the `S3_*` and `BACKUP_*` variables in your `.env` (Compose) or in the
+Coolify UI (Coolify). The `backup` service depends on a healthy `postgres` and
+starts its cron daemon automatically.
+
+### Restoring a dump
+
+Dumps are plain `pg_dump` output compressed with gzip, so they can be restored
+with `pg_restore`/`psql` from any machine with network access to the database.
+For example, to restore into the running Postgres:
+
+```bash
+# Download the dump from S3 (using mc) and decompress
+mc cp myalias/backups/jambo-2026-08-26T020000.sql.gz /tmp/dump.sql.gz
+gunzip -c /tmp/dump.sql.gz > /tmp/dump.sql
+
+# Restore into the postgres pod / container
+kubectl -n jambo exec -i deploy/postgres -- psql -U postgres -d jambo < /tmp/dump.sql
+# or, for Docker Compose:
+docker compose -f infra/docker-compose.yml exec -T postgres psql -U postgres -d jambo < /tmp/dump.sql
+```
+
+> The dump is created with `pg_dump --no-owner --no-privileges`, so it is
+> portable across environments. Restoring into an existing database will
+> overwrite conflicting rows; for a clean restore, drop and recreate the
+> database first.
+
+---
+
 ## Configuration reference
 
 All backend/worker settings live in `k8s/base/configmap.yaml`
@@ -286,6 +375,9 @@ the env vars read by [`backend/src/config.rs`](../backend/src/config.rs) and
   `472`, Prometheus `65534`) so non-root images can write to their PVCs.
 - **Default image pull policy** — the base deliberately omits
   `imagePullPolicy`, so `local` → `IfNotPresent` and `latest` → `Always`.
+- **One shared backup script** — [`scripts/db-backup.sh`](../scripts/db-backup.sh)
+  is reused by both the K8s `CronJob` and the Compose `backup` service, so the
+  backup logic stays identical across deployment models.
 
 ## Gotchas
 
@@ -300,3 +392,7 @@ the env vars read by [`backend/src/config.rs`](../backend/src/config.rs) and
   secret (injected by the `ghcr` overlay).
 - RabbitMQ uses `guest`/`guest`; if connections are refused, use a non-guest
   user (Docker Compose/Coolify already do this, so it typically works).
+- The `db-backup` CronJob uses the public `postgres:16-alpine` image (not the
+  GHCR-built images), so it does not need the `ghcr-pull` pull secret.
+- The backup script needs `S3_*` credentials; if they are missing the job fails
+  fast with a clear error rather than uploading an empty dump.

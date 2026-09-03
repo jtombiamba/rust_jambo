@@ -15,10 +15,10 @@ k8s/
 │   ├── namespace.yaml          # Namespace "jambo"
 │   ├── configmap.yaml          # Non-secret env vars (jambo-config)
 │   ├── secret.yaml.example     # Template of secret keys (NOT applied; see below)
-│   ├── postgres.yaml           # StatefulSet + PVC + Service
-│   ├── rabbitmq.yaml           # Deployment + Service
-│   ├── redis.yaml              # Deployment + Service
-│   ├── mailhog.yaml            # Deployment + Service
+│   ├── postgres.yaml           # StatefulSet + PVC + Service (dev/staging)
+│   ├── rabbitmq.yaml           # Plain Deployment + Service (dev only)
+│   ├── redis.yaml              # Deployment + Service (dev/staging)
+│   ├── mailhog.yaml            # Deployment + Service (dev/staging)
 │   ├── backend.yaml            # Deployment + Service (port 5000)
 │   ├── ai-worker.yaml          # Deployment + Service (port 7000 for Prometheus)
 │   ├── scheduler-worker.yaml   # Deployment + Service (port 6000 for Prometheus)
@@ -30,13 +30,26 @@ k8s/
 │   ├── grafana.yaml            # Deployment + PVC + Service
 │   ├── alertmanager.yaml       # Deployment + PVC + Service
 │   ├── prometheus.yaml         # Deployment + PVC + Service (+ alerts ConfigMap)
-│   └── monitoring-nginx.yaml   # Deployment + Service + ConfigMap
+│   ├── monitoring-nginx.yaml   # Deployment + Service + ConfigMap
+│   ├── hpa.yaml                # HorizontalPodAutoscalers
+│   └── pdb.yaml                # PodDisruptionBudgets
 └── overlays/
-    ├── local/                  # Local-built images (jambo-*:local)
-    │   └── kustomization.yaml
-    └── ghcr/                   # GHCR-pulled images (ghcr.io/jtombiamba/rust_jambo-*:latest)
-        └── kustomization.yaml
+    ├── local/                  # Local-built images (jambo-*:local), minikube
+    ├── ghcr/                   # GHCR-pulled images (dev on minikube)
+    ├── staging/                # GitOps staging: in-cluster PG/Redis, RMQ operator, ESO
+    │   ├── rabbitmq-cluster.yaml   # RabbitmqCluster CR (replaces plain rabbitmq.yaml)
+    │   └── external-secret.yaml    # ESO SecretStore (HCP Vault) + ExternalSecrets
+    └── prod/                   # GitOps prod: managed PG/Redis, RMQ operator, ESO
+        ├── rabbitmq-cluster.yaml
+        └── external-secret.yaml
 ```
+
+The `staging`/`prod` overlays are the **cloud GitOps** environments (DOKS/EKS,
+see [`docs/GITOPS.md`](../docs/GITOPS.md) and [`argocd/`](../argocd/)). They pin
+every PVC to the Terraform-managed `jambo-sc` StorageClass, override hosts/TLS,
+and delete the in-cluster services they don't use (prod drops Postgres/Redis and
+MailHog in favour of managed services). `local`/`ghcr` remain for minikube
+development.
 
 ## Two deployment modes
 

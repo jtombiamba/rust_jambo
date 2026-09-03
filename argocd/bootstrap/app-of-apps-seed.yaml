@@ -1,0 +1,31 @@
+# Root "app of apps" — the seed Application that makes ArgoCD self-manage
+# everything under argocd/apps/ (the ApplicationSet and AppProject).
+#
+# Terraform creates this resource on managed clusters (see
+# terraform/modules/platform/main.tf -> kubernetes_manifest.argocd_app_of_apps).
+# This file is a reference copy for clusters NOT provisioned by Terraform
+# (e.g. a local minikube). Apply it manually:
+#
+#   kubectl apply -f argocd/bootstrap/app-of-apps-seed.yaml
+#
+# IMPORTANT: this file must NOT live under argocd/apps/ — otherwise ArgoCD
+# would reconcile its own definition and revert per-environment parameters
+# (e.g. staging tracking `main`) to whatever is hardcoded here.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: jambo-apps
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jtombiamba/rust_jambo.git
+    targetRevision: prod
+    path: argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

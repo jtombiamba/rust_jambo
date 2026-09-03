@@ -1,0 +1,18 @@
+cluster_name       = "jambo-prod"
+region             = "eu-west-1"
+kubernetes_version = "1.30"
+vpc_cidr           = "10.0.0.0/16"
+instance_types     = ["t3.large"]
+min_size           = 2
+max_size           = 6
+desired_size       = 2
+domain             = "jambo.app"
+cert_manager_email = "ops@jambo.app"
+postgres_instance_class = "db.t3.small"
+postgres_allocated_storage = 20
+postgres_version   = "16"
+redis_node_type    = "cache.t3.small"
+redis_version      = "7"
+
+argocd_repo_username = "github-user"
+# argocd_repo_password = "set-via-env-or-CI-secret"

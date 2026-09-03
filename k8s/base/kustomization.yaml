@@ -4,6 +4,8 @@ namespace: jambo
 resources:
   - namespace.yaml
   - configmap.yaml
+  - db-backup-script.yaml
+  - db-backup-cronjob.yaml
   - postgres.yaml
   - rabbitmq.yaml
   - redis.yaml
@@ -20,3 +22,5 @@ resources:
   - alertmanager.yaml
   - prometheus.yaml
   - monitoring-nginx.yaml
+  - hpa.yaml
+  - pdb.yaml

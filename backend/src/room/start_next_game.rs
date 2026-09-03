@@ -82,6 +82,7 @@ impl StartNextGameService {
         run_id: Uuid,
         user_id: Uuid,
     ) -> Result<StartNextGameResponse, RoomServiceError> {
+        // 1. validate run exists and is active
         let run = self
             .run_repo
             .find_by_id(run_id)
@@ -92,17 +93,20 @@ impl StartNextGameService {
             return Err(RoomServiceError::RunNotActive { status: run.status });
         }
 
+        // 2. validate user starting game in run is member of the run
         let _run_player = self
             .run_player_repo
             .find_by_run_and_user(run_id, user_id)
             .await?
             .ok_or(RoomServiceError::NotRunPlayer)?;
 
+        // 3. check the run is still ongoing (can be merged with 1.)
         let game_index = run.current_game_index;
         if game_index >= run.num_games {
             return Err(RoomServiceError::RunCompleted);
         }
 
+        // 4. a game of the run at this index already exist return it
         let existing = self
             .run_game_repo
             .find_by_run_and_index(run_id, game_index)
@@ -118,6 +122,7 @@ impl StartNextGameService {
             });
         }
 
+        //5. validate that all previous games of the run are finished
         if game_index > 0 {
             if let Some(prev_run_game) = self
                 .run_game_repo
@@ -140,6 +145,7 @@ impl StartNextGameService {
             }
         }
 
+        //6. validate we still have enough players in the run
         let run_players = self.run_player_repo.list_by_run(run_id).await?;
 
         if run_players.len() < 2 {

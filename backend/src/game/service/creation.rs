@@ -13,9 +13,12 @@ use crate::game::service::types::MultiplayerGameOutcome;
 use super::GameService;
 
 impl GameService {
-    // TODO: it seems we wiill loose track of game creation here as tracing is not effective here
-    // put all queries here in repositories in order to instrument db queries
-    // use transaction_runner also in this case
+    // TODO: it seems we will loose track of game creation here as tracing is not effective here
+    // TODO: put all queries here in repositories in order to instrument db queries
+    // TODO: use transaction_runner also in this case
+    // TODO: apply SOLID principles by making functions that makes validation first of sufficient credit for the creator of the game
+    // TODO: put the validation of the credit out of the transaction
+    // TODO: make some optimistic locking for profile credit update
     pub async fn create_multiplayer_game(
         &self,
         creator_user_id: Uuid,

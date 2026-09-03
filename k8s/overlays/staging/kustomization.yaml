@@ -1,0 +1,196 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - rabbitmq-cluster.yaml
+  - external-secret.yaml
+images:
+  - name: jambo-backend
+    newName: ghcr.io/jtombiamba/rust_jambo-backend
+    newTag: latest
+  - name: jambo-frontend
+    newName: ghcr.io/jtombiamba/rust_jambo-frontend
+    newTag: latest
+  - name: jambo-loki
+    newName: ghcr.io/jtombiamba/rust_jambo-loki
+    newTag: latest
+  - name: jambo-promtail
+    newName: ghcr.io/jtombiamba/rust_jambo-promtail
+    newTag: latest
+  - name: jambo-tempo
+    newName: ghcr.io/jtombiamba/rust_jambo-tempo
+    newTag: latest
+  - name: jambo-grafana
+    newName: ghcr.io/jtombiamba/rust_jambo-grafana
+    newTag: latest
+  - name: jambo-alertmanager
+    newName: ghcr.io/jtombiamba/rust_jambo-alertmanager
+    newTag: latest
+  - name: jambo-prometheus
+    newName: ghcr.io/jtombiamba/rust_jambo-prometheus
+    newTag: latest
+  - name: jambo-monitoring-nginx
+    newName: ghcr.io/jtombiamba/rust_jambo-monitoring-nginx
+    newTag: latest
+patches:
+  # Private GHCR pull secret on every Deployment / DaemonSet.
+  - target:
+      kind: Deployment
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: unused
+      spec:
+        template:
+          spec:
+            imagePullSecrets:
+              - name: ghcr-pull
+  - target:
+      kind: DaemonSet
+    patch: |-
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: unused
+      spec:
+        template:
+          spec:
+            imagePullSecrets:
+              - name: ghcr-pull
+  # Replace the plain RabbitMQ Deployment/Service with the RabbitmqCluster CR.
+  - target:
+      kind: Deployment
+      name: rabbitmq
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rabbitmq
+  - target:
+      kind: Service
+      name: rabbitmq
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: rabbitmq
+  # Pin every PVC and the Postgres StatefulSet to the Terraform-managed
+  # StorageClass (do-block-storage on DOKS, gp3 on EKS).
+  - target:
+      kind: PersistentVolumeClaim
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: unused
+      spec:
+        storageClassName: jambo-sc
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: postgres
+      spec:
+        volumeClaimTemplates:
+          - metadata:
+              name: data
+            spec:
+              storageClassName: jambo-sc
+  # Environment-specific application host / CORS origins.
+  - target:
+      kind: ConfigMap
+      name: jambo-config
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: jambo-config
+      data:
+        FRONTEND_URL: "https://staging.jambo.app"
+        CORS_ALLOWED_ORIGINS: "https://staging.jambo.app"
+  # Frontend runtime API base URL (consumed by env-config.sh at container start).
+  - target:
+      kind: Deployment
+      name: frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: frontend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: frontend
+                env:
+                  - name: VITE_API_BASE_URL
+                    value: "https://api.staging.jambo.app"
+  # Ingress hosts + TLS (cert-manager http01).
+  - target:
+      kind: Ingress
+      name: jambo-ingress
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: jambo-ingress
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt-prod
+      spec:
+        rules:
+          - host: staging.jambo.app
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: frontend
+                      port:
+                        number: 80
+          - host: api.staging.jambo.app
+            http:
+              paths:
+                - path: /api
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: backend
+                      port:
+                        number: 5000
+                - path: /ws
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: backend
+                      port:
+                        number: 5000
+                - path: /health
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: backend
+                      port:
+                        number: 5000
+          - host: monitoring.staging.jambo.app
+            http:
+              paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: monitoring-nginx
+                      port:
+                        number: 8888
+        tls:
+          - hosts:
+              - staging.jambo.app
+              - api.staging.jambo.app
+              - monitoring.staging.jambo.app
+            secretName: jambo-staging-tls

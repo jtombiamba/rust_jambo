@@ -83,7 +83,8 @@ get_secret() {
   printf '%s' "$val"
 }
 
-# jambo-secrets: consumed by backend/ai-worker/scheduler-worker via envFrom.
+# jambo-secrets: consumed by backend/ai-worker/scheduler-worker via envFrom,
+# and by the db-backup CronJob for S3 credentials.
 kubectl -n jambo create secret generic jambo-secrets \
   --from-literal=JWT_SECRET="$(get_secret JWT_SECRET)" \
   --from-literal=JWT_EXPIRY_HOURS="${JWT_EXPIRY_HOURS:-24}" \
@@ -91,6 +92,17 @@ kubectl -n jambo create secret generic jambo-secrets \
   --from-literal=PAYPAL_CLIENT_ID="${PAYPAL_CLIENT_ID:-}" \
   --from-literal=PAYPAL_CLIENT_SECRET="${PAYPAL_CLIENT_SECRET:-}" \
   --from-literal=BENCHMARK_API_TOKEN="${BENCHMARK_API_TOKEN:-}" \
+  --from-literal=DATABASE_URL="${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/jambo}" \
+  --from-literal=RABBITMQ_URL="${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}" \
+  --from-literal=REDIS_URL="${REDIS_URL:-redis://redis:6379}" \
+  # --from-literal=S3_ENDPOINT="${S3_ENDPOINT:-https://s3.amazonaws.com}" \
+  # --from-literal=S3_BUCKET="${S3_BUCKET:-jambo-backups}" \
+  # --from-literal=S3_PREFIX="${S3_PREFIX:-jambo/}" \
+  # --from-literal=S3_ACCESS_KEY="${S3_ACCESS_KEY:-}" \
+  # --from-literal=S3_SECRET_KEY="${S3_SECRET_KEY:-}" \
+  # --from-literal=S3_REGION="${S3_REGION:-us-east-1}" \
+  # --from-literal=S3_INSECURE="${S3_INSECURE:-false}" \
+  # --from-literal=BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # monitoring-nginx-secrets: consumed by monitoring-nginx via secretKeyRef.

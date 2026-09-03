@@ -16,29 +16,34 @@ data:
       - url: http://loki:3100/loki/api/v1/push
 
     scrape_configs:
-      # - job_name: kubernetes-pods
-      #   static_configs:
-      #     - targets:
-      #         - localhost
-      #       labels:
-      #         job: kubernetes-pods
-      #         __path__: /var/log/containers/*.log
       - job_name: kubernetes-pods
         pipeline_stages:
-          - cri: {}
-          - json:
-            expressions:
-              level: level
-              target: target
-              timestamp: timestamp
-              correlation_id: span.correlation_id
-              http_method: span.http.method
-              http_path: span.http.path
-              http_status: span.http.status_code
-              message: fields.message
-          - labels:
-              level:
-              target:
+          - match:
+              selector: '{app!="backend"}'
+              stages:
+                - cri: {}
+          # - cri: {}
+          - match:
+              selector: '{app="backend"}'
+              stages:
+                - json:
+                    expressions:
+                      log:
+                - json:
+                    source: log
+                    expressions:
+                      level: level
+                      target: target
+                      timestamp: timestamp
+                      correlation_id: span.correlation_id
+                      http_method: span.http.method
+                      http_path: span.http.path
+                      http_status: span.http.status_code
+                      message: fields.message
+                - labels:
+                    level:
+                    # target:
+
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:

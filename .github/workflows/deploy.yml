@@ -377,14 +377,21 @@ jobs:
   deploy:
     needs:
       - build-push-backend
-      - build-push-frontend       # only runs if build-push-backend and build-push-frontend succeeds
+      - build-push-frontend
+      - build-push-monitoring-nginx
+      - build-push-prometheus
+      - build-push-loki
+      - build-push-promtail
+      - build-push-tempo
+      - build-push-grafana
+      - build-push-alertmanager
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      # Forward the full GitHub push event webhook payload to Coolify.
-      # Per the GitHub push event docs, the payload contains the fields Coolify
-      # needs to identify and trigger the deployment: ref (full ref like
-      # refs/heads/main), repository, pusher, commits, head_commit, after, etc.
+      # main -> deploy to Coolify (Docker Compose path, unchanged).
       - name: Trigger Coolify deployment with full push event payload
+        if: github.ref == 'refs/heads/main'
         run: |
           # Write the full webhook payload to a file to avoid shell escaping
           # issues and command-line length limits.
@@ -400,3 +407,19 @@ jobs:
             -H "Content-Type: application/json" \
             -H "X-Coolify-Token: ${{ secrets.COOLIFY_WEBHOOK_SECRET }}" \
             --data-binary @payload.json
+
+      # prod -> GitOps: pin the prod overlay images to the immutable sha tag and
+      # push. ArgoCD detects the change and auto-syncs the cluster.
+      - name: Checkout (prod GitOps)
+        if: github.ref == 'refs/heads/prod'
+        uses: actions/checkout@v7
+
+      - name: Pin prod overlay image tags and push
+        if: github.ref == 'refs/heads/prod'
+        run: |
+          sed -i "s/newTag: latest/newTag: sha-${{ github.sha }}/" k8s/overlays/prod/kustomization.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays/prod/kustomization.yaml
+          git commit -m "chore(deploy): pin prod images to sha-${{ github.sha }}" || echo "no changes to commit"
+          git push origin HEAD:prod

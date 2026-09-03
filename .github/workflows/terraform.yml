@@ -1,0 +1,144 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - "terraform/**"
+  push:
+    branches: [main, prod]
+    paths:
+      - "terraform/**"
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: "Cloud provider to target (doks | eks | all)"
+        type: choice
+        options:
+          - all
+          - doks
+          - eks
+        default: all
+      environment:
+        description: "Environment to target (staging | prod | all)"
+        type: choice
+        options:
+          - all
+          - staging
+          - prod
+        default: all
+      apply:
+        description: "Apply changes (default: plan only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # Build the matrix of cloud/environment combinations to run.
+  # - On push/PR: always all 4 combinations.
+  # - On workflow_dispatch: only the combinations matching the selected
+  #   cloud and environment inputs (or all of them when set to "all").
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        run: |
+          # Full catalog of combinations with their per-env variables.
+          cat > /tmp/catalog.json <<'EOF'
+          [
+            {"cloud":"doks","environment":"staging","domain":"jambo.app","cert_manager_email":"ops@jambo.app"},
+            {"cloud":"doks","environment":"prod","domain":"tombislab.com","cert_manager_email":"noreply.tombislab@gmail.com"},
+            {"cloud":"eks","environment":"staging","domain":"jambo.app","cert_manager_email":"ops@jambo.app"},
+            {"cloud":"eks","environment":"prod","domain":"jambo.app","cert_manager_email":"ops@jambo.app"}
+          ]
+          EOF
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CLOUD="${{ github.event.inputs.cloud }}"
+            ENV="${{ github.event.inputs.environment }}"
+          else
+            CLOUD="all"
+            ENV="all"
+          fi
+
+          jq -c \
+            --arg cloud "$CLOUD" \
+            --arg env "$ENV" \
+            '[ .[] | select(
+                 ($cloud == "all" or .cloud == $cloud) and
+                 ($env == "all" or .environment == $env)
+               ) ]' /tmp/catalog.json > /tmp/matrix.json
+
+          # Guard against an empty selection (should not happen with the
+          # "all" defaults, but fail fast rather than silently doing nothing).
+          COUNT=$(jq 'length' /tmp/matrix.json)
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::No matching cloud/environment combination for cloud=$CLOUD environment=$ENV"
+            exit 1
+          fi
+
+          echo "matrix=$(cat /tmp/matrix.json)" >> "$GITHUB_OUTPUT"
+
+  terraform:
+    name: ${{ matrix.cloud }}/${{ matrix.environment }}
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.cloud }}/${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Configure DigitalOcean credentials (doks)
+        if: matrix.cloud == 'doks'
+        run: |
+          # Used by the digitalocean provider and the Spaces S3 backend.
+          echo "TF_VAR_do_token=${{ secrets.DO_TOKEN }}" >> "$GITHUB_ENV"
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.DO_SPACES_ACCESS_KEY }}" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.DO_SPACES_SECRET_KEY }}" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials (eks)
+        if: matrix.cloud == 'eks'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: eu-west-1
+
+      - name: Set Terraform domain & cert-manager email vars
+        run: |
+          echo "TF_VAR_domain=${{ matrix.domain }}" >> "$GITHUB_ENV"
+          echo "TF_VAR_cert_manager_email=${{ matrix.cert_manager_email }}" >> "$GITHUB_ENV"
+
+      - name: Set ArgoCD repo credentials
+        run: |
+          echo "TF_VAR_argocd_repo_username=${{ secrets.ARGOCD_REPO_USERNAME }}" >> "$GITHUB_ENV"
+          echo "TF_VAR_argocd_repo_password=${{ secrets.ARGOCD_REPO_PASSWORD }}" >> "$GITHUB_ENV"
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      - name: Terraform apply
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true'
+        run: terraform apply -input=false -auto-approve tfplan

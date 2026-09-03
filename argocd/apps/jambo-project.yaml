@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: jambo
+  namespace: argocd
+spec:
+  description: Jambo FapFap Game application workloads
+  sourceRepos:
+    - https://github.com/jtombiamba/rust_jambo.git
+  destinations:
+    - namespace: jambo
+      server: https://kubernetes.default.svc
+  # Allow the app to create namespaces via sync option.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
