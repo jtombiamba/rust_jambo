@@ -1,5 +1,3 @@
-use chrono::Utc;
-use sea_orm::sea_query;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
     QueryOrder, TransactionTrait,
@@ -10,7 +8,10 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::database::models::{game, game_card, player, GameStatus};
-use crate::database::repositories::PlayerProfileRepository;
+use crate::database::repositories::game::optimistic_update_round_result_in_txn;
+use crate::database::repositories::{
+    GameCardRepository, PlayerProfileRepository, PlayerRepository,
+};
 use crate::error::GameError;
 use crate::game::card_mapping::Card;
 use crate::game::constants::{
@@ -22,6 +23,59 @@ use crate::game::service::types::{RoundEvalTimer, RoundEvaluationResult};
 use crate::observability::metrics;
 
 use super::GameService;
+
+/// Convert the DB `game_card` models of a completed round into the pure
+/// [`PlayedCard`] structures consumed by [`evaluate_round`].
+///
+/// Ordering of `played_cards` is preserved (it must already be ordered by
+/// `played_at`, since `plays[0]` becomes the leading card). `player_positions`
+/// maps a player id to its position index; it must be ordered by player
+/// position so the index corresponds to the in-game seat.
+fn build_plays(
+    played_cards: &[game_card::Model],
+    player_positions: &[Uuid],
+) -> Result<Vec<PlayedCard>, GameError> {
+    let mut plays = Vec::with_capacity(played_cards.len());
+    for card in played_cards {
+        if let Some(player_id) = card.player_id {
+            let position = player_positions
+                .iter()
+                .position(|&id| id == player_id)
+                .ok_or_else(|| GameError::internal("Player not found in game"))?;
+            let Ok(index) = u8::try_from(card.card_index) else {
+                continue;
+            };
+            if let Some(card_obj) = Card::new(index) {
+                plays.push(PlayedCard {
+                    player_position: position,
+                    card: card_obj,
+                });
+            }
+        }
+    }
+    Ok(plays)
+}
+
+/// Pure decision of the final game status once the last round is complete.
+///
+/// A Kora is when the winning card is a 3 (indices 0, 8, 16, 24). A Double
+/// Kora additionally requires the same player to have won round 4 with a Kora
+/// card. Any other end state is a normal `Finished`.
+fn compute_final_status(
+    is_kora: bool,
+    round_4_winner_id: Option<Uuid>,
+    round_5_winner_id: Uuid,
+    round_4_winner_played_kora: bool,
+) -> GameStatus {
+    if !is_kora {
+        return GameStatus::Finished;
+    }
+    if round_4_winner_id == Some(round_5_winner_id) && round_4_winner_played_kora {
+        GameStatus::DoubleKora
+    } else {
+        GameStatus::Kora
+    }
+}
 
 impl GameService {
     /// Check if all players have played a card in the given round.
@@ -71,14 +125,11 @@ impl GameService {
         );
         let _guard = span.enter();
 
-        // Fetch played cards for this round (via txn)
-        // TODO: find an equivalent function in repositories to avoid direct entity access here.
-        let played_cards = game_card::Entity::find()
-            .filter(game_card::Column::GameId.eq(game_id))
-            .filter(game_card::Column::Round.eq(round))
-            .filter(game_card::Column::Played.eq(true))
-            .order_by_asc(game_card::Column::PlayedAt)
-            .all(txn)
+        // Fetch played cards for this round (via txn).
+        let game_card_repo = GameCardRepository::new(self.db.clone());
+        let player_repo = PlayerRepository::new(self.db.clone());
+        let played_cards = game_card_repo
+            .list_played_by_game_and_round_in_txn(txn, game_id, round)
             .await?;
         info!(
             "evaluate_round_in_txn: found {} played cards for round {}",
@@ -89,36 +140,13 @@ impl GameService {
             return Err(GameError::RoundNotComplete);
         }
 
-        // Fetch players (via txn)
-        // TODO: find an equivalent function in repositories to avoid direct entity access here.
-        let players = player::Entity::find()
-            .filter(player::Column::GameId.eq(game_id))
-            .order_by_asc(player::Column::Position)
-            .all(txn)
-            .await?;
+        // Fetch players (via txn), ordered by position so the index in
+        // `player_positions` matches each player's in-game seat.
+        let players = player_repo.list_by_game_in_txn(txn, game_id).await?;
         let active_players: Vec<&player::Model> = players.iter().filter(|p| !p.kicked).collect();
         let player_positions: Vec<Uuid> = active_players.iter().map(|p| p.id).collect();
 
-        // Convert to PlayedCard structures
-        // TODO: make it a separate function extracting plays called here.
-        let mut plays = Vec::new();
-        for card in &played_cards {
-            if let Some(player_id) = card.player_id {
-                let position = player_positions
-                    .iter()
-                    .position(|&id| id == player_id)
-                    .ok_or_else(|| GameError::internal("Player not found in game"))?;
-                let Ok(index) = u8::try_from(card.card_index) else {
-                    continue;
-                };
-                if let Some(card_obj) = Card::new(index) {
-                    plays.push(PlayedCard {
-                        player_position: position,
-                        card: card_obj,
-                    });
-                }
-            }
-        }
+        let plays = build_plays(&played_cards, &player_positions)?;
 
         let first_play = plays
             .first()
@@ -159,7 +187,6 @@ impl GameService {
             round, winner_id, new_roll
         );
 
-        // TODO: consider moving the DB update logic to a repository function to avoid direct entity access here.
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
             .await?
@@ -168,99 +195,41 @@ impl GameService {
         let read_version = game_model.updated_at;
 
         let game_ends = new_roll > CARDS_PER_PLAYER as i32;
-        let mut final_status = game_model.status;
 
-        if game_ends {
-            // TODO: consider moving the DB update logic to a repository function to avoid direct entity access here and also compute the final_status outside of this function in order to call it.
-            if round_result.is_kora {
-                let round_4_winner_id = game_model.winner_id;
-                let round_5_winner_id = player_positions[winner_pos];
-
-                let is_double_kora = round_4_winner_id == Some(round_5_winner_id)
-                    && game_card::Entity::find()
-                        .filter(game_card::Column::PlayerId.eq(round_5_winner_id))
-                        .filter(game_card::Column::Round.eq(4))
-                        .filter(game_card::Column::Played.eq(true))
-                        .one(txn)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|c| c.card_index % 8 == 0)
-                        .unwrap_or(false);
-
-                if is_double_kora {
-                    final_status = GameStatus::DoubleKora;
-                } else {
-                    final_status = GameStatus::Kora;
-                }
+        let round_4_winner_played_kora =
+            if round_result.is_kora && game_model.winner_id == Some(winner_id) {
+                game_card_repo
+                    .find_played_card_in_round_in_txn(txn, winner_id, 4)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|c| c.card_index % 8 == 0)
+                    .unwrap_or(false)
             } else {
-                final_status = GameStatus::Finished;
-            }
-        }
+                false
+            };
 
-        // TODO: consider moving the DB update logic to a repository function to avoid direct entity access here.
-        // Build a single UPDATE query with optimistic locking.
-        //
-        // We use update_many() with col_expr() + an explicit ::game_status CAST for the
-        // status column because:
-        //
-        // 1. Optimistic locking: update_many() lets us add `.filter(UpdatedAt.eq(read_version))`
-        //    so that if another concurrent transaction modified this row between our read and
-        //    write, the UPDATE affects 0 rows and we can retry. ActiveModel::update() only
-        //    filters by primary key, silently overwriting concurrent changes.
-        //
-        // 2. Performance: a single UPDATE query for all columns is faster than splitting into
-        //    two queries (update_many for non-enum cols + ActiveModel for the enum col).
-        //
-        // 3. The ::game_status CAST is required because col_expr() sends raw sea_orm::Value
-        //    types to the database. Without the cast, Value::String(...) is sent as PostgreSQL
-        //    `text`, which the `game_status` enum column rejects. The `::game_status` suffix
-        //    tells PostgreSQL to interpret the string as the enum type.
-        let mut update = game::Entity::update_many()
-            .col_expr(
-                game::Column::WinnerId,
-                sea_query::Expr::value(sea_orm::Value::Uuid(Some(winner_id))),
+        let final_status = game_ends.then(|| {
+            compute_final_status(
+                round_result.is_kora,
+                game_model.winner_id,
+                winner_id,
+                round_4_winner_played_kora,
             )
-            .col_expr(
-                game::Column::Rank,
-                sea_query::Expr::value(sea_orm::Value::Int(Some(winner_pos as i32))),
-            )
-            .col_expr(
-                game::Column::Roll,
-                sea_query::Expr::value(sea_orm::Value::Int(Some(new_roll))),
-            )
-            .col_expr(
-                game::Column::CurrentWinningCard,
-                sea_query::Expr::value(sea_orm::Value::Int(None)),
-            )
-            .col_expr(
-                game::Column::CurrentWinningPlayerPosition,
-                sea_query::Expr::value(sea_orm::Value::Int(None)),
-            )
-            .col_expr(
-                game::Column::UpdatedAt,
-                sea_query::Expr::value(sea_orm::Value::ChronoDateTimeUtc(Some(Utc::now()))),
-            )
-            .filter(game::Column::Id.eq(game_id))
-            .filter(game::Column::UpdatedAt.eq(read_version))
-            .to_owned();
+        });
 
-        if game_ends {
-            // Cast the string to the PostgreSQL game_status enum so the type matches.
-            // Without ::game_status, Value::String is sent as `text` which PostgreSQL rejects.
-            let status_str = final_status.to_string();
-            update = update.col_expr(
-                game::Column::Status,
-                sea_query::Expr::cust_with_values(
-                    "$1::game_status",
-                    [sea_orm::Value::String(Some(status_str))],
-                ),
-            );
-        }
+        let rows_affected = optimistic_update_round_result_in_txn(
+            txn,
+            game_id,
+            winner_id,
+            winner_pos as i32,
+            new_roll,
+            read_version,
+            final_status,
+        )
+        .await?;
 
-        let update_result = update.exec(txn).await?;
-
-        if update_result.rows_affected == 0 {
+        if rows_affected == 0 {
             return Err(GameError::VersionConflict);
         }
 
@@ -269,7 +238,7 @@ impl GameService {
             winner_id,
             winner_position: winner_pos,
             game_ended: game_ends,
-            final_status,
+            final_status: final_status.unwrap_or(game_model.status),
             players: active_players.into_iter().cloned().collect(),
         })
     }
@@ -408,5 +377,114 @@ impl GameService {
 
             return Ok(result);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::models::game_card;
+    use chrono::Utc;
+
+    fn card_model(player_id: Option<Uuid>, card_index: i32) -> game_card::Model {
+        let now = Utc::now();
+        game_card::Model {
+            id: Uuid::new_v4(),
+            game_id: Uuid::new_v4(),
+            player_id,
+            card_index,
+            played: true,
+            played_at: Some(now),
+            round: Some(1),
+            created_at: now,
+        }
+    }
+
+    #[test]
+    fn build_plays_maps_cards_to_positions() {
+        let p0 = Uuid::new_v4();
+        let p1 = Uuid::new_v4();
+        let cards = vec![card_model(Some(p0), 0), card_model(Some(p1), 8)];
+        let plays = build_plays(&cards, &[p0, p1]).unwrap();
+        assert_eq!(plays.len(), 2);
+        assert_eq!(plays[0].player_position, 0);
+        assert_eq!(plays[0].card.index, 0);
+        assert_eq!(plays[1].player_position, 1);
+        assert_eq!(plays[1].card.index, 8);
+    }
+
+    #[test]
+    fn build_plays_skips_unassigned_cards() {
+        let p0 = Uuid::new_v4();
+        let cards = vec![card_model(Some(p0), 0), card_model(None, 1)];
+        let plays = build_plays(&cards, &[p0]).unwrap();
+        assert_eq!(plays.len(), 1);
+        assert_eq!(plays[0].player_position, 0);
+    }
+
+    #[test]
+    fn build_plays_skips_card_index_out_of_deck() {
+        let p0 = Uuid::new_v4();
+        // 32 is a valid u8 but not a valid deck card (deck is 0..32).
+        let cards = vec![card_model(Some(p0), 32)];
+        assert!(build_plays(&cards, &[p0]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn build_plays_skips_card_index_too_large_for_u8() {
+        let p0 = Uuid::new_v4();
+        let cards = vec![card_model(Some(p0), 256)];
+        assert!(build_plays(&cards, &[p0]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn build_plays_errors_on_unknown_player() {
+        let p0 = Uuid::new_v4();
+        let unknown = Uuid::new_v4();
+        let cards = vec![card_model(Some(unknown), 0)];
+        assert!(build_plays(&cards, &[p0]).is_err());
+    }
+
+    #[test]
+    fn compute_final_status_finished_when_not_kora() {
+        let p = Uuid::new_v4();
+        assert_eq!(
+            compute_final_status(false, Some(p), p, true),
+            GameStatus::Finished
+        );
+    }
+
+    #[test]
+    fn compute_final_status_double_kora() {
+        let p = Uuid::new_v4();
+        assert_eq!(
+            compute_final_status(true, Some(p), p, true),
+            GameStatus::DoubleKora
+        );
+    }
+
+    #[test]
+    fn compute_final_status_kora_when_round4_winner_not_kora() {
+        let p = Uuid::new_v4();
+        assert_eq!(
+            compute_final_status(true, Some(p), p, false),
+            GameStatus::Kora
+        );
+    }
+
+    #[test]
+    fn compute_final_status_kora_when_different_winner() {
+        let p = Uuid::new_v4();
+        let q = Uuid::new_v4();
+        assert_eq!(
+            compute_final_status(true, Some(p), q, true),
+            GameStatus::Kora
+        );
+    }
+
+    #[test]
+    fn compute_final_status_kora_when_no_round4_winner() {
+        let p = Uuid::new_v4();
+        assert_eq!(compute_final_status(true, None, p, true), GameStatus::Kora);
     }
 }

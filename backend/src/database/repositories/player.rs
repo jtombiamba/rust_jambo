@@ -186,6 +186,7 @@ impl PlayerRepository {
     ) -> Result<Vec<Player>, DbErr> {
         player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
+            .order_by_asc(player::Column::Position)
             .all(txn)
             .await
     }

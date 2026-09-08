@@ -356,6 +356,63 @@ pub async fn optimistic_update_round_state(
     Ok(result.rows_affected)
 }
 
+/// Optimistically write the result of a completed round evaluation inside a
+/// transaction.
+///
+/// Performs a single `UPDATE` guarded by `read_version` so a concurrent
+/// modification between the caller's read and this write affects 0 rows
+/// (surfaced to the caller as `Ok(0)` for a retry/`VersionConflict`).
+///
+/// When `final_status` is `Some`, the `status` column is also written using an
+/// explicit `::game_status` CAST (required because `col_expr` sends a raw
+/// `Value::String`, which PostgreSQL otherwise interprets as `text`).
+#[tracing::instrument(skip(txn))]
+pub async fn optimistic_update_round_result_in_txn(
+    txn: &DatabaseTransaction,
+    game_id: Uuid,
+    winner_id: Uuid,
+    winner_position: i32,
+    new_roll: i32,
+    read_version: chrono::DateTime<chrono::Utc>,
+    final_status: Option<GameStatus>,
+) -> Result<u64, DbErr> {
+    let mut update = game::Entity::update_many()
+        .col_expr(
+            game::Column::WinnerId,
+            Expr::value(Value::Uuid(Some(winner_id))),
+        )
+        .col_expr(
+            game::Column::Rank,
+            Expr::value(Value::Int(Some(winner_position))),
+        )
+        .col_expr(game::Column::Roll, Expr::value(Value::Int(Some(new_roll))))
+        .col_expr(
+            game::Column::CurrentWinningCard,
+            Expr::value(Value::Int(None)),
+        )
+        .col_expr(
+            game::Column::CurrentWinningPlayerPosition,
+            Expr::value(Value::Int(None)),
+        )
+        .col_expr(
+            game::Column::UpdatedAt,
+            Expr::value(Value::ChronoDateTimeUtc(Some(chrono::Utc::now()))),
+        )
+        .filter(game::Column::Id.eq(game_id))
+        .filter(game::Column::UpdatedAt.eq(read_version))
+        .to_owned();
+
+    if let Some(status) = final_status {
+        update = update.col_expr(
+            game::Column::Status,
+            Expr::cust_with_values("$1::game_status", [Value::String(Some(status.to_string()))]),
+        );
+    }
+
+    let result = update.exec(txn).await?;
+    Ok(result.rows_affected)
+}
+
 #[async_trait]
 #[allow(dead_code)]
 impl GameRepoTrait for GameRepository {
