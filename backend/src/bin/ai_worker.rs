@@ -22,6 +22,7 @@ use jambo_backend::game::constants::BOT_THINKING_DELAY_MS;
 use jambo_backend::game::worker_core::process_bot_move;
 use jambo_backend::messaging::{self, AITask, RabbitMQPublishConfig, RedisClient};
 use jambo_backend::observability::metrics;
+use jambo_backend::observability::propagation;
 
 async fn metrics_handler() -> actix_web::HttpResponse {
     let encoder = TextEncoder::new();
@@ -259,7 +260,10 @@ async fn main() -> Result<()> {
                     };
                     let _game_permit = game_permit;
 
-                    let result = process_bot_move(task, db, redis, Some(rmq)).await;
+                    let parent_context =
+                        propagation::extract_context(delivery.properties.headers());
+
+                    let result = process_bot_move(task, db, redis, Some(rmq), parent_context).await;
 
                     metrics::AI_TASKS_IN_FLIGHT.dec();
                     let duration = task_start_time.elapsed();

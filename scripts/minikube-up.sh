@@ -95,6 +95,8 @@ kubectl -n jambo create secret generic jambo-secrets \
   --from-literal=DATABASE_URL="${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/jambo}" \
   --from-literal=RABBITMQ_URL="${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}" \
   --from-literal=REDIS_URL="${REDIS_URL:-redis://redis:6379}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
   # --from-literal=S3_ENDPOINT="${S3_ENDPOINT:-https://s3.amazonaws.com}" \
   # --from-literal=S3_BUCKET="${S3_BUCKET:-jambo-backups}" \
   # --from-literal=S3_PREFIX="${S3_PREFIX:-jambo/}" \
@@ -103,7 +105,6 @@ kubectl -n jambo create secret generic jambo-secrets \
   # --from-literal=S3_REGION="${S3_REGION:-us-east-1}" \
   # --from-literal=S3_INSECURE="${S3_INSECURE:-false}" \
   # --from-literal=BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}" \
-  --dry-run=client -o yaml | kubectl apply -f -
 
 # monitoring-nginx-secrets: consumed by monitoring-nginx via secretKeyRef.
 kubectl -n jambo create secret generic monitoring-nginx-secrets \

@@ -1,6 +1,7 @@
 pub mod metrics;
 pub mod metrics_init;
 pub mod middleware;
+pub mod propagation;
 pub mod ws;
 
 use uuid::Uuid;
@@ -76,4 +77,7 @@ pub fn init_tracing(service_name: &str) {
         .init();
 
     opentelemetry::global::set_tracer_provider(provider);
+    opentelemetry::global::set_text_map_propagator(
+        opentelemetry_sdk::propagation::TraceContextPropagator::new(),
+    );
 }

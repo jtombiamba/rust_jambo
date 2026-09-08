@@ -295,6 +295,7 @@ impl RabbitMQClient {
         &self,
         queue: &str,
         message: &[u8],
+        headers: FieldTable,
     ) -> Result<(), lapin::Error> {
         if !self.circuit_breaker.allow_request().await {
             warn!(
@@ -311,7 +312,7 @@ impl RabbitMQClient {
         let mut last_error = None;
 
         for attempt in 0..self.publish_config.max_retries {
-            match self.publish_internal(queue, message).await {
+            match self.publish_internal(queue, message, headers.clone()).await {
                 Ok(_) => {
                     self.circuit_breaker.record_success().await;
                     self.metrics
@@ -365,7 +366,12 @@ impl RabbitMQClient {
     /// Internal publish without retry.
     /// Uses a cached channel to avoid creating a new channel per publish,
     /// which reduces network round-trips and worker blocking.
-    async fn publish_internal(&self, queue: &str, message: &[u8]) -> Result<(), lapin::Error> {
+    async fn publish_internal(
+        &self,
+        queue: &str,
+        message: &[u8],
+        headers: FieldTable,
+    ) -> Result<(), lapin::Error> {
         let queue_name: lapin::types::ShortString = queue.into();
         let exchange: lapin::types::ShortString = "".into();
 
@@ -373,8 +379,12 @@ impl RabbitMQClient {
         let channel = {
             let mut guard = self.cached_channel.lock().await;
             match guard.as_ref() {
-                Some(ch) if ch.status().connected() => ch.clone(),
+                Some(ch) if ch.status().connected() => {
+                    info!("Reusing cached channel for queue '{}'", queue);
+                    ch.clone()
+                }
                 _ => {
+                    info!("Creating new channel for queue '{}'", queue);
                     let ch = self.connection.create_channel().await?;
                     // Declare the queue once on channel creation so it exists
                     let queue_args = if queue == AI_TASKS_QUEUE {
@@ -391,6 +401,7 @@ impl RabbitMQClient {
                     } else {
                         FieldTable::default()
                     };
+                    info!("Declaring queue '{}'", queue);
                     let _ = ch
                         .queue_declare(
                             queue_name.clone(),
@@ -402,6 +413,7 @@ impl RabbitMQClient {
                         )
                         .await?;
                     *guard = Some(ch.clone());
+                    info!("Cached channel created for queue '{}'", queue);
                     ch
                 }
             }
@@ -409,13 +421,18 @@ impl RabbitMQClient {
 
         // Publish message
         let start_time = std::time::Instant::now();
+        let properties = if headers.inner().is_empty() {
+            BasicProperties::default()
+        } else {
+            BasicProperties::default().with_headers(headers)
+        };
         let result = channel
             .basic_publish(
                 exchange,
                 queue_name,
                 BasicPublishOptions::default(),
                 message,
-                BasicProperties::default(),
+                properties,
             )
             .await;
 
@@ -428,10 +445,11 @@ impl RabbitMQClient {
     /// Publish message (with retry)
     #[allow(dead_code)]
     pub async fn publish(&self, queue: &str, message: &[u8]) -> Result<(), lapin::Error> {
-        self.publish_with_retry(queue, message).await
+        self.publish_with_retry(queue, message, FieldTable::default())
+            .await
     }
 
-    /// Publish AI task (with retry)
+    /// Publish AI task (with retry), injecting the current trace context into headers.
     pub async fn publish_ai_task(&self, task: &AITask) -> Result<(), lapin::Error> {
         let span = tracing::info_span!(
             "publish_ai_task",
@@ -440,7 +458,8 @@ impl RabbitMQClient {
             player_id = %task.player_id,
         );
         let _guard = span.enter();
-        self.publish_with_retry(AI_TASKS_QUEUE, &task.to_json_bytes())
+        let headers = crate::observability::propagation::inject_headers();
+        self.publish_with_retry(AI_TASKS_QUEUE, &task.to_json_bytes(), headers)
             .await
     }
 

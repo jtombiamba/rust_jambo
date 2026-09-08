@@ -23,7 +23,7 @@ services:
           memory: 1G
 
   rabbitmq:
-    image: rabbitmq:3-management-alpine
+    image: rabbitmq:4.3-management-alpine
     ports:
       - "5672:5672"
       - "15672:15672"
