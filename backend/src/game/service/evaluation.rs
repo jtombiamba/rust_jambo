@@ -72,6 +72,7 @@ impl GameService {
         let _guard = span.enter();
 
         // Fetch played cards for this round (via txn)
+        // TODO: find an equivalent function in repositories to avoid direct entity access here.
         let played_cards = game_card::Entity::find()
             .filter(game_card::Column::GameId.eq(game_id))
             .filter(game_card::Column::Round.eq(round))
@@ -89,6 +90,7 @@ impl GameService {
         }
 
         // Fetch players (via txn)
+        // TODO: find an equivalent function in repositories to avoid direct entity access here.
         let players = player::Entity::find()
             .filter(player::Column::GameId.eq(game_id))
             .order_by_asc(player::Column::Position)
@@ -98,6 +100,7 @@ impl GameService {
         let player_positions: Vec<Uuid> = active_players.iter().map(|p| p.id).collect();
 
         // Convert to PlayedCard structures
+        // TODO: make it a separate function extracting plays called here.
         let mut plays = Vec::new();
         for card in &played_cards {
             if let Some(player_id) = card.player_id {
@@ -156,6 +159,7 @@ impl GameService {
             round, winner_id, new_roll
         );
 
+        // TODO: consider moving the DB update logic to a repository function to avoid direct entity access here.
         let game_model = game::Entity::find_by_id(game_id)
             .one(txn)
             .await?
@@ -167,6 +171,7 @@ impl GameService {
         let mut final_status = game_model.status;
 
         if game_ends {
+            // TODO: consider moving the DB update logic to a repository function to avoid direct entity access here and also compute the final_status outside of this function in order to call it.
             if round_result.is_kora {
                 let round_4_winner_id = game_model.winner_id;
                 let round_5_winner_id = player_positions[winner_pos];
@@ -193,6 +198,7 @@ impl GameService {
             }
         }
 
+        // TODO: consider moving the DB update logic to a repository function to avoid direct entity access here.
         // Build a single UPDATE query with optimistic locking.
         //
         // We use update_many() with col_expr() + an explicit ::game_status CAST for the

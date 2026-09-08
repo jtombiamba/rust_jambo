@@ -1,6 +1,7 @@
 pub mod bot;
 pub mod bot_scheduler;
 pub mod card_mapping;
+pub mod cards;
 pub mod constants;
 pub mod distribution;
 pub mod payment;

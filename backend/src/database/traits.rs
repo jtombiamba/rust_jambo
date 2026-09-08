@@ -112,7 +112,7 @@ pub trait PlayerRepoTrait: Send + Sync {
         name: &str,
         position: i32,
         credits: i32,
-    ) -> Result<(), DbErr>;
+    ) -> Result<Player, DbErr>;
     async fn list_by_game_in_txn(
         &self,
         txn: &DatabaseTransaction,

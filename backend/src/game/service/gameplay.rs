@@ -46,7 +46,9 @@ impl GameService {
         let outcome = 'retry: loop {
             let txn = self.db.begin().await?;
 
+            // TODO: put this future in a separate function
             let body_result = async {
+                // TODO: are these fetch_and_validate functions in the card_play::validator module needed inside the transaction? should be called outside the transaction and even the function to avoid holding the transaction open for too long. make validation before entering the update_card_play function and pass the validated data to this function. Also, consider moving the validation logic to a separate module or service to keep the GameService focused on game logic.
                 let game = card_play::validator::fetch_and_validate_game(&txn, game_id).await?;
                 let read_version = game.updated_at;
                 let game_rank = game.rank.unwrap_or(0);
@@ -72,6 +74,7 @@ impl GameService {
                     return Err(GameError::InvalidCard);
                 }
 
+                // TODO: a handler should be created to handle the card play and round evaluation logic, and this function should call it. The handler should return a result that includes the new game state, the played card, and any round evaluation results. This will help to keep the GameService focused on orchestrating the game flow rather than implementing the game logic directly.
                 let card =
                     card_play::engine::mark_card_played(&txn, &target_card, game_roll).await?;
 

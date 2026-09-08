@@ -147,7 +147,7 @@ impl PlayerRepository {
         name: &str,
         position: i32,
         credits: i32,
-    ) -> Result<(), DbErr> {
+    ) -> Result<Player, DbErr> {
         let now = chrono::Utc::now();
         player::Entity::insert(player::ActiveModel {
             id: Set(player_id),
@@ -161,9 +161,21 @@ impl PlayerRepository {
             kicked: Set(false),
             kicked_at: ActiveValue::NotSet,
         })
-        .exec(txn)
+        .exec_without_returning(txn)
         .await?;
-        Ok(())
+
+        Ok(Player {
+            id: player_id,
+            game_id,
+            player_type: PlayerType::Human,
+            name: name.to_string(),
+            position,
+            credits,
+            created_at: now,
+            user_id: Some(user_id),
+            kicked: false,
+            kicked_at: None,
+        })
     }
 
     #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
@@ -255,7 +267,7 @@ impl PlayerRepoTrait for PlayerRepository {
         name: &str,
         position: i32,
         credits: i32,
-    ) -> Result<(), DbErr> {
+    ) -> Result<Player, DbErr> {
         self.create_player_for_run_in_txn(txn, player_id, game_id, user_id, name, position, credits)
             .await
     }

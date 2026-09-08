@@ -240,14 +240,25 @@ impl PlayerRepoTrait for StubPlayerRepo {
     async fn create_player_for_run_in_txn(
         &self,
         _txn: &sea_orm::DatabaseTransaction,
-        _player_id: Uuid,
-        _game_id: Uuid,
-        _user_id: Uuid,
-        _name: &str,
-        _position: i32,
-        _credits: i32,
-    ) -> Result<(), sea_orm::DbErr> {
-        Ok(())
+        player_id: Uuid,
+        game_id: Uuid,
+        user_id: Uuid,
+        name: &str,
+        position: i32,
+        credits: i32,
+    ) -> Result<crate::database::models::Player, sea_orm::DbErr> {
+        Ok(crate::database::models::Player {
+            id: player_id,
+            game_id,
+            player_type: crate::database::models::PlayerType::Human,
+            name: name.to_string(),
+            position,
+            credits,
+            created_at: chrono::Utc::now(),
+            user_id: Some(user_id),
+            kicked: false,
+            kicked_at: None,
+        })
     }
     async fn list_by_game_in_txn(
         &self,

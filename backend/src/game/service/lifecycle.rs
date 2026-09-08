@@ -10,10 +10,11 @@ use crate::database::models::{
     PlayerType,
 };
 use crate::error::GameError;
-use crate::game::constants::{CARDS_PER_PLAYER, TOTAL_CARDS};
+use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::service::types::GameCreationTimer;
 use crate::messaging::events::GameEvent;
 use crate::messaging::redis::PublishResult;
+use crate::observability::metrics;
 
 use super::GameService;
 
@@ -157,6 +158,7 @@ impl GameService {
             game_active.update(&txn).await?;
 
             txn.commit().await?;
+            metrics::ACTIVE_GAMES.dec();
 
             if let Some(ref redis) = self.redis_client {
                 let pk_event = GameEvent::PlayerKicked {
@@ -215,6 +217,7 @@ impl GameService {
             }
 
             txn.commit().await?;
+            metrics::ACTIVE_GAMES.dec();
 
             info!(
                 "Player {} kicked from game {}, {} remaining -> {} wins by forfeit",
@@ -405,14 +408,6 @@ impl GameService {
 
     pub async fn start_game(&self, game_id: Uuid, user_id: Uuid) -> Result<(), GameError> {
         let _timer = GameCreationTimer::new("quick");
-        use rand::{rng, seq::SliceRandom};
-
-        let cards: Vec<i32> = {
-            let mut cards: Vec<i32> = (0..TOTAL_CARDS as i32).collect();
-            let mut rng = rng();
-            cards.shuffle(&mut rng);
-            cards
-        };
 
         let txn = self.db.begin().await?;
 
@@ -453,29 +448,7 @@ impl GameService {
 
         let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
-        // collect all cards per player into a single Vec for bulk insert
-        let now = chrono::Utc::now();
-        let card_models: Vec<game_card::ActiveModel> = player_ids
-            .iter()
-            .enumerate()
-            .flat_map(|(i, &pid)| {
-                let start = i * CARDS_PER_PLAYER;
-                let end = start + CARDS_PER_PLAYER;
-                cards[start..end]
-                    .iter()
-                    .map(move |&card_index| game_card::ActiveModel {
-                        id: ActiveValue::Set(Uuid::now_v7()),
-                        game_id: ActiveValue::Set(game_id),
-                        player_id: ActiveValue::Set(Some(pid)),
-                        card_index: ActiveValue::Set(card_index),
-                        played: ActiveValue::Set(false),
-                        played_at: ActiveValue::NotSet,
-                        round: ActiveValue::NotSet,
-                        created_at: ActiveValue::Set(now),
-                    })
-            })
-            .collect();
-
+        let (card_models, cards) = crate::game::cards::build_game_cards(game_id, &players);
         game_card::Entity::insert_many(card_models)
             .exec(&txn)
             .await?;
@@ -483,6 +456,7 @@ impl GameService {
         let initial_rank = 0i32;
         let first_player_id = player_ids[0];
 
+        let now = chrono::Utc::now();
         let mut game_active: game::ActiveModel = game_model.into();
         game_active.status = ActiveValue::Set(GameStatus::Active);
         game_active.rank = ActiveValue::Set(Some(initial_rank));
