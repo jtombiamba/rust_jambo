@@ -5,9 +5,11 @@ use uuid::Uuid;
 use crate::database::models::{game_card, player, GameStatus};
 use crate::error::GameError;
 use crate::game::service::card_play::engine;
+use crate::game::service::card_play::handler::CardPlayHandler;
 use crate::game::service::card_play::side_effects::PostCommitContext;
 use crate::game::service::card_play::validator;
 use crate::game::service::types::RoundEvaluationResult;
+use crate::game::service::GameService;
 
 fn make_test_game(id: Uuid) -> crate::database::models::game::Model {
     crate::database::models::game::Model {
@@ -457,4 +459,82 @@ async fn test_post_commit_context_handle_no_redis() {
         correlation_id: None,
     };
     ctx.handle(&svc).await;
+}
+
+// ── CardPlayHandler tests ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_handler_execute_game_not_found() {
+    let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+        .append_query_results(vec![Vec::<crate::database::models::game::Model>::new()])
+        .into_connection();
+    let txn = db.begin().await.unwrap();
+    let svc = GameService::new(db);
+    let handler = CardPlayHandler::new(&svc);
+
+    let result = handler
+        .execute(&txn, Uuid::now_v7(), Uuid::now_v7(), 0)
+        .await;
+    assert!(matches!(result, Err(GameError::GameNotFound)));
+}
+
+#[tokio::test]
+async fn test_handler_execute_game_finished() {
+    let game_id = Uuid::now_v7();
+    let mut game = make_test_game(game_id);
+    game.status = GameStatus::Finished;
+
+    let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+        .append_query_results(vec![vec![game]])
+        .into_connection();
+    let txn = db.begin().await.unwrap();
+    let svc = GameService::new(db);
+    let handler = CardPlayHandler::new(&svc);
+
+    let result = handler.execute(&txn, game_id, Uuid::now_v7(), 0).await;
+    assert!(matches!(result, Err(GameError::GameFinished)));
+}
+
+#[tokio::test]
+async fn test_handler_execute_not_your_turn() {
+    let game_id = Uuid::now_v7();
+    let player_id = Uuid::now_v7();
+    let mut game = make_test_game(game_id);
+    game.rank = Some(1);
+
+    let players = vec![
+        make_test_player(player_id, game_id, 0),
+        make_test_player(Uuid::now_v7(), game_id, 1),
+    ];
+
+    let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+        .append_query_results(vec![vec![game]])
+        .append_query_results(vec![players])
+        .into_connection();
+    let txn = db.begin().await.unwrap();
+    let svc = GameService::new(db);
+    let handler = CardPlayHandler::new(&svc);
+
+    let result = handler.execute(&txn, game_id, player_id, 0).await;
+    assert!(matches!(result, Err(GameError::NotYourTurn)));
+}
+
+#[tokio::test]
+async fn test_handler_execute_card_not_found() {
+    let game_id = Uuid::now_v7();
+    let player_id = Uuid::now_v7();
+    let game = make_test_game(game_id);
+    let players = vec![make_test_player(player_id, game_id, 0)];
+
+    let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+        .append_query_results(vec![vec![game]])
+        .append_query_results(vec![players])
+        .append_query_results(vec![Vec::<game_card::Model>::new()])
+        .into_connection();
+    let txn = db.begin().await.unwrap();
+    let svc = GameService::new(db);
+    let handler = CardPlayHandler::new(&svc);
+
+    let result = handler.execute(&txn, game_id, player_id, 0).await;
+    assert!(matches!(result, Err(GameError::CardNotFound)));
 }

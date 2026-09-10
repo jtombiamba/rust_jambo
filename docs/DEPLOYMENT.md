@@ -38,7 +38,6 @@ flowchart LR
         PT[promtail DaemonSet]
         TEMPO[tempo]
         GRA[grafana]
-        AM[alertmanager]
         PRO[prometheus]
         MON[monitoring-nginx]
     end
@@ -56,13 +55,11 @@ flowchart LR
     PRO -->|scrape /metrics| BE
     PRO -->|scrape /metrics| AI
     PRO -->|scrape /metrics| SW
-    PRO --> AM
     GRA --> PRO
     GRA --> LOKI
     GRA --> TEMPO
     MON --> PRO
     MON --> GRA
-    MON --> AM
     PT --> LOKI
 ```
 
@@ -98,7 +95,7 @@ This script:
 
 1. Starts minikube with the `ingress` addon (4 CPUs, 8 GiB).
 2. Builds the `jambo-*:local` images directly into minikube's Docker cache.
-3. Creates the `jambo` namespace and the `prometheus-alerts` ConfigMap.
+3. Creates the `jambo` namespace and the required Secrets.
 4. Applies `k8s/overlays/local` via Kustomize.
 5. Waits for the backend rollout (migrations run on startup).
 6. Adds `jambo.local` to `/etc/hosts`.
@@ -118,10 +115,9 @@ curl http://localhost:5000/health        # -> OK
 # Backend reachable through the frontend proxy
 curl http://jambo.local/api/anonymous
 
-# Monitoring UI (Prometheus / Grafana / Alertmanager) via the ingress
+# Monitoring UI (Prometheus / Grafana) via the ingress
 curl http://monitoring.jambo.local/prometheus/
 curl http://monitoring.jambo.local/grafana/
-curl http://monitoring.jambo.local/alertmanager/
 
 # Prometheus targets
 kubectl -n jambo port-forward svc/prometheus 9090:9090
@@ -174,7 +170,7 @@ kubectl -n jambo create secret docker-registry ghcr-pull \
 
 No secret values are committed to the repository. The base manifests reference
 Secret objects by name (`jambo-secrets`, `monitoring-nginx-secrets`,
-`alertmanager-secrets`) but do **not** declare them — they are created at deploy
+`grafana-alerting-secrets`) but do **not** declare them — they are created at deploy
 time. The keys are documented in
 [`k8s/base/secret.yaml.example`](../k8s/base/secret.yaml.example).
 
@@ -198,7 +194,7 @@ kubectl -n jambo create secret generic monitoring-nginx-secrets \
   --from-literal=GRAFANA_PASSWORD='<password>' \
   --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl -n jambo create secret generic alertmanager-secrets \
+kubectl -n jambo create secret generic grafana-alerting-secrets \
   --from-literal=SLACK_CRITICAL_WEBHOOK_URL='<url>' \
   --from-literal=SLACK_WARNING_WEBHOOK_URL='<url>' \
   --from-literal=SMTP_USERNAME='<user>' \
@@ -215,24 +211,14 @@ Also update `k8s/base/configmap.yaml` for production values such as
 `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, `MAILER_MODE`/`SMTP_*` (a real SMTP
 relay instead of MailHog), and `PAYPAL_MODE`.
 
-### 3. Generate the Prometheus alerts ConfigMap
-
-```bash
-kubectl -n jambo create configmap prometheus-alerts \
-  --from-file=alerts.yml=infra/prometheus/alerts.yml \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-> Required — Prometheus refuses to start without `/etc/prometheus/alerts.yml`.
-
-### 4. Apply the GHCR overlay
+### 3. Apply the GHCR overlay
 
 ```bash
 kubectl apply -k k8s/overlays/ghcr
 kubectl -n jambo rollout status deployment/backend --timeout=300s
 ```
 
-### 5. Configure DNS / TLS
+### 4. Configure DNS / TLS
 
 The base Ingress uses host `jambo.local`. For production, add your real host(s)
 and TLS. For example, patch the Ingress:
@@ -245,11 +231,11 @@ kubectl -n jambo annotate ingress jambo-ingress \
 or edit `k8s/base/ingress.yaml` to use the production hostname and a
 `cert-manager` TLS block, then re-apply.
 
-### 6. Expose monitoring
+### 5. Expose monitoring
 
 The monitoring UI (`monitoring-nginx`) is served through the ingress on host
 `monitoring.jambo.local` (see [`k8s/base/ingress.yaml`](../k8s/base/ingress.yaml)).
-It uses HTTP basic auth for `/prometheus/` and `/alertmanager/`. In production,
+It uses HTTP basic auth for `/prometheus/`. In production,
 point the `monitoring.jambo.local` host at your real domain and add TLS via
 `cert-manager`. The basic-auth credentials come from the
 `monitoring-nginx-secrets` Secret (see section 2) — never hardcode them in the
@@ -365,7 +351,7 @@ the env vars read by [`backend/src/config.rs`](../backend/src/config.rs) and
 - **Kustomize base + overlays** — one set of manifests for local-build and
   GHCR-pull modes.
 - **Postgres as a StatefulSet** with a PVC for durable data; the stateful LGTM
-  services (Loki, Tempo, Prometheus, Alertmanager, Grafana) also use PVCs.
+  services (Loki, Tempo, Prometheus, Grafana) also use PVCs.
 - **Promtail as a DaemonSet** to tail `/var/log/containers/*.log` on every node.
 - **Readiness probes** on Postgres/RabbitMQ/Redis mirror the docker-compose
   healthchecks, preventing the backend from crash-looping while dependencies
@@ -381,8 +367,9 @@ the env vars read by [`backend/src/config.rs`](../backend/src/config.rs) and
 
 ## Gotchas
 
-- `prometheus-alerts` ConfigMap is required; always create it from
-  `infra/prometheus/alerts.yml` (the bring-up script does this automatically).
+- Alerting is handled by Grafana Alerting; alert rules, contact points, and
+  policies are provisioned from `infra/grafana/alerting/` and baked into the
+  Grafana image (no Prometheus rules ConfigMap required).
 - `monitoring-nginx` overrides the baked `nginx.conf` to drop the `/dozzle/`
   location (Dozzle is not part of this stack; nginx fails to start if an
   upstream hostname does not resolve).

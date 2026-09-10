@@ -21,9 +21,6 @@ images:
   - name: jambo-grafana
     newName: jambo-grafana
     newTag: local
-  - name: jambo-alertmanager
-    newName: jambo-alertmanager
-    newTag: local
   - name: jambo-prometheus
     newName: jambo-prometheus
     newTag: local

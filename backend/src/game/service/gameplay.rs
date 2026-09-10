@@ -3,24 +3,14 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use crate::database::repositories::game::optimistic_update_round_state;
 use crate::database::repositories::{GameRepository, PlayerRepository};
 use crate::error::GameError;
-use crate::game::service::card_play::{self, side_effects::PostCommitContext};
-use crate::game::service::types::{CardPlayResult, CardPlayTimer, RoundEvaluationResult};
-use crate::game::turn_order::next_player;
+use crate::game::service::card_play::engine;
+use crate::game::service::card_play::handler::CardPlayHandler;
+use crate::game::service::card_play::side_effects::PostCommitContext;
+use crate::game::service::types::{CardPlayResult, CardPlayTimer};
 
 use super::GameService;
-
-struct TxOutcome {
-    card: crate::database::models::game_card::Model,
-    players: Vec<crate::database::models::player::Model>,
-    round_result: Option<RoundEvaluationResult>,
-    game_roll: i32,
-    step_by_step: bool,
-    current_rank: usize,
-    active_count: usize,
-}
 
 impl GameService {
     pub async fn update_card_play(
@@ -46,91 +36,13 @@ impl GameService {
         let outcome = 'retry: loop {
             let txn = self.db.begin().await?;
 
-            // TODO: put this future in a separate function
-            let body_result = async {
-                // TODO: are these fetch_and_validate functions in the card_play::validator module needed inside the transaction? should be called outside the transaction and even the function to avoid holding the transaction open for too long. make validation before entering the update_card_play function and pass the validated data to this function. Also, consider moving the validation logic to a separate module or service to keep the GameService focused on game logic.
-                let game = card_play::validator::fetch_and_validate_game(&txn, game_id).await?;
-                let read_version = game.updated_at;
-                let game_rank = game.rank.unwrap_or(0);
-                let game_roll = game.roll;
-
-                let (players, player_position, active_count) =
-                    card_play::validator::fetch_and_validate_turn(&txn, game_id, player_id).await?;
-
-                if player_position != game_rank as usize {
-                    return Err(GameError::NotYourTurn);
-                }
-
-                let (target_card, player_cards) =
-                    card_play::validator::fetch_and_validate_card(&txn, player_id, card_index)
-                        .await?;
-
-                let valid = card_play::validator::validate_follows_suit(
-                    card_index,
-                    game.current_winning_card,
-                    &player_cards,
-                );
-                if !valid {
-                    return Err(GameError::InvalidCard);
-                }
-
-                // TODO: a handler should be created to handle the card play and round evaluation logic, and this function should call it. The handler should return a result that includes the new game state, the played card, and any round evaluation results. This will help to keep the GameService focused on orchestrating the game flow rather than implementing the game logic directly.
-                let card =
-                    card_play::engine::mark_card_played(&txn, &target_card, game_roll).await?;
-
-                let new_winning_card =
-                    card_play::engine::compute_winning_card(game.current_winning_card, card_index);
-                let new_winning_position = card_play::engine::compute_winning_position(
-                    game.current_winning_card,
-                    game.current_winning_player_position,
-                    card_index,
-                    player_position as i32,
-                );
-
-                let round_complete = self.is_round_complete_txn(&txn, game_id, game_roll).await?;
-                let mut round_result: Option<RoundEvaluationResult> = None;
-
-                if round_complete && !game.step_by_step {
-                    round_result =
-                        Some(self.evaluate_round_in_txn(&txn, game_id, game_roll).await?);
-                } else {
-                    let new_rank = if round_complete && game.step_by_step {
-                        game_rank
-                    } else {
-                        next_player(player_position, active_count) as i32
-                    };
-
-                    let rows_affected = optimistic_update_round_state(
-                        &txn,
-                        game_id,
-                        Some(new_rank),
-                        new_winning_card,
-                        new_winning_position,
-                        read_version,
-                    )
-                    .await?;
-
-                    if rows_affected == 0 {
-                        return Err(GameError::VersionConflict);
-                    }
-                }
-
-                if let Some(ref result) = round_result {
-                    if result.game_ended {
-                        self.process_payment_in_txn(&txn, game_id, result).await?;
-                    }
-                }
-
-                Ok(TxOutcome {
-                    card,
-                    players,
-                    round_result,
-                    game_roll,
-                    step_by_step: game.step_by_step,
-                    current_rank: player_position,
-                    active_count,
-                })
-            };
+            // The card-play handler reads and writes inside this transaction by
+            // design: `read_version` (game.updated_at) is the optimistic-lock
+            // guard, and the validators return state that is consumed within the
+            // same snapshot. Reading outside the transaction would break the
+            // optimistic-concurrency contract and reintroduce TOCTOU races.
+            let handler = CardPlayHandler::new(self);
+            let body_result = handler.execute(&txn, game_id, player_id, card_index);
 
             match body_result.await {
                 Ok(value) => {
@@ -160,24 +72,12 @@ impl GameService {
             .map(|r| r.game_ended)
             .unwrap_or(false);
         let round_completed = outcome.round_result.is_some();
-        let next_player_id = card_play::engine::determine_next_player_id(
+        let next_player_id = engine::determine_next_player_id(
             outcome.round_result.as_ref(),
             &outcome.players,
             outcome.current_rank,
             outcome.active_count,
         )?;
-
-        // // In step_by_step mode, when the round is complete, the DB rank is preserved
-        // // (same player starts the new round). Override next_player_id to match.
-        // if outcome.step_by_step && round_completed {
-        //     if let Some(p) = outcome
-        //         .players
-        //         .iter()
-        //         .find(|p| p.position as usize == outcome.current_rank)
-        //     {
-        //         next_player_id = p.id;
-        //     }
-        // }
 
         let post_context = PostCommitContext {
             game_id,

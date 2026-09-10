@@ -9,7 +9,7 @@ data:
   LOG_LEVEL: "info"
   RUST_LOG: "info"
   FRONTEND_URL: "http://jambo.local"
-  CORS_ALLOWED_ORIGINS: "http://jambo.local"
+  CORS_ALLOWED_ORIGINS: "http://jambo.local,https://jambo.local"
   DB_POOL_MAX_CONNECTIONS: "10"
   DB_POOL_MIN_CONNECTIONS: "1"
   DB_POOL_CONNECT_TIMEOUT_SECS: "8"

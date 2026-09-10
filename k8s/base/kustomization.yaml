@@ -19,7 +19,6 @@ resources:
   - promtail.yaml
   - tempo.yaml
   - grafana.yaml
-  - alertmanager.yaml
   - prometheus.yaml
   - monitoring-nginx.yaml
   - hpa.yaml

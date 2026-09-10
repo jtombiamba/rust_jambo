@@ -11,7 +11,7 @@ Operator (ESO). **No Ansible.**
 | **Terraform** ([`terraform/`](../terraform/)) | Provisions the cluster, node pools, `jambo-sc` StorageClass, managed Postgres/Redis (prod), DNS, platform add-ons, and ArgoCD itself (Helm + repo credential + app-of-apps seed). |
 | **Kubernetes** ([`k8s/`](../k8s/)) | Runs the SaaS workloads and observability stack. |
 | **ArgoCD** ([`argocd/`](../argocd/)) | Reconciles Git (single source of truth) with the cluster. |
-| **HCP Vault + ESO** | Provides secrets (`jambo-secrets`, `monitoring-nginx-secrets`, `alertmanager-secrets`). |
+| **HCP Vault + ESO** | Provides secrets (`jambo-secrets`, `monitoring-nginx-secrets`, `grafana-alerting-secrets`). |
 
 ## Environments & branches
 
@@ -110,5 +110,5 @@ operates by pushing to Git. Recurring cases:
 
 - Scaling `backend` beyond 1 replica requires verifying Redis Pub/Sub
   sharded-subscriber fan-out semantics (see `k8s/base/hpa.yaml`).
-- The observability stack (Prometheus/Loki/Tempo/Grafana/Alertmanager) runs
+- The observability stack (Prometheus/Loki/Tempo/Grafana) runs
   in-cluster; consider moving to managed/external offerings to reduce cost.

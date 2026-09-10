@@ -96,7 +96,7 @@ DEPLOYMENT.md).
   registry, so the `ghcr-pull` pull secret must exist in the `jambo` namespace
   (the overlay injects `imagePullSecrets`). See `docs/DEPLOYMENT.md`.
 - Secrets are not committed: the External Secrets Operator materializes
-  `jambo-secrets`, `monitoring-nginx-secrets` and `alertmanager-secrets` from
+  `jambo-secrets`, `monitoring-nginx-secrets` and `grafana-alerting-secrets` from
   HCP Vault (see `k8s/overlays/*/external-secret.yaml`).
 - RabbitMQ credentials come from the Cluster Operator's `<name>-default-user`
   Secret; populate `RABBITMQ_URL` in Vault once after first bootstrapping

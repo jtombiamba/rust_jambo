@@ -42,6 +42,54 @@ spec:
               value: "false"
             - name: GF_AUTH_BASIC_ENABLED
               value: "true"
+            - name: GF_SMTP_ENABLED
+              value: "true"
+            - name: GF_SMTP_HOST
+              value: "mailhog:1025"
+            - name: GF_SMTP_FROM_ADDRESS
+              value: "alerts@jambo.local"
+            - name: GF_SMTP_FROM_NAME
+              value: "Jambo Alerts"
+            - name: EMAIL_ONCALL
+              value: "oncall@jambo.local"
+            - name: EMAIL_TEAM
+              value: "team@jambo.local"
+            - name: SLACK_CRITICAL_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-alerting-secrets
+                  key: SLACK_CRITICAL_WEBHOOK_URL
+                  optional: true
+            - name: SLACK_CRITICAL_CHANNEL
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-alerting-secrets
+                  key: SLACK_CRITICAL_CHANNEL
+                  optional: true
+            - name: SLACK_WARNING_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-alerting-secrets
+                  key: SLACK_WARNING_WEBHOOK_URL
+                  optional: true
+            - name: SLACK_WARNING_CHANNEL
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-alerting-secrets
+                  key: SLACK_WARNING_CHANNEL
+                  optional: true
+            - name: GF_SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-alerting-secrets
+                  key: SMTP_USERNAME
+                  optional: true
+            - name: GF_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-alerting-secrets
+                  key: SMTP_PASSWORD
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /var/lib/grafana

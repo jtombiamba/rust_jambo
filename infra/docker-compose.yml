@@ -352,6 +352,7 @@ services:
     volumes:
       - ./grafana/datasources:/etc/grafana/provisioning/datasources
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/alerting:/etc/grafana/provisioning/alerting
       - grafana_data:/etc/grafana/provisioning/
     environment:
       GF_SERVER_HTTP_PORT: 3000
@@ -359,6 +360,16 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: true
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_BASIC_ENABLED: "true"
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: mailhog:1025
+      GF_SMTP_FROM_ADDRESS: alerts@jambo.local
+      GF_SMTP_FROM_NAME: "Jambo Alerts"
+      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL:-}
+      SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-#alerts-critical}
+      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL:-}
+      SLACK_WARNING_CHANNEL: ${SLACK_WARNING_CHANNEL:-#alerts-warning}
+      EMAIL_ONCALL: ${EMAIL_ONCALL:-oncall@jambo.local}
+      EMAIL_TEAM: ${EMAIL_TEAM:-team@jambo.local}
     expose:
       - "3000"
     restart: unless-stopped
@@ -366,32 +377,6 @@ services:
       - prometheus
       - loki
       - tempo
-
-  alertmanager:
-    build:
-      context: ./alertmanager
-      dockerfile: Dockerfile
-    container_name: jambo-alertmanager
-    expose:
-      - "9093"
-    volumes:
-      - alertmanager_data:/alertmanager
-    environment:
-      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL:-}
-      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL:-}
-      SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-#alerts-critical}
-      SLACK_WARNING_CHANNEL: ${SLACK_WARNING_CHANNEL:-#alerts-warning}
-      SMTP_SMARTHOST: ${SMTP_SMARTHOST:-mailhog:1025}
-      SMTP_FROM: ${SMTP_FROM:-alerts@jambo.local}
-      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-false}
-      EMAIL_ONCALL: ${EMAIL_ONCALL:-oncall@jambo.local}
-      EMAIL_TEAM: ${EMAIL_TEAM:-team@jambo.local}
-      RESOLVE_TIMEOUT: ${RESOLVE_TIMEOUT:-5m}
-      ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
-    command:
-      - "--config.file=/tmp/alertmanager.yml"
-      - "--storage.path=/alertmanager"
-    restart: unless-stopped
 
   prometheus:
     build:
@@ -401,15 +386,12 @@ services:
       - "9090"
     volumes:
       - prometheus_data:/prometheus
-      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.route-prefix=/prometheus"
       - "--web.external-url=/prometheus"
       - "--web.enable-remote-write-receiver"
-    depends_on:
-      - alertmanager
 
   monitoring-nginx:
     build:
@@ -436,4 +418,3 @@ volumes:
   tempo_data:
   tempo_generator_data:
   grafana_data:
-  alertmanager_data:

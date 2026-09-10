@@ -23,9 +23,6 @@ images:
   - name: jambo-grafana
     newName: ghcr.io/jtombiamba/rust_jambo-grafana
     newTag: latest
-  - name: jambo-alertmanager
-    newName: ghcr.io/jtombiamba/rust_jambo-alertmanager
-    newTag: latest
   - name: jambo-prometheus
     newName: ghcr.io/jtombiamba/rust_jambo-prometheus
     newTag: latest

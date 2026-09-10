@@ -28,8 +28,7 @@ k8s/
 │   ├── promtail.yaml           # DaemonSet + ConfigMap
 │   ├── tempo.yaml              # Deployment + PVC + Service
 │   ├── grafana.yaml            # Deployment + PVC + Service
-│   ├── alertmanager.yaml       # Deployment + PVC + Service
-│   ├── prometheus.yaml         # Deployment + PVC + Service (+ alerts ConfigMap)
+│   ├── prometheus.yaml         # Deployment + PVC + Service (scrape-only ConfigMap)
 │   ├── monitoring-nginx.yaml   # Deployment + Service + ConfigMap
 │   ├── hpa.yaml                # HorizontalPodAutoscalers
 │   └── pdb.yaml                # PodDisruptionBudgets
@@ -64,8 +63,8 @@ Both overlays use the exact same base manifests; only the image references
 ## Bring-up (recommended)
 
 Use the entry-point script, which starts minikube, builds/pulls images,
-creates the namespace + pull secret, generates the `prometheus-alerts`
-ConfigMap, applies the overlay, and waits for the backend:
+creates the namespace + pull secret, applies the overlay, and waits for the
+backend:
 
 ```bash
 scripts/minikube-up.sh local    # local-build mode (default)
@@ -103,16 +102,11 @@ kubectl -n jambo create secret generic monitoring-nginx-secrets \
   --from-literal=GRAFANA_PASSWORD="$(openssl rand -hex 24)" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl -n jambo create secret generic alertmanager-secrets \
+kubectl -n jambo create secret generic grafana-alerting-secrets \
   --from-literal=SLACK_CRITICAL_WEBHOOK_URL= \
   --from-literal=SLACK_WARNING_WEBHOOK_URL= \
   --from-literal=SMTP_USERNAME= \
   --from-literal=SMTP_PASSWORD= \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# Always required: generate the alerts ConfigMap from the repo file
-kubectl -n jambo create configmap prometheus-alerts \
-  --from-file=alerts.yml=infra/prometheus/alerts.yml \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl apply -k k8s/overlays/local    # or k8s/overlays/ghcr
@@ -127,7 +121,7 @@ All hosts are served through the ingress and must be added to `/etc/hosts`
 |---------|-----|
 | Application | `http://jambo.local` |
 | Backend API | `http://api.jambo.local` |
-| Monitoring UI | `http://monitoring.jambo.local` (Prometheus `/prometheus/`, Grafana `/grafana/`, Alertmanager `/alertmanager/`) |
+| Monitoring UI | `http://monitoring.jambo.local` (Prometheus `/prometheus/`, Grafana `/grafana/`) |
 | Backend health | `kubectl -n jambo port-forward svc/backend 5000:5000` → `http://localhost:5000/health` |
 | MailHog | `minikube service mailhog -n jambo` |
 
@@ -135,7 +129,7 @@ All hosts are served through the ingress and must be added to `/etc/hosts`
 
 No secret values are committed to the repository. The base manifests reference
 Secret objects by name (`jambo-secrets`, `monitoring-nginx-secrets`,
-`alertmanager-secrets`) but do **not** declare them — they are created at deploy
+`grafana-alerting-secrets`) but do **not** declare them — they are created at deploy
 time by [`scripts/minikube-up.sh`](../scripts/minikube-up.sh) from the
 gitignored `.env` file. Missing keys are generated with random values for local
 dev so the stack works out of the box.
@@ -152,11 +146,9 @@ The keys are documented in [`k8s/base/secret.yaml.example`](base/secret.yaml.exa
 
 ## Notes
 
-- The `prometheus-alerts` ConfigMap is **not** declared in the base
-  kustomization; it is generated imperatively from
-  [`infra/prometheus/alerts.yml`](../infra/prometheus/alerts.yml) because the
-  file is too large to inline. Prometheus refuses to start without it — always
-  use the script (or run the `kubectl create configmap` step above).
+- Alert rules, contact points, and notification policies live in Grafana's
+  provisioning directory (`infra/grafana/alerting/`) and are baked into the
+  Grafana image — no separate Prometheus rules ConfigMap is needed.
 - The `ghcr` overlay injects `imagePullSecrets: ghcr-pull` into every
   Deployment and the Promtail DaemonSet (the repository is private).
 - Image pull policy is deliberately left unset: `local` images default to

@@ -1,0 +1,51 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: jambo-ai-worker
+    folder: Jambo Alerts
+    interval: 30s
+    rules:
+      - uid: ai-worker-high-cpu
+        title: AIWorkerHighCPU
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'avg by (instance) (rate(process_cpu_seconds_total{job="jambo-ai-worker"}[1m])) > 0.8'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: AI Worker CPU > 80% for 5 minutes
+          description: AI Worker instance {{ $labels.instance }} CPU above 80%. Scale AI worker replicas.
+
+      - uid: ai-worker-task-errors
+        title: AIWorkerTaskErrors
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(bot_errors_total{job="jambo-ai-worker"}[5m]) / (rate(bot_move_duration_seconds_count{job="jambo-ai-worker"}[5m]) + 1) > 0.1'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: AI Worker error rate > 10%
+          description: AI Worker error rate exceeds 10%. Investigate bot move processing.

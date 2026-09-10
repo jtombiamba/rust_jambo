@@ -21,9 +21,6 @@ images:
   - name: jambo-grafana
     newName: ghcr.io/jtombiamba/rust_jambo-grafana
     newTag: latest
-  - name: jambo-alertmanager
-    newName: ghcr.io/jtombiamba/rust_jambo-alertmanager
-    newTag: latest
   - name: jambo-prometheus
     newName: ghcr.io/jtombiamba/rust_jambo-prometheus
     newTag: latest
@@ -32,7 +29,7 @@ images:
     newTag: latest
 patches:
   # Add the GHCR pull secret to every Deployment (backend, frontend,
-  # ai-worker, scheduler-worker, loki, tempo, grafana, alertmanager,
+  # ai-worker, scheduler-worker, loki, tempo, grafana,
   # prometheus, monitoring-nginx). `target` without a name matches all
   # resources of that kind.
   - target:

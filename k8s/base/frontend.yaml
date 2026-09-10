@@ -20,7 +20,9 @@ spec:
             - containerPort: 80
           env:
             - name: VITE_API_BASE_URL
-              value: "http://api.jambo.local"
+              # Scheme-relative: inherits the page's protocol (http or https) so
+              # the browser never blocks the API call as mixed content.
+              value: "//api.jambo.local"
           readinessProbe:
             httpGet:
               path: /

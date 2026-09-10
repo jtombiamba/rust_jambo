@@ -39,7 +39,6 @@ if [ "$MODE" = "local" ]; then
   docker build -t jambo-promtail:local          -f infra/promtail/Dockerfile     infra/promtail
   docker build -t jambo-tempo:local             -f infra/tempo/Dockerfile        infra/tempo
   docker build -t jambo-grafana:local           -f infra/grafana/Dockerfile      infra/grafana
-  docker build -t jambo-alertmanager:local      -f infra/alertmanager/Dockerfile infra/alertmanager
   docker build -t jambo-prometheus:local        -f infra/prometheus/Dockerfile   infra/prometheus
   docker build -t jambo-monitoring-nginx:local  -f infra/nginx/Dockerfile        infra/nginx
   OVERLAY=local
@@ -70,7 +69,7 @@ fi
 #    To provide real values, copy k8s/base/secret.yaml.example to .env and fill
 #    them in before running this script.
 if [ -f .env ]; then
-  set -a; . ./.env; set +a
+  set -a; . .env; set +a
 fi
 
 # Read a value from the environment, or generate a random one for local dev.
@@ -114,30 +113,28 @@ kubectl -n jambo create secret generic monitoring-nginx-secrets \
   --from-literal=GRAFANA_PASSWORD="$(get_secret GRAFANA_PASSWORD)" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# alertmanager-secrets: consumed by alertmanager via secretKeyRef.
-kubectl -n jambo create secret generic alertmanager-secrets \
+# grafana-alerting-secrets: consumed by grafana via secretKeyRef.
+# NOTE: Grafana 13 requires a non-empty `recipient` for Slack contact points
+# (the channel name or ID), even when using an incoming-webhook URL.
+kubectl -n jambo create secret generic grafana-alerting-secrets \
   --from-literal=SLACK_CRITICAL_WEBHOOK_URL="${SLACK_CRITICAL_WEBHOOK_URL:-}" \
+  --from-literal=SLACK_CRITICAL_CHANNEL="${SLACK_CRITICAL_CHANNEL:-#alerts-critical}" \
   --from-literal=SLACK_WARNING_WEBHOOK_URL="${SLACK_WARNING_WEBHOOK_URL:-}" \
+  --from-literal=SLACK_WARNING_CHANNEL="${SLACK_WARNING_CHANNEL:-#alerts-warning}" \
   --from-literal=SMTP_USERNAME="${SMTP_USERNAME:-}" \
   --from-literal=SMTP_PASSWORD="${SMTP_PASSWORD:-}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# 5. Create the prometheus-alerts ConfigMap from the repo file (prometheus
-#    refuses to start without /etc/prometheus/alerts.yml).
-kubectl -n jambo create configmap prometheus-alerts \
-  --from-file=alerts.yml=infra/prometheus/alerts.yml \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# 6. Apply manifests via Kustomize
+# 5. Apply manifests via Kustomize
 kubectl apply -k "k8s/overlays/$OVERLAY"
 
-# 7. Wait for backend to become ready (migrations run on startup)
+# 6. Wait for backend to become ready (migrations run on startup)
 kubectl -n jambo rollout status deployment/backend --timeout=300s
 
-# 8. Add /etc/hosts entries for jambo.local, jambo.api.localhost and
+# 7. Add /etc/hosts entries for jambo.local, jambo.api.localhost and
 #    monitoring.jambo.local (all served through the ingress).
 grep -q "jambo.local" /etc/hosts || echo "127.0.0.1 jambo.local api.jambo.local monitoring.jambo.local" | sudo tee -a /etc/hosts
 
 echo "Done. Open http://jambo.local"
 echo "Backend health:  kubectl -n jambo port-forward svc/backend 5000:5000   # then curl http://localhost:5000/health"
-echo "Monitoring UI:   http://monitoring.jambo.local  (Prometheus /prometheus/, Grafana /grafana/, Alertmanager /alertmanager/)"
+echo "Monitoring UI:   http://monitoring.jambo.local  (Prometheus /prometheus/, Grafana /grafana/)"
