@@ -363,10 +363,7 @@ jobs:
           echo "pusher: $(jq -r '.pusher.name' payload.json)"
 
           curl -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
-            -H "Content-Type: application/json" \
-            -H "X-GitHub-Event: push" \
-            -H "X-Coolify-Token: ${{ secrets.COOLIFY_WEBHOOK_SECRET }}" \
-            --data-binary @payload.json
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_DEPLOY_TOKEN }}"
 
       # prod -> GitOps: pin the prod overlay images to the immutable sha tag and
       # push. ArgoCD detects the change and auto-syncs the cluster.
