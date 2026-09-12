@@ -364,6 +364,7 @@ jobs:
 
           curl -X POST "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
+            -H "X-GitHub-Event: push" \
             -H "X-Coolify-Token: ${{ secrets.COOLIFY_WEBHOOK_SECRET }}" \
             --data-binary @payload.json
 
