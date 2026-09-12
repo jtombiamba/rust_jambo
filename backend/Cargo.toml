@@ -87,7 +87,7 @@ required-features = ["load-tests"]
 [dev-dependencies]
 actix-rt = "2.9"
 sea-orm = { version = "2.0.0", features = ["mock"] }
-serial_test = "3"
+serial_test = "4"
 
 [profile.dev]
 opt-level = 0
