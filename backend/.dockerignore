@@ -1,0 +1,9 @@
+target
+debug
+tests
+migrations
+.git
+.gitignore
+.env
+.env.*
+*.rs.bk

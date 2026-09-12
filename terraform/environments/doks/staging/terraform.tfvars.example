@@ -1,0 +1,13 @@
+do_token           = "set-via-env-or-tfvars"
+cluster_name       = "jambo-staging"
+region             = "fra1"
+kubernetes_version = "1.30.2-do.0"
+node_size          = "s-2vcpu-4gb"
+min_nodes          = 1
+max_nodes          = 3
+domain             = "jambo.app"
+cert_manager_email = "ops@jambo.app"
+external_dns_enabled = true
+
+argocd_repo_username = "github-user"
+# argocd_repo_password = "set-via-env-or-CI-secret"

@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-worker
+  namespace: jambo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-worker
+  template:
+    metadata:
+      labels:
+        app: ai-worker
+    spec:
+      containers:
+        - name: ai-worker
+          image: jambo-backend:local
+          args: ["ai-worker"]
+          ports:
+            - containerPort: 7000
+          envFrom:
+            - configMapRef:
+                name: jambo-config
+            - secretRef:
+                name: jambo-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-worker
+  namespace: jambo
+spec:
+  selector:
+    app: ai-worker
+  ports:
+    - port: 7000
+      targetPort: 7000

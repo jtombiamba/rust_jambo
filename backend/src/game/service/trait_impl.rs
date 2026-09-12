@@ -34,7 +34,7 @@ impl GamePlayService for GameService {
             .map(|k| format!("idem:{}:{}", player_id, k));
 
         let mut idem_guard =
-            if let (Some(ref idem_key), Some(redis)) = (&idem_redis_key, self.redis_client()) {
+            if let (Some(idem_key), Some(redis)) = (&idem_redis_key, self.redis_client()) {
                 let mut guard = IdempotencyGuard::new(redis, idem_key.clone());
                 match guard.acquire::<PlayCardOutcome>().await? {
                     Some(cached) => return Ok(cached),
@@ -132,7 +132,7 @@ impl GamePlayService for GameService {
             .map(|k| format!("idem:eval:{}:{}", game_id, k));
 
         let mut idem_guard =
-            if let (Some(ref idem_key), Some(redis)) = (&idem_redis_key, self.redis_client()) {
+            if let (Some(idem_key), Some(redis)) = (&idem_redis_key, self.redis_client()) {
                 let mut guard = IdempotencyGuard::new(redis, idem_key.clone());
                 match guard.acquire::<EvaluateRoundOutcome>().await? {
                     Some(cached) => return Ok(cached),

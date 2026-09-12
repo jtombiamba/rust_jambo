@@ -12,6 +12,7 @@ repos:
         name: Ensure files end with a newline
       - id: check-yaml
         name: Check YAML syntax
+        args: ["--allow-multiple-documents"]
         exclude: ^infra/
       - id: check-added-large-files
         name: Check for large files
@@ -48,6 +49,17 @@ repos:
           - "warnings"
         files: ^backend/
         verbose: true
+
+  # # ── Backend: Semgrep ────────────────────────────────────────
+  # - repo: https://github.com/semgrep/pre-commit
+  #   rev: 'v1.172.0'
+  #   hooks:
+  #     - id: semgrep
+  #       entry: semgrep
+  #       # Replace <SEMGREP_RULESET_URL> with your custom rule source
+  #       # or see https://semgrep.dev/explore to select a ruleset and copy its URL
+  #       args: ['--config', '<SEMGREP_RULESET_URL>', '--error', '--skip-unknown-extensions']
+
 
   # ── Frontend: TypeScript / React (local hooks) ────────────────────
   - repo: local

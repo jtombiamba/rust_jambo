@@ -240,14 +240,25 @@ impl PlayerRepoTrait for StubPlayerRepo {
     async fn create_player_for_run_in_txn(
         &self,
         _txn: &sea_orm::DatabaseTransaction,
-        _player_id: Uuid,
-        _game_id: Uuid,
-        _user_id: Uuid,
-        _name: &str,
-        _position: i32,
-        _credits: i32,
-    ) -> Result<(), sea_orm::DbErr> {
-        Ok(())
+        player_id: Uuid,
+        game_id: Uuid,
+        user_id: Uuid,
+        name: &str,
+        position: i32,
+        credits: i32,
+    ) -> Result<crate::database::models::Player, sea_orm::DbErr> {
+        Ok(crate::database::models::Player {
+            id: player_id,
+            game_id,
+            player_type: crate::database::models::PlayerType::Human,
+            name: name.to_string(),
+            position,
+            credits,
+            created_at: chrono::Utc::now(),
+            user_id: Some(user_id),
+            kicked: false,
+            kicked_at: None,
+        })
     }
     async fn list_by_game_in_txn(
         &self,
@@ -326,6 +337,17 @@ impl PlayerProfileRepoTrait for StubProfileRepo {
         _kora_wins_delta: i32,
     ) -> Result<PlayerProfile, sea_orm::DbErr> {
         Err(sea_orm::DbErr::Custom("stub".into()))
+    }
+    async fn apply_game_settlement_in_txn(
+        &self,
+        _txn: &sea_orm::DatabaseTransaction,
+        _user_id: Uuid,
+        _delta: i32,
+        _won: bool,
+        _is_kora: bool,
+        _freeze_duration_secs: u64,
+    ) -> Result<Option<i32>, sea_orm::DbErr> {
+        Ok(None)
     }
 }
 

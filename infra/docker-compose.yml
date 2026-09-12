@@ -18,7 +18,7 @@ services:
       retries: 5
 
   rabbitmq:
-    image: rabbitmq:3-management-alpine
+    image: rabbitmq:4.3-management-alpine
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -43,7 +43,7 @@ services:
       retries: 5
 
   mailhog:
-    image: mailhog/mailhog:latest
+    image: mailhog/mailhog:v1.0.1
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -107,8 +107,9 @@ services:
       SMTP_FROM_EMAIL: noreply@fapfap.local
       SMTP_FROM_NAME: "FapFap Game"
       FREEZE_DURATION_SECS: 1800  # 86400
-      PAYPAL_CLIENT_ID: "AQ2JP_GOYN9CvyrMMZBDdgmcekmOCU5nN_AsBZ9DcPmV7p6fpS38XDQ5nltjy6QAo8e2AFRDIS-EfZOS"
-      PAYPAL_CLIENT_SECRET: "EH3PT62FDJ0RIWIHU6CIUNdJFtmm8If9QYyxICy7yYyY9ccT7TGi8W97H2tradvjPfAU3Oh8DTXTIw00"
+      # PayPal credentials come from the gitignored .env file (see .env.example).
+      PAYPAL_CLIENT_ID: "${PAYPAL_CLIENT_ID:-}"
+      PAYPAL_CLIENT_SECRET: "${PAYPAL_CLIENT_SECRET:-}"
       PAYPAL_MODE: sandbox
       PAYPAL_UNFREEZE_AMOUNT_EUR: "1.00"
       PAYPAL_TOPUP_AMOUNT_EUR: "1.00"
@@ -120,6 +121,10 @@ services:
       - "5000:5000"
     volumes:
       - ../backend/migration:/app/migration:ro
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "curl --fail http://localhost:5000/health || exit 1"]
       interval: 10s
@@ -138,6 +143,12 @@ services:
     environment:
       - VITE_API_BASE_URL=http://localhost:5000
       - DEV=true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
 
   ai-worker:
     build:
@@ -194,6 +205,10 @@ services:
     restart: unless-stopped
     volumes:
       - ../backend/migration:/app/migration:ro
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 10s
@@ -242,14 +257,45 @@ services:
     expose:
       - "6000"
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6000/metrics"]
       interval: 30s
       timeout: 5s
       retries: 3
 
+  # # ── DB Backup ────────────────────────────────────────────────
+  # # Dumps the postgres database daily and uploads it to an S3-compatible
+  # # store. See scripts/db-backup.sh for the full list of env vars.
+  # backup:
+  #   build:
+  #     context: ..
+  #     dockerfile: infra/backup/Dockerfile
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+  #     S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.amazonaws.com}
+  #     S3_BUCKET: ${S3_BUCKET:-jambo-backups}
+  #     S3_PREFIX: ${S3_PREFIX:-jambo/}
+  #     S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+  #     S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+  #     S3_REGION: ${S3_REGION:-us-east-1}
+  #     S3_INSECURE: ${S3_INSECURE:-false}
+  #     BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+  #     BACKUP_CRON_SCHEDULE: ${BACKUP_CRON_SCHEDULE:-0 2 * * *}
+  #   restart: unless-stopped
+  #   security_opt:
+  #     - "no-new-privileges:true"
+  #   cap_drop:
+  #     - ALL
+
   dozzle:
-    image: amir20/dozzle:latest
+    image: amir20/dozzle:v10.7.3
     environment:
       DOZZLE_BASE: /dozzle
       DOZZLE_ENABLE_ACTIONS: "false"
@@ -306,6 +352,7 @@ services:
     volumes:
       - ./grafana/datasources:/etc/grafana/provisioning/datasources
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/alerting:/etc/grafana/provisioning/alerting
       - grafana_data:/etc/grafana/provisioning/
     environment:
       GF_SERVER_HTTP_PORT: 3000
@@ -313,6 +360,16 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: true
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_BASIC_ENABLED: "true"
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: mailhog:1025
+      GF_SMTP_FROM_ADDRESS: alerts@jambo.local
+      GF_SMTP_FROM_NAME: "Jambo Alerts"
+      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL:-}
+      SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-#alerts-critical}
+      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL:-}
+      SLACK_WARNING_CHANNEL: ${SLACK_WARNING_CHANNEL:-#alerts-warning}
+      EMAIL_ONCALL: ${EMAIL_ONCALL:-oncall@jambo.local}
+      EMAIL_TEAM: ${EMAIL_TEAM:-team@jambo.local}
     expose:
       - "3000"
     restart: unless-stopped
@@ -320,32 +377,6 @@ services:
       - prometheus
       - loki
       - tempo
-
-  alertmanager:
-    build:
-      context: ./alertmanager
-      dockerfile: Dockerfile
-    container_name: jambo-alertmanager
-    expose:
-      - "9093"
-    volumes:
-      - alertmanager_data:/alertmanager
-    environment:
-      SLACK_CRITICAL_WEBHOOK_URL: ${SLACK_CRITICAL_WEBHOOK_URL}
-      SLACK_WARNING_WEBHOOK_URL: ${SLACK_WARNING_WEBHOOK_URL}
-      SLACK_CRITICAL_CHANNEL: ${SLACK_CRITICAL_CHANNEL:-#alerts-critical}
-      SLACK_WARNING_CHANNEL: ${SLACK_WARNING_CHANNEL:-#alerts-warning}
-      SMTP_SMARTHOST: ${SMTP_SMARTHOST:-mailhog:1025}
-      SMTP_FROM: ${SMTP_FROM:-alerts@jambo.local}
-      SMTP_REQUIRE_TLS: ${SMTP_REQUIRE_TLS:-false}
-      EMAIL_ONCALL: ${EMAIL_ONCALL:-oncall@jambo.local}
-      EMAIL_TEAM: ${EMAIL_TEAM:-team@jambo.local}
-      RESOLVE_TIMEOUT: ${RESOLVE_TIMEOUT:-5m}
-      ALERTMANAGER_URL: ${ALERTMANAGER_URL:-http://localhost:9093}
-    command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--storage.path=/alertmanager"
-    restart: unless-stopped
 
   prometheus:
     build:
@@ -355,15 +386,12 @@ services:
       - "9090"
     volumes:
       - prometheus_data:/prometheus
-      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.route-prefix=/prometheus"
       - "--web.external-url=/prometheus"
       - "--web.enable-remote-write-receiver"
-    depends_on:
-      - alertmanager
 
   monitoring-nginx:
     build:
@@ -390,4 +418,3 @@ volumes:
   tempo_data:
   tempo_generator_data:
   grafana_data:
-  alertmanager_data:

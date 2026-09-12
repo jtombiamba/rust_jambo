@@ -1,0 +1,24 @@
+# RabbitMQ Cluster Operator (rabbitmq/cluster-operator) — installed by the
+# Terraform `platform` module. This CR replaces the plain `rabbitmq.yaml`
+# Deployment for staging/prod: HA replicas, persistent storage, and a
+# non-`guest` default user generated into the `<name>-default-user` Secret.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: rabbitmq
+  namespace: jambo
+spec:
+  replicas: 2
+  image: rabbitmq:4.3-management-alpine
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  persistence:
+    storageClassName: jambo-sc
+    storage: 5Gi
+  service:
+    type: ClusterIP

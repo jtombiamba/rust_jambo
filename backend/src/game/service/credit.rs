@@ -1,4 +1,5 @@
 use crate::database::models::player_profile;
+use crate::error::GameError;
 
 pub(crate) struct CreditCalculator {
     freeze_duration_secs: u64,
@@ -45,6 +46,18 @@ impl CreditCalculator {
             final_credit,
             frozen_until,
         }
+    }
+}
+
+/// Interpret the rows-affected count of the optimistic credit update.
+///
+/// A zero row count means the profile's credit changed concurrently since it
+/// was read (optimistic-lock conflict).
+pub(crate) fn credit_update_result(rows_affected: u64) -> Result<(), GameError> {
+    if rows_affected == 0 {
+        Err(GameError::VersionConflict)
+    } else {
+        Ok(())
     }
 }
 
@@ -128,5 +141,19 @@ mod tests {
         let result = calc.compute_joining_credit(&profile, 100, Utc::now());
         assert_eq!(result.final_credit, 400);
         assert!(result.frozen_until.is_none());
+    }
+
+    #[test]
+    fn test_credit_update_result_ok() {
+        assert!(credit_update_result(1).is_ok());
+        assert!(credit_update_result(42).is_ok());
+    }
+
+    #[test]
+    fn test_credit_update_result_conflict() {
+        assert!(matches!(
+            credit_update_result(0),
+            Err(GameError::VersionConflict)
+        ));
     }
 }

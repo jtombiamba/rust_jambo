@@ -1,6 +1,8 @@
 use anyhow::Result;
+use opentelemetry::Context;
 use sea_orm::DatabaseConnection;
 use tracing::{debug, error, info, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use uuid::Uuid;
 
 use crate::database::models::PlayerType;
@@ -17,6 +19,7 @@ pub async fn process_bot_move(
     db_connection: DatabaseConnection,
     redis_client: Option<RedisClient>,
     rabbitmq_client: Option<RabbitMQClient>,
+    parent_context: Context,
 ) -> Result<()> {
     let game_id = task.game_id;
     let player_id = task.player_id;
@@ -28,6 +31,8 @@ pub async fn process_bot_move(
         game_id = %game_id,
         player_id = %player_id,
     );
+    // Link this span into the producer's trace (distributed context from the message headers).
+    let _ = span.set_parent(parent_context);
     let _guard = span.enter();
 
     info!(

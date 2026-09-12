@@ -1,0 +1,47 @@
+# Generates one ArgoCD Application per environment, pointing at the
+# Kustomize overlay under k8s/overlays/<env>.
+#
+#   staging -> tracks `main`, in-cluster Postgres/Redis + RabbitMQ Cluster Operator
+#   prod    -> tracks `prod`, managed Postgres/Redis + RabbitMQ Cluster Operator
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: jambo
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - list:
+        elements:
+          - environment: staging
+            targetRevision: main
+            path: k8s/overlays/staging
+          - environment: prod
+            targetRevision: prod
+            path: k8s/overlays/prod
+  template:
+    metadata:
+      name: "jambo-{{.environment}}"
+      namespace: argocd
+    spec:
+      project: jambo
+      source:
+        repoURL: https://github.com/jtombiamba/rust_jambo.git
+        targetRevision: "{{.targetRevision}}"
+        path: "{{.path}}"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: jambo
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m

@@ -1,0 +1,108 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+  namespace: jambo
+  labels:
+    app: db-backup
+spec:
+  # Daily at 02:00 (UTC). Adjust as needed.
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: db-backup
+              # Same postgres image family as the database, so pg_dump version
+              # matches the server. mc (MinIO client) is installed at runtime.
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  apk add --no-cache curl >/dev/null 2>&1
+                  curl -sSLo /usr/local/bin/mc \
+                    https://dl.min.io/client/mc/release/linux-amd64/mc
+                  chmod +x /usr/local/bin/mc
+                  chmod +x /scripts/db-backup.sh
+                  exec /scripts/db-backup.sh
+              envFrom:
+                - configMapRef:
+                    name: jambo-config
+                - secretRef:
+                    name: jambo-secrets
+              env:
+                # The script reads DATABASE_URL from jambo-config, but we pin
+                # the S3 settings explicitly here (S3 credentials come from
+                # jambo-secrets via envFrom).
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: S3_ENDPOINT
+                      optional: true
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: S3_BUCKET
+                      optional: true
+                - name: S3_PREFIX
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: S3_PREFIX
+                      optional: true
+                - name: S3_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: S3_ACCESS_KEY
+                      optional: true
+                - name: S3_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: S3_SECRET_KEY
+                      optional: true
+                - name: S3_REGION
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: S3_REGION
+                      optional: true
+                - name: S3_INSECURE
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: S3_INSECURE
+                      optional: true
+                - name: BACKUP_RETENTION_DAYS
+                  valueFrom:
+                    secretKeyRef:
+                      name: jambo-secrets
+                      key: BACKUP_RETENTION_DAYS
+                      optional: true
+              volumeMounts:
+                - name: db-backup-script
+                  mountPath: /scripts
+                  readOnly: true
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+          volumes:
+            - name: db-backup-script
+              configMap:
+                name: db-backup-script
+                defaultMode: 0755

@@ -1,0 +1,52 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: critical
+    receivers:
+      - uid: critical-slack
+        type: slack
+        settings:
+          url: ${SLACK_CRITICAL_WEBHOOK_URL}
+          recipient: ${SLACK_CRITICAL_CHANNEL}
+          title: '[CRITICAL] {{ .GroupLabels.alertname }}'
+          text: |-
+            {{ range .Alerts }}
+            *{{ .Labels.alertname }}* — {{ .Annotations.summary }}
+            {{ .Annotations.description }}
+            *Instance:* {{ .Labels.instance }}
+            {{ end }}
+      - uid: critical-email
+        type: email
+        settings:
+          addresses: ${EMAIL_ONCALL}
+          subject: '[CRITICAL] {{ .GroupLabels.alertname }} — Jambo Game'
+
+  - orgId: 1
+    name: warning
+    receivers:
+      - uid: warning-slack
+        type: slack
+        settings:
+          url: ${SLACK_WARNING_WEBHOOK_URL}
+          recipient: ${SLACK_WARNING_CHANNEL}
+          title: '[WARNING] {{ .GroupLabels.alertname }}'
+          text: |-
+            {{ range .Alerts }}
+            *{{ .Labels.alertname }}* — {{ .Annotations.summary }}
+            {{ .Annotations.description }}
+            *Instance:* {{ .Labels.instance }}
+            {{ end }}
+      - uid: warning-email
+        type: email
+        settings:
+          addresses: ${EMAIL_TEAM}
+          subject: '[WARNING] {{ .GroupLabels.alertname }} — Jambo Game'
+
+  - orgId: 1
+    name: noop
+    receivers:
+      - uid: noop-webhook
+        type: webhook
+        settings:
+          url: http://localhost:1

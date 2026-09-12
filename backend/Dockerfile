@@ -1,7 +1,7 @@
 # Build stage
 FROM rust:1.94-bookworm AS builder
 WORKDIR /usr/src/app
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY templates ./templates
@@ -14,9 +14,22 @@ RUN cargo build --release \
 
 # Runtime stage
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y libssl3 ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r jambo && useradd -r -g jambo -s /sbin/nologin jambo
+# Explicit non-colliding UID/GID (10001 is used by tempo, 472 by grafana,
+# 65534 by prometheus/alertmanager "nobody", 101 by nginx).
+ARG USER_ID=10002
+ARG GROUP_ID=10002
+ARG IMAGE_SOURCE
+ARG IMAGE_REVISION
+
+# curl is kept in the runtime image because the compose healthchecks rely on
+# `curl --fail http://localhost:<port>/...` (backend, scheduler-worker).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r -g "${GROUP_ID}" jambo \
+    && useradd -r -u "${USER_ID}" -g jambo -s /sbin/nologin jambo
 
 WORKDIR /app
 
@@ -28,8 +41,12 @@ COPY --from=builder --chown=jambo:jambo /usr/src/app/migration ./migration
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-ENV RUST_LOG=${RUST_LOG}
 EXPOSE 5000
+
+LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}"
+
+STOPSIGNAL SIGTERM
 
 USER jambo
 ENTRYPOINT ["docker-entrypoint.sh"]

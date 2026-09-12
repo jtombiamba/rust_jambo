@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduler-worker
+  namespace: jambo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scheduler-worker
+  template:
+    metadata:
+      labels:
+        app: scheduler-worker
+    spec:
+      containers:
+        - name: scheduler-worker
+          image: jambo-backend:local
+          args: ["scheduler-worker"]
+          ports:
+            - containerPort: 6000
+          envFrom:
+            - configMapRef:
+                name: jambo-config
+            - secretRef:
+                name: jambo-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scheduler-worker
+  namespace: jambo
+spec:
+  selector:
+    app: scheduler-worker
+  ports:
+    - port: 6000
+      targetPort: 6000

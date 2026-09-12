@@ -1,0 +1,16 @@
+do_token           = "set-via-env-or-tfvars"
+cluster_name       = "jambo-prod"
+region             = "fra1"
+kubernetes_version = "1.30.2-do.0"
+node_size          = "s-2vcpu-8gb"
+min_nodes          = 2
+max_nodes          = 6
+domain             = "tombislab.com"
+cert_manager_email = "noreply.tombislab@gmail.com"
+postgres_size      = "db-s-2vcpu-4gb"
+postgres_version   = "16"
+redis_size         = "db-s-1vcpu-1gb"
+redis_version      = "7"
+
+argocd_repo_username = "github-user"
+# argocd_repo_password = "set-via-env-or-CI-secret"

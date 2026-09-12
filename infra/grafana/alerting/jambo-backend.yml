@@ -1,0 +1,557 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: jambo-backend
+    folder: Jambo Alerts
+    interval: 30s
+    rules:
+      - uid: backend-high-cpu
+        title: BackendHighCPU
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'avg by (instance) (rate(process_cpu_seconds_total{job="jambo-backend"}[1m])) > 0.8'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: Backend CPU > 80% for 5 minutes
+          description: Backend instance {{ $labels.instance }} CPU above 80% for 5 minutes. Scale up CPU or add replicas.
+
+      - uid: backend-warning-cpu
+        title: BackendWarningCPU
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'avg by (instance) (rate(process_cpu_seconds_total{job="jambo-backend"}[1m])) > 0.6'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Backend CPU > 60% for 10 minutes
+          description: Backend instance {{ $labels.instance }} CPU trending up. Prepare scaling.
+
+      - uid: ws-connections-critical
+        title: WSConnectionsCritical
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'ws_connections_active > 4000'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: WebSocket connections > 4,000
+          description: Active WebSocket connections on {{ $labels.instance }} exceed 4,000. Add a backend replica.
+
+      - uid: ws-connections-warning
+        title: WSConnectionsWarning
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'ws_connections_active > 3000'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: WebSocket connections > 3,000
+          description: Active WebSocket connections on {{ $labels.instance }} exceed 3,000. Plan replica addition.
+
+      - uid: ws-heartbeat-timeouts
+        title: WSHeartbeatTimeouts
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(ws_heartbeat_timeouts_total[1m]) > 0.05 * ws_connections_active'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: WS heartbeat timeouts > 5% of connections
+          description: Heartbeat timeout rate is above 5% of active connections. Investigate network or scale.
+
+      - uid: db-pool-backend-critical
+        title: DBPoolBackendCritical
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'db_pool_active{process="backend"} / db_pool_size{process="backend"} > 0.8'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: Backend DB pool > 80% utilized
+          description: Backend DB pool over 80% utilized on {{ $labels.instance }}. Increase pool or add a DB replica.
+
+      - uid: db-pool-backend-warning
+        title: DBPoolBackendWarning
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'db_pool_active{process="backend"} / db_pool_size{process="backend"} > 0.6'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Backend DB pool > 60% utilized
+          description: Backend DB pool over 60% utilized. Review connection usage.
+
+      - uid: db-pool-ai-worker-critical
+        title: DBPoolAIWorkerCritical
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'db_pool_active{process="ai_worker"} / db_pool_size{process="ai_worker"} > 0.8'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: AI Worker DB pool > 80% utilized
+          description: AI Worker DB pool over 80% utilized. Increase pool or add a DB replica.
+
+      - uid: rabbitmq-queue-depth-critical
+        title: RabbitMQQueueDepthCritical
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rabbitmq_queue_length{queue="ai_tasks"} > 1000'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: AI tasks queue depth > 1,000
+          description: RabbitMQ ai_tasks queue depth exceeds 1,000. Scale AI worker replicas immediately.
+
+      - uid: rabbitmq-queue-depth-warning
+        title: RabbitMQQueueDepthWarning
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rabbitmq_queue_length{queue="ai_tasks"} > 500'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: AI tasks queue depth > 500
+          description: RabbitMQ ai_tasks queue depth exceeds 500. Investigate AI worker capacity.
+
+      - uid: rabbitmq-circuit-breaker-open
+        title: RabbitMQCircuitBreakerOpen
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'circuit_breaker_state == 1'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 30s
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: RabbitMQ circuit breaker is OPEN
+          description: RabbitMQ publish circuit breaker open on {{ $labels.instance }}. Investigate RabbitMQ health immediately.
+
+      - uid: rabbitmq-publish-errors
+        title: RabbitMQPublishErrors
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(rabbitmq_publish_errors_total[5m]) > 5'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: RabbitMQ publish errors > 5/min
+          description: RabbitMQ publish errors exceed 5 per minute. Investigate connectivity.
+
+      - uid: ai-tasks-in-flight-critical
+        title: AITasksInFlightCritical
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'ai_tasks_in_flight > 45'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 1m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: AI tasks in-flight > 45 (90% of capacity)
+          description: AI tasks in-flight exceed 45 (max concurrent 50). Scale AI worker.
+
+      - uid: ai-tasks-in-flight-warning
+        title: AITasksInFlightWarning
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'ai_tasks_in_flight > 35'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: AI tasks in-flight > 35 (70% of capacity)
+          description: AI tasks in-flight exceed 35. Plan AI worker scaling.
+
+      - uid: bot-chain-fallback-active
+        title: BotChainFallbackActive
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(bot_chain_fallback_total[1m]) > 10'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: Bot chain fallback > 10/min
+          description: Bot chain fallbacks exceed 10 per minute. RabbitMQ circuit breaker may be open.
+
+      - uid: bot-move-latency-high
+        title: BotMoveLatencyHigh
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'histogram_quantile(0.99, rate(bot_move_duration_seconds_bucket[5m])) > 2.0'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Bot move p99 latency > 2s
+          description: Bot move p99 latency exceeds 2s. Investigate AI worker performance.
+
+      - uid: redis-buffer-overflow
+        title: RedisBufferOverflow
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(redis_buffer_overflow_total[1m]) > 0'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 30s
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: Redis buffer overflow detected
+          description: Redis event buffer overflowed. Events are being dropped. Investigate Redis health immediately.
+
+      - uid: redis-cache-hit-ratio-low
+        title: RedisCacheHitRatioLow
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'redis_cache_hit_ratio < 0.8'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 10m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Redis cache hit ratio < 0.80
+          description: Redis cache hit ratio below 0.80. Review cache strategy.
+
+      - uid: redis-publish-failures
+        title: RedisPublishFailures
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(redis_publish_failures_total[5m]) > 0'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Redis publish failures detected
+          description: Redis publish failures detected. Investigate Redis connectivity.
+
+      - uid: games-stalled
+        title: GamesStalled
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(games_stalled_total[5m]) > 5'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: Games stalled > 5/min
+          description: Games stalled exceed 5 per minute. Investigate game orchestration.
+
+      - uid: card-play-latency-high
+        title: CardPlayLatencyHigh
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'histogram_quantile(0.99, rate(card_play_duration_seconds_bucket[5m])) > 1.0'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Card play p99 latency > 1s
+          description: Card play p99 latency exceeds 1s. Investigate DB contention.
+
+      - uid: http-request-latency-high
+        title: HTTPRequestLatencyHigh
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 0.5'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: HTTP request p99 latency > 500ms
+          description: HTTP request p99 latency exceeds 500ms. Investigate slow queries.
+
+      - uid: scheduler-task-timeouts
+        title: SchedulerTaskTimeouts
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(scheduler_task_timeouts_total[5m]) > 0'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Scheduler tasks timing out
+          description: Scheduler task timeouts detected. Investigate scheduler worker.
+
+      - uid: scheduler-task-errors
+        title: SchedulerTaskErrors
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(scheduler_task_errors_total[5m]) > 0'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Scheduler task errors detected
+          description: Scheduler task errors detected. Investigate scheduler worker.
+
+      - uid: rate-limit-hits-surge
+        title: RateLimitHitsSurge
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(rate_limit_hits_total[5m]) > 100'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: info
+          team: backend
+        annotations:
+          summary: Rate limit hits > 100/min
+          description: Rate limit hits exceed 100 per minute. Possible abuse or misconfigured client.

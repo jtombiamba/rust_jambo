@@ -5,7 +5,15 @@ RUN mkdir -p /var/tempo/generator && \
     chmod 0700 /var/tempo/generator
 
 # Stage 2: Final image
-FROM grafana/tempo:main-ea8fddf-1905-1
+FROM grafana/tempo:3.0.3
+
+ARG IMAGE_SOURCE
+ARG IMAGE_REVISION
+
 COPY --from=dirbuilder --chown=10001:10001 /var/tempo/generator /var/tempo/generator
 COPY tempo-config.yml /etc/tempo/tempo-config.yml
+
+LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}"
+
 EXPOSE 4318

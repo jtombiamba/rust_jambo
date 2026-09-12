@@ -112,6 +112,10 @@ services:
       - internal
     expose:
       - "5000"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     # Optional: labels for Coolify
     labels:
       - "coolify.service.name=jambo-backend"
@@ -129,6 +133,12 @@ services:
       - internal
     expose:
       - "80"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     labels:
       - "coolify.service.name=jambo-frontend"
       - "coolify.service.port=80"
@@ -185,6 +195,10 @@ services:
       - internal
     expose:
       - "7000"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f ai-worker || exit 1"]
       interval: 10s
@@ -237,6 +251,10 @@ services:
     expose:
       - "6000"
     restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6000/metrics"]
       interval: 30s
@@ -246,10 +264,42 @@ services:
       - "coolify.service.name=jambo-scheduler-worker"
       - "coolify.service.port=0"
 
+  # # ── DB Backup ──────────────────────────────────────────────────────────
+  # # Dumps the postgres database daily and uploads it to an S3-compatible
+  # # store. See scripts/db-backup.sh for the full list of env vars.
+  # backup:
+  #   build:
+  #     context: ..
+  #     dockerfile: infra/backup/Dockerfile
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   environment:
+  #     DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
+  #     S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.amazonaws.com}
+  #     S3_BUCKET: ${S3_BUCKET:-jambo-backups}
+  #     S3_PREFIX: ${S3_PREFIX:-jambo/}
+  #     S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+  #     S3_SECRET_KEY: ${S3_SECRET_KEY}
+  #     S3_REGION: ${S3_REGION:-us-east-1}
+  #     S3_INSECURE: ${S3_INSECURE:-false}
+  #     BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+  #     BACKUP_CRON_SCHEDULE: ${BACKUP_CRON_SCHEDULE:-0 2 * * *}
+  #   networks:
+  #     - internal
+  #   restart: unless-stopped
+  #   security_opt:
+  #     - "no-new-privileges:true"
+  #   cap_drop:
+  #     - ALL
+  #   labels:
+  #     - "coolify.service.name=jambo-backup"
+  #     - "coolify.service.port=0"
+
   # ── Monitoring (optional: use --profile monitoring to enable) ──────────
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0
     profiles: ["monitoring"]
     volumes:
       - ${PWD}/prometheus:/etc/prometheus
@@ -265,7 +315,7 @@ services:
       - "9090"
 
   dozzle:
-    image: amir20/dozzle:latest
+    image: amir20/dozzle:v10.7.3
     profiles: ["monitoring"]
     environment:
       DOZZLE_BASE: /dozzle

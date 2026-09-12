@@ -190,4 +190,43 @@ mod tests {
             .collect();
         assert_eq!(final_credits, vec![490, 490, 490, 530]);
     }
+
+    #[test]
+    fn test_settlement_delta_is_bet_plus_payment() {
+        let bet = 10;
+        let total_players = 4;
+        let payments = calculate_payment(0, total_players, bet);
+        assert_eq!(payments, vec![30, -10, -10, -10]);
+
+        // The atomic settlement delta is `bet + credits[idx]`, applied to the
+        // live profile credit (bet already debited at creation).
+        let deltas: Vec<i32> = payments.iter().map(|p| bet + p).collect();
+        assert_eq!(deltas, vec![40, 0, 0, 0]);
+
+        let live_credit: Vec<i32> = vec![490, 490, 490, 490];
+        let final_credit: Vec<i32> = live_credit.iter().zip(deltas).map(|(c, d)| c + d).collect();
+        assert_eq!(final_credit, vec![530, 490, 490, 490]);
+    }
+
+    #[test]
+    fn test_run_net_outcome_2_players_3_games_a_wins_all() {
+        let bet = 10;
+        let total_players = 2;
+        let num_games = 3;
+
+        // Provisioning debits num_games * bet upfront.
+        let provisioned = num_games * bet;
+
+        // Each game: winner delta = bet + credits[winner], loser delta = bet + credits[loser].
+        let per_game_payments = calculate_payment(0, total_players, bet);
+        assert_eq!(per_game_payments, vec![10, -10]);
+        let winner_delta = bet + per_game_payments[0];
+        let loser_delta = bet + per_game_payments[1];
+
+        let a_net = -provisioned + winner_delta * num_games;
+        let b_net = -provisioned + loser_delta * num_games;
+
+        assert_eq!(a_net, 30);
+        assert_eq!(b_net, -30);
+    }
 }

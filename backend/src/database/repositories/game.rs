@@ -283,6 +283,47 @@ impl GameRepository {
         .await?;
         Ok(())
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_multiplayer_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        bet: i32,
+        creator_id: Uuid,
+        max_players: i16,
+        invite_expires_at: chrono::DateTime<chrono::Utc>,
+        player_positions: serde_json::Value,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Utc::now();
+        game::Entity::insert(game::ActiveModel {
+            id: Set(game_id),
+            status: Set(GameStatus::Pending),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(player_positions),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: Set(Some(creator_id)),
+            game_mode: Set(GameMode::Multiplayer),
+            max_players: Set(max_players),
+            invite_expires_at: Set(Some(invite_expires_at)),
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
+            kicked_players: Set(json!([])),
+        })
+        .exec_without_returning(txn)
+        .await?;
+        Ok(())
+    }
 }
 
 #[tracing::instrument(skip(txn))]
@@ -312,6 +353,63 @@ pub async fn optimistic_update_round_state(
         .filter(game::Column::UpdatedAt.eq(read_version))
         .exec(txn)
         .await?;
+    Ok(result.rows_affected)
+}
+
+/// Optimistically write the result of a completed round evaluation inside a
+/// transaction.
+///
+/// Performs a single `UPDATE` guarded by `read_version` so a concurrent
+/// modification between the caller's read and this write affects 0 rows
+/// (surfaced to the caller as `Ok(0)` for a retry/`VersionConflict`).
+///
+/// When `final_status` is `Some`, the `status` column is also written using an
+/// explicit `::game_status` CAST (required because `col_expr` sends a raw
+/// `Value::String`, which PostgreSQL otherwise interprets as `text`).
+#[tracing::instrument(skip(txn))]
+pub async fn optimistic_update_round_result_in_txn(
+    txn: &DatabaseTransaction,
+    game_id: Uuid,
+    winner_id: Uuid,
+    winner_position: i32,
+    new_roll: i32,
+    read_version: chrono::DateTime<chrono::Utc>,
+    final_status: Option<GameStatus>,
+) -> Result<u64, DbErr> {
+    let mut update = game::Entity::update_many()
+        .col_expr(
+            game::Column::WinnerId,
+            Expr::value(Value::Uuid(Some(winner_id))),
+        )
+        .col_expr(
+            game::Column::Rank,
+            Expr::value(Value::Int(Some(winner_position))),
+        )
+        .col_expr(game::Column::Roll, Expr::value(Value::Int(Some(new_roll))))
+        .col_expr(
+            game::Column::CurrentWinningCard,
+            Expr::value(Value::Int(None)),
+        )
+        .col_expr(
+            game::Column::CurrentWinningPlayerPosition,
+            Expr::value(Value::Int(None)),
+        )
+        .col_expr(
+            game::Column::UpdatedAt,
+            Expr::value(Value::ChronoDateTimeUtc(Some(chrono::Utc::now()))),
+        )
+        .filter(game::Column::Id.eq(game_id))
+        .filter(game::Column::UpdatedAt.eq(read_version))
+        .to_owned();
+
+    if let Some(status) = final_status {
+        update = update.col_expr(
+            game::Column::Status,
+            Expr::cust_with_values("$1::game_status", [Value::String(Some(status.to_string()))]),
+        );
+    }
+
+    let result = update.exec(txn).await?;
     Ok(result.rows_affected)
 }
 

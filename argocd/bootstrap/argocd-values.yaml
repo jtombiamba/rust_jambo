@@ -1,0 +1,38 @@
+# ArgoCD bootstrap values (Helm: argoproj/argo-cd).
+#
+# On managed clusters this file is consumed by Terraform (the `platform` module's
+# helm_release.argocd); the ingress hostname is overridden per environment via
+# `server.ingress.hostname`. A single `terraform apply` installs ArgoCD, creates
+# the `jambo-repo` credential secret, and seeds the app-of-apps.
+#
+# Manual fallback (clusters not provisioned by Terraform, e.g. minikube):
+#   helm repo add argo-cd https://argoproj.github.io/argo-helm
+#   helm upgrade --install argocd argo-cd/argo-cd \
+#     -n argocd --create-namespace \
+#     -f argocd/bootstrap/argocd-values.yaml
+#
+#   kubectl -n argocd create secret generic jambo-repo \
+#     --from-literal=url=https://github.com/jtombiamba/rust_jambo.git \
+#     --from-literal=username=<github-user> \
+#     --from-literal=password=<github-pat-with-repo:read>
+#   kubectl -n argocd label secret jambo-repo argocd.argoproj.io/secret-type=repository
+#   kubectl apply -f argocd/bootstrap/app-of-apps-seed.yaml
+server:
+  extraArgs:
+    - --insecure
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.tombislab.com
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    tls: true
+
+configs:
+  params:
+    server.insecure: "true"
+
+repoServer:
+  # A private repo requires a repository credential secret (see the bootstrap
+  # note above). ArgoCD auto-discovers labeled secrets.
+  extraContainers: []

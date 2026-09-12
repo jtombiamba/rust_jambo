@@ -132,6 +132,37 @@ impl GameCardRepository {
     }
 
     #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn list_played_by_game_and_round_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        round: i32,
+    ) -> Result<Vec<GameCard>, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::GameId.eq(game_id))
+            .filter(game_card::Column::Round.eq(round))
+            .filter(game_card::Column::Played.eq(true))
+            .order_by_asc(game_card::Column::PlayedAt)
+            .all(txn)
+            .await
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn find_played_card_in_round_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        player_id: Uuid,
+        round: i32,
+    ) -> Result<Option<GameCard>, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::PlayerId.eq(player_id))
+            .filter(game_card::Column::Round.eq(round))
+            .filter(game_card::Column::Played.eq(true))
+            .one(txn)
+            .await
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
     pub async fn bulk_insert_in_txn(
         &self,
         txn: &DatabaseTransaction,

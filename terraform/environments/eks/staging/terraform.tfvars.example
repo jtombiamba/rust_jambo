@@ -1,0 +1,13 @@
+cluster_name       = "jambo-staging"
+region             = "eu-west-1"
+kubernetes_version = "1.30"
+vpc_cidr           = "10.0.0.0/16"
+instance_types     = ["t3.medium"]
+min_size           = 1
+max_size           = 3
+desired_size       = 1
+domain             = "jambo.app"
+cert_manager_email = "ops@jambo.app"
+
+argocd_repo_username = "github-user"
+# argocd_repo_password = "set-via-env-or-CI-secret"

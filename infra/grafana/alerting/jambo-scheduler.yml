@@ -1,0 +1,29 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: jambo-scheduler
+    folder: Jambo Alerts
+    interval: 30s
+    rules:
+      - uid: scheduler-worker-high-cpu
+        title: SchedulerWorkerHighCPU
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'avg by (instance) (rate(process_cpu_seconds_total{job="jambo-scheduler-worker"}[1m])) > 0.8'
+              instant: true
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: Scheduler Worker CPU > 80%
+          description: Scheduler Worker instance {{ $labels.instance }} CPU above 80%. Investigate background task performance.
