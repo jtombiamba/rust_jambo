@@ -166,6 +166,16 @@ pub enum GameMode {
     Multiplayer,
 }
 
+impl std::fmt::Display for GameMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            GameMode::Solo => "solo",
+            GameMode::Multiplayer => "multiplayer",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "invite_status")]
 pub enum InviteStatus {

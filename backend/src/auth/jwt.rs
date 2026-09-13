@@ -114,6 +114,48 @@ pub fn validate_game_token(
     Ok(token_data.claims)
 }
 
+/// Generate a read-only spectator token for the stream view. Signed with the same
+/// JWT secret, distinguished by purpose "ws:spectate", with a short TTL.
+pub fn generate_spectate_token(
+    game_id: Uuid,
+    config: &AuthConfig,
+    ttl_secs: u64,
+) -> Result<GenerateGameTokenResult, jsonwebtoken::errors::Error> {
+    let now = chrono::Utc::now();
+    let claims = GameTokenClaims {
+        sub: game_id,
+        purpose: "ws:spectate".to_string(),
+        exp: (now + chrono::Duration::seconds(ttl_secs as i64)).timestamp() as usize,
+        iat: now.timestamp() as usize,
+        jti: Uuid::new_v4().to_string(),
+    };
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+    )?;
+    Ok((token, claims))
+}
+
+/// Validate a spectator token and return its claims.
+pub fn validate_spectate_token(
+    token: &str,
+    config: &AuthConfig,
+) -> Result<GameTokenClaims, jsonwebtoken::errors::Error> {
+    let validation = Validation::default();
+    let token_data = decode::<GameTokenClaims>(
+        token,
+        &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
+        &validation,
+    )?;
+    if token_data.claims.purpose != "ws:spectate" {
+        return Err(jsonwebtoken::errors::Error::from(
+            jsonwebtoken::errors::ErrorKind::InvalidSubject,
+        ));
+    }
+    Ok(token_data.claims)
+}
+
 pub fn generate_reset_token(
     email: &str,
     config: &AuthConfig,

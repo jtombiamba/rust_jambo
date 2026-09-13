@@ -37,8 +37,8 @@ export type GameEvent =
   | { type: 'game_cancelled'; game_id: string; reason: string }
   | { type: 'game_ready'; game_id: string }
   | { type: 'cards_dealt'; game_id: string; player_id: string; cards: number[] }
-  | { type: 'game_started'; game_id: string; players: GameStartedPlayer[]; current_turn: string }
-  | { type: 'game_state_snapshot'; game_id: string; roll: number; rank: number | null; status: string; current_winning_card: number | null; current_winning_player_position: number | null; players: GameStatePlayer[]; played_cards: number[]; step_by_step?: boolean }
+  | { type: 'game_started'; game_id: string; players: GameStartedPlayer[]; current_turn: string; game_mode: string }
+  | { type: 'game_state_snapshot'; game_id: string; roll: number; rank: number | null; status: string; current_winning_card: number | null; current_winning_player_position: number | null; players: GameStatePlayer[]; played_cards: number[]; step_by_step?: boolean; game_mode?: string }
   | { type: 'player_disconnected'; game_id: string; player_id: string; player_position: number; disconnected_at?: string }
   | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string }
   | { type: 'staleness_warning'; game_id: string; player_id: string; player_name: string; kicked_after_seconds: number }
@@ -48,7 +48,7 @@ export type GameEvent =
 
 export type OutgoingMessage =
   | { type: 'ping' }
-  | { type: 'join_game'; game_id: string; player_id?: string; player_position?: number }
+  | { type: 'join_game'; game_id: string; player_id?: string; player_position?: number; spectator?: boolean }
   | { type: 'leave_game' };
 
 interface UseWebSocketOptions {
@@ -56,6 +56,7 @@ interface UseWebSocketOptions {
   playerId?: string;
   playerPosition?: number;
   wsToken?: string;
+  spectator?: boolean;
   onMessage?: (event: GameEvent) => void;
   onError?: (error: Event) => void;
   onClose?: (event: CloseEvent) => void;
@@ -79,6 +80,7 @@ class WebSocketManager {
   private playerId: string | null = null;
   private playerPosition: number | null = null;
   private wsToken: string | null = null;
+  private spectator = false;
 
   private constructor(gameId: string) {
     this.gameId = gameId;
@@ -86,6 +88,10 @@ class WebSocketManager {
 
   setWsToken(token: string | null): void {
     this.wsToken = token;
+  }
+
+  setSpectator(value: boolean): void {
+    this.spectator = value;
   }
 
   setPlayerIdentity(playerId: string, playerPosition: number): void {
@@ -212,6 +218,7 @@ class WebSocketManager {
         game_id: this.gameId,
         ...(this.playerId ? { player_id: this.playerId } : {}),
         ...(this.playerPosition !== null ? { player_position: this.playerPosition } : {}),
+        ...(this.spectator ? { spectator: true } : {}),
       };
       this.send(joinMsg);
     };
@@ -294,6 +301,7 @@ export function useWebSocket({
   playerId,
   playerPosition,
   wsToken,
+  spectator,
   onMessage,
   onError,
   onClose,
@@ -379,6 +387,9 @@ export function useWebSocket({
         manager.setPlayerIdentity(playerId, playerPosition);
       }
 
+      // Mark this connection as a read-only spectator when requested.
+      manager.setSpectator(spectator === true);
+
       unsubscribeRef.current = manager.subscribe(
         wrappedOnMessage,
         wrappedOnError,
@@ -402,7 +413,7 @@ export function useWebSocket({
       console.error('Failed to subscribe to WebSocket manager:', err);
       setLastError('Invalid gameId');
     }
-  }, [gameId, playerId, playerPosition, wsToken, onMessage, onError, onClose, updateConnectionStatus]);
+  }, [gameId, playerId, playerPosition, wsToken, spectator, onMessage, onError, onClose, updateConnectionStatus]);
 
   // Expose a manual reconnect function
   const reconnect = useCallback(() => {

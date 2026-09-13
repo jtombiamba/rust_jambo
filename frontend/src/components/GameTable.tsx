@@ -16,6 +16,7 @@ export interface GamePlayer {
   position: number;
   display_position: number;
   cards: number[];
+  is_current_user?: boolean;
 }
 
 export interface GameTableProps {
@@ -33,6 +34,8 @@ export interface GameTableProps {
   showPlayAgain?: boolean;
   onAdvanceBot?: () => void;
   onEvaluateRound?: () => void;
+  /** Read-only spectator view: hide all hands and disable interactions. */
+  spectatorMode?: boolean;
 }
 
 type LayoutMode = 'mobile-portrait' | 'mobile-landscape' | 'desktop';
@@ -68,6 +71,7 @@ const GameTable: React.FC<GameTableProps> = ({
   showPlayAgain = true,
   onAdvanceBot,
   onEvaluateRound,
+  spectatorMode = false,
 }) => {
   const { t } = useTranslation();
   const phase = useStepByStepPhase();
@@ -119,6 +123,11 @@ const GameTable: React.FC<GameTableProps> = ({
     return roundWinner !== null && roundWinner.position === playerDisplayPosition;
   };
 
+  const shouldShowCardsFaceUp = (player: GamePlayer) => {
+    if (spectatorMode) return false;
+    return player.is_current_user ?? player.cards.length > 0;
+  };
+
   const renderPlayerSlot = (player: GamePlayer, compact = false) => {
     const displayPos = getDisplayPos(player);
     const position = positionMap[displayPos] || 'south';
@@ -138,7 +147,7 @@ const GameTable: React.FC<GameTableProps> = ({
           position={position}
           type={player.type}
           cards={player.cards}
-          cardsFaceUp={player.cards.length > 0}
+          cardsFaceUp={shouldShowCardsFaceUp(player)}
           remainingCount={remainingCards[player.id]}
           isCurrentTurn={isCurrentTurn}
           isThinking={isBotThinking}
@@ -382,7 +391,7 @@ const GameTable: React.FC<GameTableProps> = ({
                     position={position}
                     type={player.type}
                     cards={player.cards}
-                    cardsFaceUp={player.cards.length > 0}
+                    cardsFaceUp={shouldShowCardsFaceUp(player)}
                     remainingCount={remainingCards[player.id]}
                     isCurrentTurn={isCurrentTurn}
                     isThinking={isBotThinking}

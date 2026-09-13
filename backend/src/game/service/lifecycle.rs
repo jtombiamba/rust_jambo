@@ -457,6 +457,7 @@ impl GameService {
         let first_player_id = player_ids[0];
 
         let now = chrono::Utc::now();
+        let game_mode = game_model.game_mode.to_string();
         let mut game_active: game::ActiveModel = game_model.into();
         game_active.status = ActiveValue::Set(GameStatus::Active);
         game_active.rank = ActiveValue::Set(Some(initial_rank));
@@ -512,6 +513,7 @@ impl GameService {
                 game_id,
                 players: game_started_players,
                 current_turn: first_player_id,
+                game_mode,
                 correlation_id: None,
             };
             match redis.clone().publish_game_event_with_retry(&event).await {

@@ -144,7 +144,10 @@
     "playNextBot": "Play Next Bot",
     "evaluateRound": "Evaluate Round",
     "waitingForBot": "Waiting for bot move...",
-    "allCardsPlayed": "All cards played! Evaluate the round."
+    "allCardsPlayed": "All cards played! Evaluate the round.",
+    "copyStreamUrl": "Copy Stream URL",
+    "streamUrlCopied": "Stream URL copied to clipboard",
+    "streamUrlFailed": "Could not generate stream URL"
   },
   "lobby": {
     "gameLobby": "Game Lobby",

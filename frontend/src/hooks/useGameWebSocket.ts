@@ -232,6 +232,7 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               display_position: p.display_position,
               cards: existing?.cards ?? [],
               cards_count: cardsCount,
+              is_current_user: existing?.is_current_user,
             };
           });
 
@@ -254,6 +255,9 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, deckSlots);
           if (event.step_by_step !== undefined) {
             store.setStepByStep(event.step_by_step);
+          }
+          if (event.game_mode) {
+            store.setGameMode(event.game_mode as 'solo' | 'multiplayer');
           }
           clearRoundWinner();
           break;

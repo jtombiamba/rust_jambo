@@ -31,6 +31,7 @@ function createGameStartedEvent(): GameEvent {
       player_type: 'human',
     }],
     current_turn: '11111111-1111-1111-1111-111111111111',
+    game_mode: 'solo',
   };
 }
 

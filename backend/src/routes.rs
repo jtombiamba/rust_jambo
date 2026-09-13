@@ -225,6 +225,10 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         .route(
                             "/{game_id}/me",
                             web::get().to(crate::api::dashboard::game_state),
+                        )
+                        .route(
+                            "/{game_id}/spectate-token",
+                            web::post().to(crate::api::dashboard::mint_spectate_token),
                         ),
                 )
                 .service(web::scope("/users").wrap(auth_mw.clone()).route(

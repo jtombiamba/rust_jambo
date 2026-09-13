@@ -110,6 +110,7 @@ async fn test_send_game_started_per_player_rotates_display_positions() {
         game_id,
         players: players.clone(),
         current_turn,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -160,6 +161,7 @@ async fn test_send_game_started_per_player_turn_player_consistent() {
         game_id,
         players: players.clone(),
         current_turn,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -208,6 +210,7 @@ async fn test_send_game_started_per_player_preserves_cards_count() {
         game_id,
         players: players.clone(),
         current_turn: players[0].id,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -241,6 +244,7 @@ async fn test_send_game_started_per_player_two_players() {
         game_id,
         players: players.clone(),
         current_turn: players[0].id,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -281,6 +285,7 @@ async fn test_send_game_started_per_player_current_turn_preserved() {
         game_id,
         players: players.clone(),
         current_turn,
+        game_mode: "multiplayer".to_string(),
         correlation_id: Some(correlation_id),
     };
     manager.send_game_started_per_player(game_id, &event).await;

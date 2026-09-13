@@ -12,6 +12,9 @@ pub enum IncomingMessage {
         player_id: Option<Uuid>,
         #[serde(default)]
         player_position: Option<i32>,
+        /// Read-only spectator join (no player identity, public state only).
+        #[serde(default)]
+        spectator: bool,
     },
     /// Leave the current game.
     LeaveGame,
@@ -36,6 +39,7 @@ pub enum OutgoingMessage {
         players: Vec<GameStatePlayer>,
         played_cards: Vec<Option<i32>>, //Vec<GameStateCard>,
         step_by_step: bool,
+        game_mode: String,
     },
     /// Error response.
     Error { message: String, source: String },
@@ -80,6 +84,7 @@ mod tests {
                 game_id: gid,
                 player_id: _,
                 player_position: _,
+                spectator: _,
             } => assert_eq!(gid, game_id),
             _ => panic!("Expected JoinGame"),
         }

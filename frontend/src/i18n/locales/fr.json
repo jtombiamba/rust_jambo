@@ -144,7 +144,10 @@
     "playNextBot": "Jouer le Bot Suivant",
     "evaluateRound": "Évaluer le Tour",
     "waitingForBot": "En attente du bot...",
-    "allCardsPlayed": "Toutes les cartes jouées ! Évaluez le tour."
+    "allCardsPlayed": "Toutes les cartes jouées ! Évaluez le tour.",
+    "copyStreamUrl": "Copier l'URL du stream",
+    "streamUrlCopied": "URL du stream copiée dans le presse-papiers",
+    "streamUrlFailed": "Impossible de générer l'URL du stream"
   },
   "lobby": {
     "gameLobby": "Salon de jeu",

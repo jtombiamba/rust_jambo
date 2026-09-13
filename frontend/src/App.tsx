@@ -36,6 +36,7 @@ interface QuickGameResponse {
     display_position: number
     cards: number[]
     cards_count: number
+    is_current_user?: boolean
   }>
   status: string
   current_turn: number
@@ -331,6 +332,25 @@ function AppContent() {
     }
   }
 
+  const handleCopyStreamUrl = () => {
+    if (!gameId) return
+    axios.post(`/api/games/${gameId}/spectate-token`)
+      .then((res) => {
+        const url = res.data.url as string
+        if (!url) {
+          showToast(t('game.streamUrlFailed'), 'error')
+          return
+        }
+        navigator.clipboard.writeText(url)
+          .then(() => showToast(t('game.streamUrlCopied'), 'success'))
+          .catch(() => showToast(url, 'info'))
+      })
+      .catch((err) => {
+        const error = extractApiError(err)
+        showToast(error.message || t('game.streamUrlFailed'), 'error')
+      })
+  }
+
   const handleViewLobby = (gameId: string) => {
     setLobbyGameId(gameId)
   }
@@ -539,6 +559,14 @@ function AppContent() {
             >
               {t('common.backToDashboard')}
             </button>
+            {isAuthenticated && (
+              <button
+                className="mt-4 ml-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                onClick={handleCopyStreamUrl}
+              >
+                {t('game.copyStreamUrl')}
+              </button>
+            )}
           </div>
         </div>
         <Footer />

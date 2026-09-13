@@ -138,14 +138,16 @@ impl WebSocketManager {
 
     /// Send a personalized GameStarted event to each player with `display_position`
     /// rotated so that the receiving player is always at position 0 (south).
+    /// Spectators receive the original (non-rotated) event.
     async fn send_game_started_per_player(&self, game_id: Uuid, event: &GameEvent) {
-        let (players, current_turn, correlation_id) = match event {
+        let (players, current_turn, game_mode, correlation_id) = match event {
             GameEvent::GameStarted {
                 players,
                 current_turn,
+                game_mode,
                 correlation_id,
                 ..
-            } => (players, current_turn, correlation_id),
+            } => (players, current_turn, game_mode, correlation_id),
             _ => return,
         };
 
@@ -174,12 +176,16 @@ impl WebSocketManager {
                 game_id,
                 players: rotated_players,
                 current_turn: *current_turn,
+                game_mode: game_mode.clone(),
                 correlation_id: *correlation_id,
             };
 
             self.send_to_player(game_id, player.id, &personalized.to_json())
                 .await;
         }
+
+        // Spectators get the public (non-rotated) game_started.
+        self.send_to_spectators(game_id, &event.to_json()).await;
     }
 
     fn shard_for_game(game_id: Uuid, shard_count: usize) -> usize {

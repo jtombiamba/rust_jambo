@@ -62,6 +62,7 @@ pub enum GameEvent {
         game_id: Uuid,
         players: Vec<GameStartedPlayer>,
         current_turn: Uuid,
+        game_mode: String,
         correlation_id: Option<Uuid>,
     },
     PlayerDisconnected {

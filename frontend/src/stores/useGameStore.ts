@@ -8,6 +8,7 @@ export interface Player {
   display_position: number;
   cards: number[];
   cards_count?: number;
+  is_current_user?: boolean;
 }
 
 export interface RoundWinner {
@@ -46,6 +47,7 @@ export interface GameState {
   gameOver: GameOverData | null;
   pendingGameOver: GameOverData | null;
   stepByStep: boolean;
+  gameMode: 'solo' | 'multiplayer' | null;
   pendingBotMoves: QueuedBotEvent[];
   isReplayingBots: boolean;
   botReplayTimerId: ReturnType<typeof setTimeout> | null;
@@ -67,6 +69,7 @@ export interface GameState {
   clearGameOver: () => void;
   applyCardPlayed: (playerId: string, cardIndex: number, nextTurn?: string) => void;
   setStepByStep: (active: boolean) => void;
+  setGameMode: (mode: 'solo' | 'multiplayer') => void;
   addPendingEvent: (event: QueuedBotEvent) => void;
   clearPendingEvents: () => void;
   startBotReplay: (botDelayMs: number, roundPauseMs: number) => void;
@@ -87,6 +90,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   gameOver: null,
   pendingGameOver: null,
   stepByStep: false,
+  gameMode: null,
   pendingBotMoves: [],
   isReplayingBots: false,
   botReplayTimerId: null,
@@ -146,6 +150,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       pendingGameOver: null,
       stepByStep: false,
       pendingBotMoves: [],
+      gameMode: null,
       isReplayingBots: false,
       isBotChainActive: false,
       roundWinnerClearTimerId: null,
@@ -217,6 +222,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   setStepByStep: (active) =>
     set({ stepByStep: active }),
+  setGameMode: (mode) =>
+    set({ gameMode: mode }),
   addPendingEvent: (event) =>
     set((state) => ({
       pendingBotMoves: [...state.pendingBotMoves, event],

@@ -16,7 +16,7 @@ use manager::WebSocketManager;
 use messages::{IncomingMessage, OutgoingMessage};
 
 mod game_state;
-use game_state::send_game_state_snapshot;
+use game_state::{send_game_state_snapshot, send_spectator_snapshot};
 
 /// WebSocket endpoint for a specific game.
 /// Path parameter: game_id (UUID)
@@ -59,7 +59,18 @@ pub async fn ws_handler(
             .map(|(_, v)| v.to_string());
         if let Some(ref gt) = game_token {
             tracing::info!("[DEBUG] WebSocket validating token for game {}", game_id);
-            validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await
+            let game_id_auth =
+                validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await;
+            if game_id_auth.is_some() {
+                game_id_auth
+            } else {
+                tracing::info!(
+                    "[DEBUG] WebSocket validating spectator token for game {}",
+                    game_id
+                );
+                validate_spectate_token(gt, game_id, auth_config.clone(), redis_client.clone())
+                    .await
+            }
         } else {
             tracing::warn!(
                 "[WARN] WebSocket connection via token: no query params for game {}",
@@ -286,6 +297,7 @@ async fn handle_message(
                     game_id: join_id,
                     player_id,
                     player_position,
+                    spectator,
                 } => {
                     trace!("Processing join game: {}", join_id);
                     if join_id != game_id {
@@ -295,8 +307,17 @@ async fn handle_message(
                             game_id
                         );
                     }
-                    // Set player identity if provided (for disconnect/reconnect tracking)
-                    if let (Some(pid), Some(pos)) = (player_id, player_position) {
+                    if spectator {
+                        // Read-only spectator join: public state only, no player identity.
+                        crate::websocket::manager::WebSocketManager::mark_spectator_for_latest_connection(
+                            manager.get_ref(),
+                            game_id,
+                        )
+                        .await;
+                        if let Some(db) = &db {
+                            send_spectator_snapshot(manager.get_ref(), db, game_id).await;
+                        }
+                    } else if let (Some(pid), Some(pos)) = (player_id, player_position) {
                         // We need the connection_id to set player. Since this is called from
                         // the incoming handler, we don't have it directly. Register via
                         // a simple method: set_player_for_latest_connection.
@@ -537,4 +558,61 @@ pub async fn validate_game_token(
     // The namespace constant is arbitrary but fixed to avoid collisions with real user IDs.
     const ANON_NAMESPACE: u128 = 0x006A_6F6E_6573_5F61_6E6F_6E5F_7575_6964_u128;
     Some(uuid::Uuid::from_u128(game_id.as_u128() ^ ANON_NAMESPACE))
+}
+
+/// Validate a read-only spectator token for the stream view WebSocket connection.
+/// The token must:
+/// 1. Be a valid JWT with purpose "ws:spectate" and matching game_id
+/// 2. Exist in Redis (inserted at mint time, revocable by deletion)
+pub async fn validate_spectate_token(
+    token: &str,
+    game_id: Uuid,
+    auth_config: Option<web::Data<AuthConfig>>,
+    mut redis_client: Option<RedisClient>,
+) -> Option<Uuid> {
+    let config = auth_config?;
+
+    let claims = jwt::validate_spectate_token(token, &config).ok()?;
+
+    if claims.sub != game_id {
+        tracing::warn!(
+            "Spectator token mismatch: token is for game {} but connection is for game {}",
+            claims.sub,
+            game_id
+        );
+        return None;
+    }
+
+    let redis_key = format!("spectate_token:{}:{}", game_id, claims.jti);
+    if let Some(ref mut r) = redis_client {
+        match r.exists(&redis_key).await {
+            Ok(true) => {
+                tracing::info!(
+                    "Spectator token validated for game {}, jti: {}",
+                    game_id,
+                    claims.jti
+                );
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    "Spectator token not found in Redis (never issued or expired) for game {}",
+                    game_id
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::error!("Redis error checking spectator token: {}", e);
+                crate::observability::metrics::WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc();
+                tracing::warn!(
+                    "Redis unavailable, allowing spectator token connection for game {}",
+                    game_id
+                );
+            }
+        }
+    }
+
+    const SPECTATE_NAMESPACE: u128 = 0x0000_5350_4543_5441_5445_5F41_4E4F_4E5F_4944_u128;
+    Some(uuid::Uuid::from_u128(
+        game_id.as_u128() ^ SPECTATE_NAMESPACE,
+    ))
 }

@@ -48,6 +48,7 @@ struct TrackedConnection {
     player_position: Option<i32>,
     disconnected: bool,
     last_pong: Instant,
+    spectator: bool,
 }
 
 /// Inner shared state for the WebSocket manager.
@@ -113,6 +114,7 @@ impl WebSocketManager {
                 player_position: None,
                 disconnected: false,
                 last_pong: Instant::now(),
+                spectator: false,
             });
         tracing::info!(
             "New WebSocket connection {} for game {} (correlation_id={})",
@@ -480,6 +482,48 @@ impl WebSocketManager {
         }
     }
 
+    /// Mark the most recently added connection for a game as a spectator.
+    pub async fn mark_spectator_for_latest_connection(manager: &WebSocketManager, game_id: Uuid) {
+        let conn_id = {
+            let inner = manager.inner.read().await;
+            inner
+                .connections
+                .get(&game_id)
+                .and_then(|conns| conns.last())
+                .map(|c| c.id)
+        };
+        if let Some(cid) = conn_id {
+            let mut inner = manager.inner.write().await;
+            if let Some(connections) = inner.connections.get_mut(&game_id) {
+                for conn in connections.iter_mut() {
+                    if conn.id == cid {
+                        conn.spectator = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Send a message to all spectator connections of a game (player_id == None
+    /// and marked as spectator).
+    pub async fn send_to_spectators(&self, game_id: Uuid, message: &str) {
+        let inner = self.inner.read().await;
+        if let Some(connections) = inner.connections.get(&game_id) {
+            for connection in connections {
+                if connection.spectator {
+                    if let Err(e) = connection.sender.send(message.to_string()) {
+                        tracing::debug!(
+                            "Failed to send message to spectator connection {}: {}",
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Get total number of active connections across all games.
     #[allow(dead_code)]
     pub async fn total_connection_count(&self) -> usize {
@@ -516,6 +560,7 @@ impl WebSocketManager {
                 player_position: None,
                 disconnected: false,
                 last_pong: Instant::now(),
+                spectator: false,
             });
 
         metrics::WS_CONNECTIONS_ACTIVE.inc();

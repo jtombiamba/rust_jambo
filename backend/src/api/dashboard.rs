@@ -10,12 +10,18 @@ use crate::api::dto::requests::{
 };
 use crate::api::dto::responses::{PlayCardResponse, RespondToInviteResponse};
 use crate::api::services::dashboard_service::{DashboardService, SendInvitesParams};
+use crate::auth::config::AuthConfig;
 use crate::auth::extractors::AuthenticatedUser;
+use crate::auth::jwt;
 use crate::database::repositories::DashboardRepository;
 use crate::error::AppError;
 use crate::i18n::I18n;
 use crate::mailer::Mailer;
+use crate::messaging::RedisClient;
 use crate::observability::{metrics, CorrelationId};
+
+/// TTL for read-only spectator tokens in seconds (6 hours).
+const SPECTATE_TOKEN_TTL_SECS: u64 = 21600;
 
 pub type DashboardServiceType = DashboardService<DashboardRepository>;
 
@@ -342,6 +348,60 @@ pub async fn search_users(
     service: web::Data<Arc<DashboardServiceType>>,
 ) -> HttpResponse {
     service_response!(service.search_users(&query.into_inner()).await)
+}
+
+/// Mint a private, short-lived spectator token for the stream view.
+/// Only a game participant may mint a token, and the token grants read-only
+/// access to public game state (no hand data) via the WebSocket.
+pub async fn mint_spectate_token(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    service: web::Data<Arc<DashboardServiceType>>,
+    auth_config: web::Data<AuthConfig>,
+    redis: web::Data<Option<RedisClient>>,
+) -> HttpResponse {
+    let game_id = path.into_inner();
+
+    let participants = match service.check_existing_players(game_id).await {
+        Ok(ids) => ids,
+        Err(e) => return e.error_response(),
+    };
+    if !participants.contains(&auth_user.user_id) {
+        return AppError::Forbidden("You are not a participant of this game".to_string())
+            .error_response();
+    }
+
+    match jwt::generate_spectate_token(game_id, &auth_config, SPECTATE_TOKEN_TTL_SECS) {
+        Ok((token, claims)) => {
+            let redis_key = format!("spectate_token:{}:{}", game_id, claims.jti);
+            if let Some(redis_client) = redis.get_ref().as_ref() {
+                let mut client = redis_client.clone();
+                if let Err(e) = client
+                    .set_ex(&redis_key, &token, SPECTATE_TOKEN_TTL_SECS)
+                    .await
+                {
+                    tracing::error!("Failed to store spectate token for game {}: {}", game_id, e);
+                }
+            }
+
+            let url = format!(
+                "{}/game/{}/stream?token={}",
+                auth_config.frontend_url, game_id, token
+            );
+            HttpResponse::Ok().json(serde_json::json!({
+                "token": token,
+                "url": url,
+            }))
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to generate spectate token for game {}: {}",
+                game_id,
+                e
+            );
+            AppError::Internal("Failed to generate spectate token".to_string()).error_response()
+        }
+    }
 }
 
 #[cfg(test)]

@@ -122,6 +122,7 @@ pub(super) async fn send_game_state_snapshot(
         players: game_state_players,
         played_cards: played_cards.clone(),
         step_by_step: game_model.step_by_step,
+        game_mode: game_model.game_mode.to_string(),
     };
 
     match serde_json::to_string(&snapshot) {
@@ -247,6 +248,7 @@ pub(super) async fn send_snapshots_to_all_players(
             players: game_state_players,
             played_cards: played_cards.clone(),
             step_by_step: game_model.step_by_step,
+            game_mode: game_model.game_mode.to_string(),
         };
 
         match serde_json::to_string(&snapshot) {
@@ -263,6 +265,134 @@ pub(super) async fn send_snapshots_to_all_players(
                     player_id, e
                 );
             }
+        }
+    }
+
+    // Spectators also receive an up-to-date public snapshot.
+    send_spectator_snapshot(manager, db, game_id).await;
+}
+
+/// Send a public-only snapshot (fixed seat orientation, no per-player rotation)
+/// to every spectator connection of a game.
+pub(super) async fn send_spectator_snapshot(
+    manager: &WebSocketManager,
+    db: &sea_orm::DatabaseConnection,
+    game_id: Uuid,
+) {
+    let game_repo = GameRepository::new(db.clone());
+    let player_repo = PlayerRepository::new(db.clone());
+    let game_card_repo = GameCardRepository::new(db.clone());
+
+    let game_model = match game_repo.find_by_id(game_id).await {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            tracing::warn!("Game {} not found for spectator snapshot", game_id);
+            return;
+        }
+        Err(e) => {
+            tracing::error!(
+                "DB error fetching game {} for spectator snapshot: {}",
+                game_id,
+                e
+            );
+            return;
+        }
+    };
+
+    let players = match player_repo.list_by_game(game_id).await {
+        Ok(p) => p,
+        Err(e) => {
+            error!(
+                "Failed to fetch players for spectator snapshot {}: {}",
+                game_id, e
+            );
+            return;
+        }
+    };
+
+    if players.is_empty() {
+        return;
+    }
+
+    let num_players = players.len();
+    let played_counts: HashMap<Uuid, usize> = count_played_cards_per_player(db, game_id).await;
+
+    // TODO: refactor  game_state_players by having a function that returns the GameStatePlayer list
+
+    let game_state_players: Vec<GameStatePlayer> = players
+        .iter()
+        .map(|p| {
+            let player_type_str = match p.player_type {
+                PlayerType::Human => "human",
+                PlayerType::Bot => "bot",
+            };
+            GameStatePlayer {
+                id: p.id,
+                name: p.name.clone(),
+                position: p.position,
+                display_position: p.position,
+                player_type: player_type_str.to_string(),
+                cards_count: CARDS_PER_PLAYER as i32
+                    - *played_counts.get(&p.id).unwrap_or(&0) as i32,
+            }
+        })
+        .collect();
+
+    // TODO: refactor by creating outside function that return slots based on played_cards
+    let played_cards: Vec<Option<i32>> = match game_card_repo
+        .list_by_game_and_round(game_id, game_model.roll)
+        .await
+    {
+        Ok(cards) => {
+            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
+            let winner_pos = game_model.current_winning_player_position.unwrap_or(0) as usize;
+
+            for card in cards {
+                if let Some(pid) = card.player_id {
+                    if let Some(pos) = players.iter().position(|p| p.id == pid) {
+                        played_pairs.push((card.card_index, pos));
+                    }
+                }
+            }
+            played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
+            let mut slots: Vec<Option<i32>> = played_pairs
+                .into_iter()
+                .map(|(card_idx, _)| Some(card_idx))
+                .collect();
+            if slots.len() < 4 {
+                slots.resize(4, None);
+            }
+            slots
+        }
+        Err(e) => {
+            error!(
+                "Failed to fetch played cards for spectator snapshot {}: {}",
+                game_id, e
+            );
+            vec![]
+        }
+    };
+
+    let snapshot = OutgoingMessage::GameStateSnapshot {
+        game_id,
+        roll: game_model.roll,
+        rank: game_model.rank,
+        status: game_model.status.to_string(),
+        current_winning_card: game_model.current_winning_card,
+        current_winning_player_position: game_model.current_winning_player_position,
+        players: game_state_players,
+        played_cards,
+        step_by_step: game_model.step_by_step,
+        game_mode: game_model.game_mode.to_string(),
+    };
+
+    match serde_json::to_string(&snapshot) {
+        Ok(json) => {
+            manager.send_to_spectators(game_id, &json).await;
+            info!("Sent spectator snapshot for game {}", game_id);
+        }
+        Err(e) => {
+            error!("Failed to serialize spectator snapshot: {}", e);
         }
     }
 }
