@@ -353,7 +353,7 @@ services:
       - ./grafana/datasources:/etc/grafana/provisioning/datasources
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
       - ./grafana/alerting:/etc/grafana/provisioning/alerting
-      - grafana_data:/etc/grafana/provisioning/
+      - grafana_data:/var/lib/grafana
     environment:
       GF_SERVER_HTTP_PORT: 3000
       GF_SERVER_ROOT_URL: /grafana
