@@ -332,6 +332,14 @@ function AppContent() {
     }
   }
 
+  const handleBackToDashboard = () => {
+    handleLocalStats()
+    resetGame()
+    setWsToken(null)
+    setRunId(null)
+    setAutoStartCountdown(0)
+  }
+
   const handleCopyStreamUrl = () => {
     if (!gameId) return
     axios.post(`/api/games/${gameId}/spectate-token`)
@@ -474,16 +482,11 @@ function AppContent() {
             onCardClick={handleCardClick}
             showPlayAgain={!isMultiplayer && !runId && !reachLimit}
             onPlayAgain={runId ? handlePlayNextInRun : startGame}
-            onReturnToLobby={() => {
-              handleLocalStats()
-              resetGame()
-              setWsToken(null)
-              setRunId(null)
-              setAutoStartCountdown(0)
-            }}
+            onReturnToLobby={handleBackToDashboard}
             onCloseGameOver={clearGameOver}
             onAdvanceBot={handleAdvanceBot}
             onEvaluateRound={handleEvaluateRound}
+            onBack={handleBackToDashboard}
           />
           {gameOver?.isGameOver && runId && (
             <div className="container mx-auto px-4 sm:px-8">
@@ -549,13 +552,7 @@ function AppContent() {
           <div className="container mx-auto px-4 sm:px-8 pb-8">
             <button
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-              onClick={() => {
-                handleLocalStats()
-                resetGame()
-                setWsToken(null)
-                setRunId(null)
-                setAutoStartCountdown(0)
-              }}
+              onClick={handleBackToDashboard}
             >
               {t('common.backToDashboard')}
             </button>

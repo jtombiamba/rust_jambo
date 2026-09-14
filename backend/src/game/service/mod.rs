@@ -49,6 +49,30 @@ pub const fn compute_display_position(
     (num_players + actual_pos - my_pos) % num_players
 }
 
+/// Build a played-card slot vector for a snapshot, sized to exactly
+/// `num_players` slots. Each entry is the `card_index` of the card played by
+/// the corresponding seat, ordered clockwise starting from the current round
+/// winner. Unfilled seats are padded with `None` so downstream renderers can
+/// iterate a slot per player.
+pub(crate) fn build_played_card_slots(
+    mut played_pairs: Vec<(i32, usize)>,
+    num_players: usize,
+    winner_pos: usize,
+) -> Vec<Option<i32>> {
+    if num_players == 0 {
+        return Vec::new();
+    }
+    played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
+    let mut slots: Vec<Option<i32>> = played_pairs
+        .into_iter()
+        .map(|(card_idx, _)| Some(card_idx))
+        .collect();
+    if slots.len() < num_players {
+        slots.resize(num_players, None);
+    }
+    slots
+}
+
 pub(crate) fn is_unique_violation(e: &sea_orm::DbErr) -> bool {
     if let sea_orm::DbErr::Exec(exec_err) = e {
         exec_err.to_string().contains("23505")

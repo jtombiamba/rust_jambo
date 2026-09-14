@@ -17,7 +17,7 @@ use crate::cache::UserCache;
 use crate::database::models::{GameStatus, PlayerType, User};
 use crate::database::traits::{DashboardRepoTrait, GameCardRepoTrait, GameRepoTrait};
 use crate::error::AppError;
-use crate::game::service::compute_display_position;
+use crate::game::service::{build_played_card_slots, compute_display_position};
 use crate::messaging::RedisClient;
 use crate::observability::metrics::{record_cache_hit, record_cache_miss};
 
@@ -492,15 +492,7 @@ async fn build_game_state_response(
         vec![None; num_players]
     } else {
         let winner_pos = game.current_winning_player_position.unwrap_or(0) as usize;
-        played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
-        let mut slots: Vec<Option<i32>> = played_pairs
-            .into_iter()
-            .map(|(card_idx, _)| Some(card_idx))
-            .collect();
-        if slots.len() < 4 {
-            slots.resize(4, None);
-        }
-        slots
+        build_played_card_slots(played_pairs, num_players, winner_pos)
     };
 
     let players_json: Vec<PlayerInfoDto> = all_players

@@ -32,9 +32,15 @@ function createPlayers(count: number): GamePlayer[] {
   }));
 }
 
+function setViewport(width: number, height: number) {
+  Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: width });
+  Object.defineProperty(window, 'innerHeight', { writable: true, configurable: true, value: height });
+}
+
 describe('GameTable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setViewport(1024, 768);
   });
 
   describe('Basic rendering', () => {
@@ -265,6 +271,65 @@ describe('GameTable', () => {
     it('adapts layout based on orientation', () => {
       render(<GameTable players={createPlayers(2)} />);
       expect(screen.getByText('Game Table')).toBeInTheDocument();
+    });
+  });
+
+  describe('Spectator mode', () => {
+    it('hides the rules button for spectators', () => {
+      render(<GameTable players={createPlayers(2)} spectatorMode />);
+      expect(screen.queryByRole('button', { name: 'Rules' })).not.toBeInTheDocument();
+    });
+
+    it('shows the rules button for players', () => {
+      render(<GameTable players={createPlayers(2)} />);
+      expect(screen.getByRole('button', { name: 'Rules' })).toBeInTheDocument();
+    });
+
+    it('does not render the mobile top bar for spectators', () => {
+      setViewport(500, 800);
+      render(<GameTable players={createPlayers(2)} spectatorMode />);
+      expect(screen.queryByTestId('mobile-back-button')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Mobile top bar', () => {
+    it('renders back and rules buttons on small screens', () => {
+      setViewport(500, 800);
+      render(<GameTable players={createPlayers(2)} onBack={() => {}} />);
+      expect(screen.getByTestId('mobile-back-button')).toBeInTheDocument();
+      expect(screen.getByTestId('mobile-rules-button')).toBeInTheDocument();
+    });
+
+    it('calls onBack when the mobile back button is clicked', () => {
+      setViewport(500, 800);
+      const onBack = vi.fn();
+      render(<GameTable players={createPlayers(2)} onBack={onBack} />);
+      fireEvent.click(screen.getByTestId('mobile-back-button'));
+      expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders the full-viewport background on small screens', () => {
+      setViewport(500, 800);
+      render(<GameTable players={createPlayers(2)} />);
+      expect(screen.getByTestId('full-viewport-background')).toBeInTheDocument();
+    });
+
+    it('does not render the full-viewport background on desktop', () => {
+      render(<GameTable players={createPlayers(2)} />);
+      expect(screen.queryByTestId('full-viewport-background')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Turn ring', () => {
+    it('renders the turn ring on the current player only', () => {
+      render(<GameTable players={createPlayers(2)} currentTurn={0} />);
+      expect(screen.getByTestId('turn-ring-player-0')).toBeInTheDocument();
+      expect(screen.queryByTestId('turn-ring-player-1')).not.toBeInTheDocument();
+    });
+
+    it('does not render any turn ring when currentTurn is undefined', () => {
+      render(<GameTable players={createPlayers(2)} />);
+      expect(screen.queryByTestId(/turn-ring-/)).not.toBeInTheDocument();
     });
   });
 });

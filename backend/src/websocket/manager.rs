@@ -12,44 +12,8 @@ use tokio::sync::RwLock;
 use tokio::time;
 use uuid::Uuid;
 
-/// A single WebSocket connection is represented by a sender that can forward messages.
-pub type WsSender = tokio::sync::mpsc::UnboundedSender<String>;
-
-/// Connection identifier for tracking individual WebSocket connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConnectionId(pub Uuid);
-
-impl ConnectionId {
-    /// Generate a new unique connection ID.
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-
-    /// Get the underlying UUID.
-    pub fn uuid(&self) -> Uuid {
-        self.0
-    }
-}
-
-impl Default for ConnectionId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Represents a tracked WebSocket connection.
-struct TrackedConnection {
-    sender: WsSender,
-    id: ConnectionId,
-    #[allow(dead_code)]
-    correlation_id: CorrelationId,
-    last_activity: Instant,
-    player_id: Option<Uuid>,
-    player_position: Option<i32>,
-    disconnected: bool,
-    last_pong: Instant,
-    spectator: bool,
-}
+use super::connection::{ConnectionId, TrackedConnection, WsSender};
+use super::routing::{extract_game_id_from_channel, extract_room_id_from_channel, shard_for_id};
 
 /// Inner shared state for the WebSocket manager.
 struct Inner {

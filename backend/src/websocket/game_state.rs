@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::database::models::PlayerType;
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::constants::CARDS_PER_PLAYER;
-use crate::game::service::compute_display_position;
+use crate::game::service::{build_played_card_slots, compute_display_position};
 
 use super::manager::WebSocketManager;
 use super::messages::{GameStatePlayer, OutgoingMessage};
@@ -86,8 +86,8 @@ pub(super) async fn send_game_state_snapshot(
         .await
     {
         Ok(cards) => {
-            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
             let winner_pos = game_model.current_winning_player_position.unwrap_or(0) as usize;
+            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
 
             for card in cards {
                 if let Some(pid) = card.player_id {
@@ -96,15 +96,7 @@ pub(super) async fn send_game_state_snapshot(
                     }
                 }
             }
-            played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
-            let mut slots: Vec<Option<i32>> = played_pairs
-                .into_iter()
-                .map(|(card_idx, _)| Some(card_idx))
-                .collect();
-            if slots.len() < 4 {
-                slots.resize(4, None);
-            }
-            slots
+            build_played_card_slots(played_pairs, num_players, winner_pos)
         }
         Err(e) => {
             error!("Failed to fetch played cards for game {}: {}", game_id, e);
@@ -186,8 +178,8 @@ pub(super) async fn send_snapshots_to_all_players(
         .await
     {
         Ok(cards) => {
-            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
             let winner_pos = game_model.current_winning_player_position.unwrap_or(0) as usize;
+            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
 
             for card in cards {
                 if let Some(pid) = card.player_id {
@@ -196,15 +188,7 @@ pub(super) async fn send_snapshots_to_all_players(
                     }
                 }
             }
-            played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
-            let mut slots: Vec<Option<i32>> = played_pairs
-                .into_iter()
-                .map(|(card_idx, _)| Some(card_idx))
-                .collect();
-            if slots.len() < 4 {
-                slots.resize(4, None);
-            }
-            slots
+            build_played_card_slots(played_pairs, num_players, winner_pos)
         }
         Err(e) => {
             error!("Failed to fetch played cards for game {}: {}", game_id, e);
@@ -344,8 +328,8 @@ pub(super) async fn send_spectator_snapshot(
         .await
     {
         Ok(cards) => {
-            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
             let winner_pos = game_model.current_winning_player_position.unwrap_or(0) as usize;
+            let mut played_pairs: Vec<(i32, usize)> = Vec::new();
 
             for card in cards {
                 if let Some(pid) = card.player_id {
@@ -354,15 +338,7 @@ pub(super) async fn send_spectator_snapshot(
                     }
                 }
             }
-            played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
-            let mut slots: Vec<Option<i32>> = played_pairs
-                .into_iter()
-                .map(|(card_idx, _)| Some(card_idx))
-                .collect();
-            if slots.len() < 4 {
-                slots.resize(4, None);
-            }
-            slots
+            build_played_card_slots(played_pairs, num_players, winner_pos)
         }
         Err(e) => {
             error!(

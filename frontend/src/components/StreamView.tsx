@@ -12,7 +12,7 @@ export default function StreamView() {
   const { t } = useTranslation();
 
   const [players, setPlayers] = useState<Player[]>([]);
-  const [deckSlots, setDeckSlots] = useState<(number | null)[]>([null, null, null, null]);
+  const [deckSlots, setDeckSlots] = useState<(number | null)[]>([]);
   const [remainingCards, setRemainingCards] = useState<Record<string, number>>({});
   const [currentTurn, setCurrentTurn] = useState<number | undefined>(undefined);
   const [roundWinner, setRoundWinner] = useState<RoundWinner | null>(null);

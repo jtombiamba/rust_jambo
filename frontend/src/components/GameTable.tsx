@@ -7,6 +7,7 @@ import CardCollectionAnimation from './CardCollectionAnimation';
 import WinnerRing from './WinnerRing';
 import GameOverModal from './GameOverModal';
 import GameRules from './GameRules';
+import MobileTopBar from './MobileTopBar';
 import { RoundWinner, GameOverData, useStepByStepPhase, useGameStore } from '../stores/useGameStore';
 
 export interface GamePlayer {
@@ -36,6 +37,8 @@ export interface GameTableProps {
   onEvaluateRound?: () => void;
   /** Read-only spectator view: hide all hands and disable interactions. */
   spectatorMode?: boolean;
+  /** Navigate back to the dashboard (mobile top bar). */
+  onBack?: () => void;
 }
 
 type LayoutMode = 'mobile-portrait' | 'mobile-landscape' | 'desktop';
@@ -72,6 +75,7 @@ const GameTable: React.FC<GameTableProps> = ({
   onAdvanceBot,
   onEvaluateRound,
   spectatorMode = false,
+  onBack,
 }) => {
   const { t } = useTranslation();
   const phase = useStepByStepPhase();
@@ -211,26 +215,48 @@ const GameTable: React.FC<GameTableProps> = ({
     );
   };
 
+  const tableBackgroundStyle: React.CSSProperties = {
+    backgroundImage: 'url(/table_background_green.png)',
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+  };
+
+  const isMobile = layoutMode !== 'desktop';
+
   return (
     <div className="container mx-auto p-2 sm:p-4 md:p-8">
-      <div className="flex items-center justify-between mb-4 sm:mb-6">
+      {isMobile && (
+        <div
+          className="fixed inset-0 -z-10"
+          style={tableBackgroundStyle}
+          data-testid="full-viewport-background"
+        />
+      )}
+
+      {!spectatorMode && isMobile && <div className="h-14" />}
+      {!spectatorMode && isMobile && (
+        <MobileTopBar
+          onBack={onBack || (() => {})}
+          onOpenRules={() => setRulesOpen(true)}
+        />
+      )}
+
+      <div className="hidden md:flex items-center justify-between mb-4 sm:mb-6">
         <h2 className="text-xl sm:text-2xl font-bold">{t('game.gameTable')}</h2>
-        <button
-          onClick={() => setRulesOpen(true)}
-          className="px-3 py-1.5 text-sm font-medium bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
-        >
-          {t('dashboard.rules')}
-        </button>
+        {!spectatorMode && (
+          <button
+            onClick={() => setRulesOpen(true)}
+            className="px-3 py-1.5 text-sm font-medium bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
+          >
+            {t('dashboard.rules')}
+          </button>
+        )}
       </div>
 
       <div
         className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px] rounded-xl overflow-hidden"
-        style={{
-          backgroundImage: 'url(/table_background_green.png)',
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-          backgroundRepeat: 'no-repeat',
-        }}
+        style={tableBackgroundStyle}
       >
         <div className="absolute inset-0 bg-black/20 pointer-events-none"></div>
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { AnimatePresence } from 'framer-motion';
 import AnimatedCard from './AnimatedCard';
 import CardFan from './CardFan';
+import './TurnRing.css';
 
 export interface PlayerSlotProps {
   name: string;
@@ -70,10 +71,6 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
     ? (cardIndex: number) => onCardClick(cardIndex)
     : undefined;
 
-  const ringClass = isCurrentTurn
-    ? 'ring-4 ring-red-500 ring-offset-2'
-    : '';
-
   const renderCards = () => {
     if (displayCards.length === 0) {
       return <div className="text-gray-500 italic text-sm">No cards</div>;
@@ -116,9 +113,10 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
 
   return (
     <div
-      className={`flex flex-col items-center p-2 sm:p-4 ${positionStyles[position]} ${ringClass} rounded-lg`}
+      className={`relative flex flex-col items-center p-2 sm:p-4 ${positionStyles[position]} rounded-lg`}
       data-testid={`player-slot-${playerId}`}
     >
+      {isCurrentTurn && <div className="turn-ring" data-testid={`turn-ring-${playerId}`} />}
       <div className={`${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2 flex items-center gap-1`}>
         {name} {type === 'bot' && '🤖'}
         {isThinking && (

@@ -54,8 +54,8 @@ impl WebSocketManager {
                         let payload: String = msg.get_payload().unwrap_or_default();
                         tracing::debug!("Redis message on channel {} (shard {})", channel, shard);
 
-                        if let Some(game_id) = Self::extract_game_id_from_channel(&channel) {
-                            if Self::shard_for_game(game_id, shard_count) == shard {
+                        if let Some(game_id) = extract_game_id_from_channel(&channel) {
+                            if shard_for_id(game_id, shard_count) == shard {
                                 match serde_json::from_str::<GameEvent>(&payload) {
                                     Ok(event) => {
                                         manager.route_event(game_id, event).await;
@@ -76,8 +76,8 @@ impl WebSocketManager {
                                     }
                                 }
                             }
-                        } else if let Some(room_id) = Self::extract_room_id_from_channel(&channel) {
-                            if Self::shard_for_game(room_id, shard_count) == shard {
+                        } else if let Some(room_id) = extract_room_id_from_channel(&channel) {
+                            if shard_for_id(room_id, shard_count) == shard {
                                 match serde_json::from_str::<RoomEvent>(&payload) {
                                     Ok(event) => {
                                         manager.route_room_event(room_id, event).await;
@@ -188,28 +188,8 @@ impl WebSocketManager {
         self.send_to_spectators(game_id, &event.to_json()).await;
     }
 
-    fn shard_for_game(game_id: Uuid, shard_count: usize) -> usize {
-        let bytes = game_id.as_bytes();
-        let hash = bytes
-            .iter()
-            .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
-        (hash as usize) % shard_count
-    }
-
     /// Route a parsed room event to broadcast to room connections.
     async fn route_room_event(&self, room_id: Uuid, event: RoomEvent) {
         self.broadcast_to_room(room_id, &event.to_json()).await;
-    }
-
-    /// Extract game ID from a Redis channel name of the form "game:{uuid}".
-    fn extract_game_id_from_channel(channel: &str) -> Option<Uuid> {
-        const PREFIX: &str = "game:";
-        channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
-    }
-
-    /// Extract room ID from a Redis channel name of the form "room:{uuid}".
-    fn extract_room_id_from_channel(channel: &str) -> Option<Uuid> {
-        const PREFIX: &str = "room:";
-        channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
     }
 }
