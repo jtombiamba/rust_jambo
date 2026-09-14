@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RegisterRequest {
     pub pseudo: String,
     pub email: String,
@@ -9,32 +9,32 @@ pub struct RegisterRequest {
     pub password_confirm: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LoginRequest {
     pub email: String,
     pub password: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ForgotPasswordRequest {
     pub email: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ResetPasswordRequest {
     pub token: String,
     pub password: String,
     pub password_confirm: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuthResponse {
     pub success: bool,
     pub message: String,
     pub user: Option<UserInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserInfo {
     pub id: Uuid,
     pub pseudo: String,
@@ -42,14 +42,20 @@ pub struct UserInfo {
     pub language: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ForgotPasswordResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ResetPasswordResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct LogoutResponse {
     pub success: bool,
     pub message: String,
 }

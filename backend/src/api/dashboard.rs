@@ -3,12 +3,16 @@ use std::sync::Arc;
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, ResponseError};
 use uuid::Uuid;
 
-use crate::api::dto::dashboard::PaginationParams;
+use crate::api::dto::dashboard::{GameHistoryResponse, PaginationParams, PlayerProfileResponse};
 use crate::api::dto::requests::InviteActionQuery;
 use crate::api::dto::requests::{
     CreateGameRequest, PlayCardRequest, SendInvitesRequest, UserSearchQuery,
 };
-use crate::api::dto::responses::{PlayCardResponse, RespondToInviteResponse};
+use crate::api::dto::responses::{
+    ApiErrorResponse, InvitationsResponse, MultiplayerGameResponse, PlayCardResponse,
+    QuickGameResponse, RespondToInviteResponse, SendInvitesResponse, SpectateTokenResponse,
+    UserSearchResponse,
+};
 use crate::api::services::dashboard_service::{DashboardService, SendInvitesParams};
 use crate::auth::config::AuthConfig;
 use crate::auth::extractors::AuthenticatedUser;
@@ -40,6 +44,16 @@ macro_rules! service_response {
     }};
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/me/profile",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    responses(
+        (status = 200, description = "Player profile", body = PlayerProfileResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn get_profile(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
@@ -47,6 +61,17 @@ pub async fn get_profile(
     service_response!(service.get_profile(auth_user.user_id).await)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/me/games",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(PaginationParams),
+    responses(
+        (status = 200, description = "Game history", body = GameHistoryResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn list_games(
     auth_user: AuthenticatedUser,
     query: web::Query<PaginationParams>,
@@ -59,6 +84,18 @@ pub async fn list_games(
     )
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/me/games/{game_id}",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(("game_id" = Uuid, Path, description = "Game ID")),
+    responses(
+        (status = 200, description = "Game state", body = QuickGameResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 404, description = "Game not found", body = ApiErrorResponse),
+    )
+)]
 pub async fn get_game(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
@@ -67,6 +104,16 @@ pub async fn get_game(
     service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/me/active-game",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    responses(
+        (status = 200, description = "Active game", body = QuickGameResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn get_active_game(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
@@ -74,6 +121,21 @@ pub async fn get_active_game(
     service_response!(service.get_active_game(auth_user.user_id).await)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/me/games",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    request_body = CreateGameRequest,
+    responses(
+        (status = 201, description = "Game created", content(
+            (QuickGameResponse = "application/json"),
+            (MultiplayerGameResponse = "application/json"),
+        )),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn create_game(
     auth_user: AuthenticatedUser,
     body: web::Json<CreateGameRequest>,
@@ -134,6 +196,20 @@ pub async fn create_game(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/games/{game_id}/invites",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(("game_id" = Uuid, Path, description = "Game ID")),
+    request_body = SendInvitesRequest,
+    responses(
+        (status = 200, description = "Invites sent", body = SendInvitesResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 409, description = "Player already in game", body = ApiErrorResponse),
+    )
+)]
 pub async fn send_invites(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
@@ -184,10 +260,11 @@ pub async fn send_invites(
     }
 
     if invited_user_ids.is_empty() {
-        return HttpResponse::Ok().json(serde_json::json!({
-            "success": true,
-            "message": i18n.t("game.no_valid_users")
-        }));
+        return HttpResponse::Ok().json(SendInvitesResponse {
+            success: true,
+            message: i18n.t("game.no_valid_users"),
+            email_errors: None,
+        });
     }
 
     match orchestrator
@@ -210,16 +287,31 @@ pub async fn send_invites(
                     email_errors += 1;
                 }
             }
-            HttpResponse::Ok().json(serde_json::json!({
-                "success": true,
-                "message": i18n.t("game.invites_sent"),
-                "email_errors": email_errors
-            }))
+            HttpResponse::Ok().json(SendInvitesResponse {
+                success: true,
+                message: i18n.t("game.invites_sent"),
+                email_errors: Some(email_errors),
+            })
         }
         Err(e) => AppError::from(e).error_response(),
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/games/{game_id}/respond",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(
+        ("game_id" = Uuid, Path, description = "Game ID"),
+        InviteActionQuery,
+    ),
+    responses(
+        (status = 200, description = "Invite response", body = RespondToInviteResponse),
+        (status = 400, description = "Invalid action", body = ApiErrorResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn respond_to_invite(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
@@ -273,6 +365,16 @@ pub async fn respond_to_invite(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/me/invitations",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    responses(
+        (status = 200, description = "Pending invitations", body = InvitationsResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn get_invitations(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<DashboardServiceType>>,
@@ -280,6 +382,18 @@ pub async fn get_invitations(
     service_response!(service.get_invitations(auth_user.user_id).await)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/games/{game_id}/start",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(("game_id" = Uuid, Path, description = "Game ID")),
+    responses(
+        (status = 200, description = "Game started", body = QuickGameResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 403, description = "Not the creator", body = ApiErrorResponse),
+    )
+)]
 pub async fn start_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
@@ -294,6 +408,20 @@ pub async fn start_game(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/games/{game_id}/play",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(("game_id" = Uuid, Path, description = "Game ID")),
+    request_body = PlayCardRequest,
+    responses(
+        (status = 200, description = "Card played", body = PlayCardResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 403, description = "Not a player or not your turn", body = ApiErrorResponse),
+    )
+)]
 pub async fn play_game(
     req: HttpRequest,
     auth_user: AuthenticatedUser,
@@ -334,6 +462,18 @@ pub async fn play_game(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/games/{game_id}/me",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(("game_id" = Uuid, Path, description = "Game ID")),
+    responses(
+        (status = 200, description = "Game state", body = QuickGameResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 404, description = "Game not found", body = ApiErrorResponse),
+    )
+)]
 pub async fn game_state(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
@@ -342,6 +482,17 @@ pub async fn game_state(
     service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/users/search",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(UserSearchQuery),
+    responses(
+        (status = 200, description = "Matching users", body = UserSearchResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn search_users(
     _auth_user: AuthenticatedUser,
     query: web::Query<UserSearchQuery>,
@@ -350,6 +501,18 @@ pub async fn search_users(
     service_response!(service.search_users(&query.into_inner()).await)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/games/{game_id}/spectate-token",
+    tag = "dashboard",
+    security(("cookie_auth" = [])),
+    params(("game_id" = Uuid, Path, description = "Game ID")),
+    responses(
+        (status = 200, description = "Spectator token minted", body = SpectateTokenResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 403, description = "Not a participant", body = ApiErrorResponse),
+    )
+)]
 /// Mint a private, short-lived spectator token for the stream view.
 /// Only a game participant may mint a token, and the token grants read-only
 /// access to public game state (no hand data) via the WebSocket.
@@ -388,10 +551,7 @@ pub async fn mint_spectate_token(
                 "{}/game/{}/stream?token={}",
                 auth_config.frontend_url, game_id, token
             );
-            HttpResponse::Ok().json(serde_json::json!({
-                "token": token,
-                "url": url,
-            }))
+            HttpResponse::Ok().json(SpectateTokenResponse { token, url })
         }
         Err(e) => {
             tracing::error!(

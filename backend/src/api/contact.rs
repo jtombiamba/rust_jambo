@@ -2,11 +2,11 @@ use actix_web::{web, HttpResponse};
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::api::dto::responses::ApiErrorResponse;
+use crate::api::dto::responses::{ApiErrorResponse, ContactSentResponse};
 use crate::i18n::I18n;
 use crate::mailer::Mailer;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct ContactRequest {
     pub name: String,
     pub email: String,
@@ -14,6 +14,18 @@ pub struct ContactRequest {
     pub message: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/contact",
+    tag = "contact",
+    request_body = ContactRequest,
+    responses(
+        (status = 200, description = "Contact message sent", body = ContactSentResponse),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+        (status = 429, description = "Rate limited", body = ApiErrorResponse),
+        (status = 500, description = "Email send failure", body = ApiErrorResponse),
+    )
+)]
 pub async fn send_contact(
     body: web::Json<ContactRequest>,
     mailer: web::Data<Arc<dyn Mailer>>,
@@ -47,9 +59,9 @@ pub async fn send_contact(
         )
         .await
     {
-        Ok(()) => HttpResponse::Ok().json(serde_json::json!({
-            "message": i18n.t("contact.sent")
-        })),
+        Ok(()) => HttpResponse::Ok().json(ContactSentResponse {
+            message: i18n.t("contact.sent"),
+        }),
         Err(e) => {
             tracing::error!("Failed to send contact form: {}", e);
             let request_id = crate::observability::CORRELATION_ID

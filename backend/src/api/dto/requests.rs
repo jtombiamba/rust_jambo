@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::error::ValidationError;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct PlayCardRequest {
     pub player_id: Uuid,
     pub card_index: i32,
@@ -22,7 +22,7 @@ fn default_max_players() -> i16 {
     4
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateGameRequest {
     #[serde(default = "default_bet")]
     pub bet: i32,
@@ -71,7 +71,7 @@ impl CreateGameRequest {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct InviteActionQuery {
     pub action: String,
 }
@@ -87,7 +87,7 @@ impl InviteActionQuery {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SendInvitesRequest {
     #[serde(default)]
     pub user_ids: Vec<Uuid>,
@@ -95,7 +95,7 @@ pub struct SendInvitesRequest {
     pub pseudos: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct UserSearchQuery {
     pub q: String,
     #[serde(default = "default_search_limit")]
@@ -106,7 +106,7 @@ fn default_search_limit() -> u64 {
     10
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CaptureOrderRequest {
     pub order_id: String,
 }

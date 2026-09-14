@@ -11,7 +11,7 @@ use crate::observability::metrics::{record_cache_hit, record_cache_miss};
 const LEADERBOARD_WINS_KEY: &str = "leaderboard:wins";
 const LEADERBOARD_STREAK_KEY: &str = "leaderboard:streak";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LeaderboardEntry {
     pub rank: u64,
     pub user_id: Uuid,
@@ -21,7 +21,7 @@ pub struct LeaderboardEntry {
     pub is_current_user: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LeaderboardResponse {
     pub top_by_wins: Vec<LeaderboardEntry>,
     pub top_by_streak: Vec<LeaderboardEntry>,

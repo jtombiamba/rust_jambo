@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use crate::api::dto::requests::PlayCardRequest;
 use crate::api::dto::responses::{
-    AdvanceBotResponse, EvaluateRoundResponse, PlayCardResponse, PlayerActionRequest,
+    AdvanceBotResponse, ApiErrorResponse, EvaluateRoundResponse, PlayCardResponse,
+    PlayerActionRequest,
 };
 use crate::auth::config::AuthConfig;
 use crate::error::AppError;
@@ -13,6 +14,18 @@ use crate::game::service::GamePlayService;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/play",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = PlayCardRequest,
+    responses(
+        (status = 200, description = "Card played successfully", body = PlayCardResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 403, description = "Not your turn", body = ApiErrorResponse),
+    )
+)]
 #[post("/game/{id}/play")]
 pub async fn play_card(
     req: HttpRequest,
@@ -51,6 +64,18 @@ pub async fn play_card(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/advance-bot",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = PlayerActionRequest,
+    responses(
+        (status = 200, description = "Bot advanced", body = AdvanceBotResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 403, description = "Not your turn", body = ApiErrorResponse),
+    )
+)]
 pub async fn advance_bot(
     req: HttpRequest,
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
@@ -159,6 +184,18 @@ pub async fn advance_bot(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/evaluate-round",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = PlayerActionRequest,
+    responses(
+        (status = 200, description = "Round evaluated", body = EvaluateRoundResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 403, description = "Not your turn", body = ApiErrorResponse),
+    )
+)]
 pub async fn evaluate_round(
     req: HttpRequest,
     orchestrator: web::Data<Arc<dyn GamePlayService>>,

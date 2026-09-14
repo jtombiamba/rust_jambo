@@ -35,6 +35,7 @@ pub struct Config {
     pub db_pool_max_lifetime_secs: u64,
     pub db_pool_metrics_interval_secs: u64,
     pub benchmark_mode: bool,
+    pub enable_api_docs: bool,
     pub benchmark_bot_delay_ms: u64,
     pub benchmark_skip_credit_check: bool,
     pub freeze_duration_secs: u64,
@@ -307,6 +308,7 @@ impl Config {
             .set_default("db_pool_max_lifetime_secs", "1800")?
             .set_default("db_pool_metrics_interval_secs", "30")?
             .set_default("benchmark_mode", "false")?
+            .set_default("enable_api_docs", "false")?
             .set_default("benchmark_bot_delay_ms", "100")?
             .set_default("benchmark_skip_credit_check", "true")?
             .set_default("freeze_duration_secs", "86400")?
@@ -481,6 +483,10 @@ impl Config {
                 .parse()
                 .unwrap_or(30),
             benchmark_mode: env::var("BENCHMARK_MODE")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            enable_api_docs: env::var("ENABLE_API_DOCS")
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
                 .unwrap_or(false),

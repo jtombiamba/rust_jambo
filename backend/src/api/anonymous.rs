@@ -2,6 +2,12 @@ use actix_web::{get, HttpResponse, Responder};
 
 use crate::api::dto::responses::AnonymousStatsResponse;
 
+#[utoipa::path(
+    get,
+    path = "/api/anonymous",
+    tag = "anonymous",
+    responses((status = 200, description = "Anonymous gameplay stats", body = AnonymousStatsResponse))
+)]
 #[get("/anonymous")]
 pub async fn get_anonymous_stats() -> impl Responder {
     let stats = AnonymousStatsResponse {

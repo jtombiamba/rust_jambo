@@ -1,6 +1,6 @@
-use actix_web::{get, web, HttpResponse, Responder};
-use prometheus::Encoder;
+use actix_web::{web, HttpResponse};
 use std::sync::Arc;
+use utoipa::OpenApi;
 
 use crate::api::anonymous::get_anonymous_stats;
 use crate::api::fallback;
@@ -8,26 +8,11 @@ use crate::api::game::{advance_bot, evaluate_round, play_card};
 use crate::api::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::api::quickie::create_quick_game;
 use crate::api::room;
+use crate::api::system::{health_check, metrics};
 use crate::bootstrap::AppState;
 use crate::game::service::{
     BenchmarkService, GameLifecycleService, GamePlayService, InviteService,
 };
-
-#[get("/health")]
-pub async fn health_check() -> impl Responder {
-    HttpResponse::Ok().body("OK")
-}
-
-#[get("/metrics")]
-pub async fn metrics() -> HttpResponse {
-    let encoder = prometheus::TextEncoder::new();
-    let metric_families = prometheus::gather();
-    let mut buffer = vec![];
-    encoder.encode(&metric_families, &mut buffer).unwrap();
-    HttpResponse::Ok()
-        .content_type("text/plain; version=0.0.4")
-        .body(buffer)
-}
 
 pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     let auth_mw = state.auth_middleware.clone();
@@ -283,5 +268,29 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         );
 
     cfg.service(crate::websocket::scope());
+    configure_api_docs(cfg, state);
     cfg.default_service(web::route().to(fallback::not_found));
+}
+
+fn configure_api_docs(cfg: &mut web::ServiceConfig, state: &AppState) {
+    if state.config.enable_api_docs {
+        cfg.service(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui/{_:.*}").url(
+            "/api-docs/openapi.json",
+            crate::api::openapi::ApiDoc::openapi(),
+        ));
+    } else {
+        cfg.route("/api-docs/openapi.json", web::get().to(serve_openapi_json));
+    }
+}
+
+async fn serve_openapi_json() -> HttpResponse {
+    match crate::api::openapi::ApiDoc::openapi().to_pretty_json() {
+        Ok(json) => HttpResponse::Ok()
+            .content_type("application/json")
+            .body(json),
+        Err(e) => {
+            tracing::error!("Failed to serialize OpenAPI spec: {e}");
+            HttpResponse::InternalServerError().body("Failed to serialize OpenAPI spec")
+        }
+    }
 }

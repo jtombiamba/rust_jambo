@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::database::models::RunStatus;
 use crate::game::service::types::{MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StartNextGameResponse {
     pub game_id: Uuid,
     pub game_index: i32,
@@ -16,7 +16,7 @@ pub struct StartNextGameResponse {
     pub status: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CurrentGameResponse {
     pub run_id: Uuid,
     pub game_id: Uuid,
@@ -24,7 +24,7 @@ pub struct CurrentGameResponse {
     pub status: RunStatus,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateRunResponse {
     pub run_id: Uuid,
     pub room_id: Uuid,
@@ -34,14 +34,14 @@ pub struct CreateRunResponse {
     pub status: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct JoinRunResponse {
     pub run_id: Uuid,
     pub provisioned_credits: i32,
     pub profile_credit_remaining: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActiveRunPlayerInfo {
     pub user_id: Uuid,
     pub pseudo: String,
@@ -50,14 +50,14 @@ pub struct ActiveRunPlayerInfo {
     pub kicked: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActiveRunGameInfo {
     pub game_id: Uuid,
     pub game_index: i32,
     pub status: RunStatus,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActiveRunResponse {
     pub id: Uuid,
     pub room_id: Uuid,
@@ -69,7 +69,7 @@ pub struct ActiveRunResponse {
     pub games: Vec<ActiveRunGameInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RoomListItem {
     pub id: Uuid,
     pub name: String,
@@ -79,21 +79,21 @@ pub struct RoomListItem {
     pub member_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RoomMemberInfo {
     pub user_id: Uuid,
     pub pseudo: String,
     pub joined_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RoomGameInfo {
     pub game_id: Uuid,
     pub game_index: i32,
     pub status: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ActiveRunSummary {
     pub id: Uuid,
     pub num_games: i32,
@@ -104,7 +104,7 @@ pub struct ActiveRunSummary {
     pub current_game: Option<RoomGameInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RoomDetailResponse {
     pub id: Uuid,
     pub name: String,
@@ -116,7 +116,7 @@ pub struct RoomDetailResponse {
     pub active_run: Option<ActiveRunSummary>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RunListItem {
     pub id: Uuid,
     pub num_games: i32,
@@ -126,7 +126,7 @@ pub struct RunListItem {
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct PlayCardResponse {
     pub success: bool,
     pub message: String,
@@ -137,7 +137,7 @@ pub struct PlayCardResponse {
     pub current_round: i32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct PlayerInfoDto {
     pub id: Uuid,
     #[serde(rename = "type")]
@@ -150,7 +150,7 @@ pub struct PlayerInfoDto {
     pub is_current_user: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct QuickGameResponse {
     pub game_id: Uuid,
     pub players: Vec<PlayerInfoDto>,
@@ -170,14 +170,14 @@ pub struct QuickGameResponse {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct GameListItem {
     pub id: Uuid,
     pub status: String,
     pub bet: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct MultiplayerGameResponse {
     pub game_id: Uuid,
     pub status: String,
@@ -186,7 +186,7 @@ pub struct MultiplayerGameResponse {
     pub invite_expires_at: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AnonymousStatsResponse {
     pub games_allowed: i32,
     pub games_played: i32,
@@ -194,7 +194,7 @@ pub struct AnonymousStatsResponse {
     pub credits: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RespondToInviteResponse {
     pub success: bool,
     pub message: String,
@@ -211,7 +211,7 @@ pub struct RespondToInviteResponse {
     pub game_status: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct InvitationItem {
     pub invite_id: Uuid,
     pub game_id: Uuid,
@@ -223,48 +223,48 @@ pub struct InvitationItem {
     pub expires_at: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct InvitationsResponse {
     pub invitations: Vec<InvitationItem>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserSearchItem {
     pub id: Uuid,
     pub pseudo: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UserSearchResponse {
     pub users: Vec<UserSearchItem>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UnfreezeOrderResponse {
     pub order_id: String,
     pub approval_url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UnfreezeCaptureResponse {
     pub success: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TopupOrderResponse {
     pub order_id: String,
     pub approval_url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TopupCaptureResponse {
     pub success: bool,
     pub message: String,
     pub credit: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ApiErrorResponse {
     pub success: bool,
     pub error: String,
@@ -275,7 +275,7 @@ pub struct ApiErrorResponse {
     pub request_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AdvanceBotResponse {
     pub success: bool,
     pub card_played: i32,
@@ -285,7 +285,7 @@ pub struct AdvanceBotResponse {
     pub game_ended: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct EvaluateRoundResponse {
     pub success: bool,
     pub round_number: i32,
@@ -294,9 +294,43 @@ pub struct EvaluateRoundResponse {
     pub game_ended: bool,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
 pub struct PlayerActionRequest {
     pub player_id: Uuid,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SendInvitesResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_errors: Option<u32>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SpectateTokenResponse {
+    pub token: String,
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RoomCreatedResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub creator_id: Uuid,
+    pub invitation_code: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SimpleSuccessResponse {
+    pub success: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ContactSentResponse {
+    pub message: String,
 }
 
 impl From<PlayCardOutcome> for PlayCardResponse {

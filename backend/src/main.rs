@@ -57,13 +57,12 @@ async fn main() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[actix_web::test]
     async fn test_health_check() {
-        let app =
-            actix_web::test::init_service(actix_web::App::new().service(routes::health_check))
-                .await;
+        let app = actix_web::test::init_service(
+            actix_web::App::new().service(crate::api::system::health_check),
+        )
+        .await;
         let req = actix_web::test::TestRequest::get()
             .uri("/health")
             .to_request();
@@ -75,8 +74,10 @@ mod tests {
 
     #[actix_web::test]
     async fn test_metrics() {
-        let app =
-            actix_web::test::init_service(actix_web::App::new().service(routes::metrics)).await;
+        let app = actix_web::test::init_service(
+            actix_web::App::new().service(crate::api::system::metrics),
+        )
+        .await;
         let req = actix_web::test::TestRequest::get()
             .uri("/metrics")
             .to_request();
@@ -97,8 +98,10 @@ mod tests {
     #[actix_web::test]
     async fn test_metrics_contains_default_metrics() {
         crate::observability::metrics_init::init_all();
-        let app =
-            actix_web::test::init_service(actix_web::App::new().service(routes::metrics)).await;
+        let app = actix_web::test::init_service(
+            actix_web::App::new().service(crate::api::system::metrics),
+        )
+        .await;
         let req = actix_web::test::TestRequest::get()
             .uri("/metrics")
             .to_request();

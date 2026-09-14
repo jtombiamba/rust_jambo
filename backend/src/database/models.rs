@@ -213,6 +213,21 @@ impl std::fmt::Display for RunStatus {
     }
 }
 
+impl utoipa::PartialSchema for RunStatus {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::schema::Object::builder()
+            .schema_type(utoipa::openapi::schema::Type::String)
+            .enum_values(Some(vec![
+                serde_json::Value::String("active".to_string()),
+                serde_json::Value::String("cancelled".to_string()),
+                serde_json::Value::String("completed".to_string()),
+            ]))
+            .into()
+    }
+}
+
+impl utoipa::ToSchema for RunStatus {}
+
 impl std::fmt::Display for GameStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -549,3 +564,20 @@ pub use player_profile::Model as PlayerProfile;
 pub use room::Model as Room;
 pub use room_member::Model as RoomMember;
 pub use user::Model as User;
+
+#[cfg(test)]
+mod run_status_schema_tests {
+    use super::RunStatus;
+    use utoipa::PartialSchema;
+
+    #[test]
+    fn run_status_schema_matches_serialized_values() {
+        let schema = RunStatus::schema();
+        let json = serde_json::to_value(&schema).expect("schema must serialize");
+        assert_eq!(json["type"], "string");
+        assert_eq!(
+            json["enum"],
+            serde_json::json!(["active", "cancelled", "completed"])
+        );
+    }
+}

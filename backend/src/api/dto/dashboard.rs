@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PlayerProfileResponse {
     pub credit: i32,
     pub game_played: i32,
@@ -10,7 +10,7 @@ pub struct PlayerProfileResponse {
     pub frozen_until: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct GameHistoryItem {
     pub game_id: String,
     pub status: String,
@@ -20,7 +20,7 @@ pub struct GameHistoryItem {
     pub player_count: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct GameHistoryResponse {
     pub games: Vec<GameHistoryItem>,
     pub total: u64,
@@ -28,7 +28,7 @@ pub struct GameHistoryResponse {
     pub per_page: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct PaginationParams {
     pub page: Option<u64>,
     pub per_page: Option<u64>,
