@@ -47,6 +47,19 @@ async fn main() -> Result<()> {
     tokio::spawn(metrics_server);
     info!("Metrics server listening on http://{}/metrics", bind_addr);
 
+    // Periodically publish process CPU/memory usage for this worker.
+    tokio::spawn(async {
+        let mut sys = sysinfo::System::new();
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            jambo_backend::observability::metrics::update_process_metrics(
+                &mut sys,
+                "scheduler_worker",
+            );
+        }
+    });
+
     let db_connection: DatabaseConnection = database::create_connection(&config)
         .await
         .context("Failed to create database connection")?;

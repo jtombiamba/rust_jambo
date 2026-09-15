@@ -512,3 +512,34 @@ pub static WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL: Lazy<Counter> = Lazy::new(|| {
     )
     .unwrap()
 });
+
+/// Collects CPU and memory usage for the current process and publishes them
+/// to the `cpu_usage_percent` and `memory_usage_bytes` gauges, labelled by
+/// `process` (e.g. "backend", "ai_worker", "scheduler_worker").
+///
+/// The Rust `prometheus` crate does not auto-export process metrics (unlike
+/// the Go client's `process_cpu_seconds_total`), so this must be called
+/// periodically from a background task in each binary.
+///
+/// `sys` must be reused across calls so that `cpu_usage()` can compute a
+/// delta between successive refreshes; creating a fresh `System` on every
+/// call would always report 0% CPU.
+///
+/// NOTE: `ProcessesToUpdate::All` is required (not `Some(&[pid])`). In
+/// `sysinfo` 0.31, per-process CPU usage is only computed inside
+/// `clear_procs`, which is invoked exclusively for `ProcessesToUpdate::All`.
+/// Using `Some(&[pid])` refreshes the process entry but never runs
+/// `compute_cpu_usage`, so `cpu_usage()` would stay at its initial `0.`.
+pub fn update_process_metrics(sys: &mut sysinfo::System, process: &str) {
+    use sysinfo::{Pid, ProcessesToUpdate};
+
+    let pid = Pid::from(std::process::id() as usize);
+    sys.refresh_processes(ProcessesToUpdate::All);
+
+    if let Some(proc_info) = sys.process(pid) {
+        let cpu = proc_info.cpu_usage() as f64;
+        let mem = proc_info.memory() as f64;
+        CPU_USAGE_PERCENT.with_label_values(&[process]).set(cpu);
+        MEMORY_USAGE_BYTES.with_label_values(&[process]).set(mem);
+    }
+}

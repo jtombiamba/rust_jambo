@@ -307,8 +307,7 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--web.route-prefix=/prometheus"
-      - "--web.external-url=/prometheus"
+      - "--web.enable-remote-write-receiver"
     networks:
       - internal
     expose:

@@ -113,6 +113,16 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Periodically publish process CPU/memory usage for this worker.
+    tokio::spawn(async {
+        let mut sys = sysinfo::System::new();
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            metrics::update_process_metrics(&mut sys, "ai_worker");
+        }
+    });
+
     let max_concurrent = std::env::var("AI_WORKER_MAX_CONCURRENT")
         .ok()
         .and_then(|v| v.parse().ok())
