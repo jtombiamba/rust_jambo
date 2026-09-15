@@ -420,7 +420,72 @@ test.describe('Quickie game — bot chain with delays', () => {
       });
     }, { gid: gameId, hid: humanId, bid1: bot1Id, bid2: bot2Id });
 
-    // Simulate reconnection via game_state_snapshot while replay is active
+    // Simulate reconnection via game_state_snapshot while replay is active.
+    // rank points to a bot (position 1), meaning the human already played, so
+    // the snapshot deck must be applied instantly (no paced replay).
+    await page.evaluate(({ gid }: { gid: string }) => {
+      const mock = (window as unknown as {
+        __mockWebSocket: { simulateMessage: (data: Record<string, unknown>) => void };
+      }).__mockWebSocket;
+
+      mock.simulateMessage({
+        type: 'game_state_snapshot',
+        game_id: gid,
+        roll: 1,
+        rank: 1,
+        status: 'playing',
+        current_winning_card: null,
+        current_winning_player_position: null,
+        players: [
+          {
+            id: 'player-human',
+            name: 'You',
+            position: 0,
+            display_position: 0,
+            player_type: 'human',
+          },
+          {
+            id: 'player-bot-1',
+            name: 'Bot 1',
+            position: 1,
+            display_position: 1,
+            player_type: 'bot',
+          },
+          {
+            id: 'player-bot-2',
+            name: 'Bot 2',
+            position: 2,
+            display_position: 2,
+            player_type: 'bot',
+          },
+          {
+            id: 'player-bot-3',
+            name: 'Bot 3',
+            position: 3,
+            display_position: 3,
+            player_type: 'bot',
+          },
+        ],
+        played_cards: [0, 5, 12, 20],
+      });
+    }, { gid: gameId });
+
+    // Snapshot should have been applied — deck has 4 cards now
+    await page.waitForTimeout(500);
+    const deckSlots = page.locator('[data-testid^="deck-slot-"]');
+    const filledSlots = deckSlots.filter({ has: page.locator('[data-testid^="card-"]') });
+    await expect(filledSlots).toHaveCount(4);
+  });
+
+  test('reconnect mid-round reveals snapshot cards progressively', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await page.getByRole('button', { name: 'Start a quick game' }).click();
+    await expect(page.getByText('Game Table')).toBeVisible();
+
+    // It is the human's turn (rank 0) but two bots already played cards 5 and
+    // 12. The snapshot deck must reveal one card at a time, starting only once
+    // the connection banner disappears.
     await page.evaluate(({ gid }: { gid: string }) => {
       const mock = (window as unknown as {
         __mockWebSocket: { simulateMessage: (data: Record<string, unknown>) => void };
@@ -464,15 +529,19 @@ test.describe('Quickie game — bot chain with delays', () => {
             player_type: 'bot',
           },
         ],
-        played_cards: [0, 5, 12, 20],
+        played_cards: [5, 12, null, null],
       });
     }, { gid: gameId });
 
-    // Snapshot should have been applied — deck has 4 cards now
-    await page.waitForTimeout(500);
     const deckSlots = page.locator('[data-testid^="deck-slot-"]');
-    const filledSlots = deckSlots.filter({ has: page.locator('[data-testid^="card-"]') });
-    await expect(filledSlots).toHaveCount(4);
+    const filledSlots = () => deckSlots.filter({ has: page.locator('[data-testid^="card-"]') });
+
+    // No cards revealed yet — the countdown starts only after the banner clears.
+    await expect(filledSlots()).toHaveCount(0);
+
+    // The deck must fill progressively: first one card, then two.
+    await expect(filledSlots()).toHaveCount(1, { timeout: 5000 });
+    await expect(filledSlots()).toHaveCount(2, { timeout: 5000 });
   });
 
   test('step-by-step applies bot card_played and turn_changed immediately (no buffering)', async ({ page }) => {

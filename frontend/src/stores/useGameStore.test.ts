@@ -357,4 +357,69 @@ describe('useGameStore', () => {
       expect(state.gameOver?.isGameOver).toBe(true);
     });
   });
+
+  describe('snapshot replay', () => {
+    it('reveals slots one at a time and clears flags when done', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1), makeBotPlayer('c', 2), makeBotPlayer('d', 3)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10, null);
+
+      store.startSnapshotReplay([5, 12, null, null], 100);
+
+      let state = useGameStore.getState();
+      expect(state.isSnapshotReplaying).toBe(true);
+      expect(state.isReplayingBots).toBe(true);
+      expect(state.isBotChainActive).toBe(true);
+      expect(state.deckSlots).toEqual([null, null, null, null]);
+
+      vi.advanceTimersByTime(100);
+      state = useGameStore.getState();
+      expect(state.deckSlots).toEqual([5, null, null, null]);
+
+      vi.advanceTimersByTime(100);
+      state = useGameStore.getState();
+      expect(state.deckSlots).toEqual([5, 12, null, null]);
+
+      vi.advanceTimersByTime(100);
+      state = useGameStore.getState();
+      expect(state.deckSlots).toEqual([5, 12, null, null]);
+      expect(state.isSnapshotReplaying).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.botReplayTimerId).toBeNull();
+    });
+
+    it('does nothing when there are no cards to reveal', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10, [null, null]);
+
+      store.startSnapshotReplay([null, null], 100);
+
+      const state = useGameStore.getState();
+      expect(state.isSnapshotReplaying).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.deckSlots).toEqual([null, null]);
+    });
+
+    it('cancelBotReplay stops an in-flight snapshot reveal', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1), makeBotPlayer('c', 2), makeBotPlayer('d', 3)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10, null);
+
+      store.startSnapshotReplay([5, 12, null, null], 100);
+      vi.advanceTimersByTime(100);
+      expect(useGameStore.getState().deckSlots).toEqual([5, null, null, null]);
+
+      store.cancelBotReplay();
+      const state = useGameStore.getState();
+      expect(state.isSnapshotReplaying).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.botReplayTimerId).toBeNull();
+
+      vi.advanceTimersByTime(1000);
+      expect(useGameStore.getState().deckSlots).toEqual([5, null, null, null]);
+    });
+  });
 });

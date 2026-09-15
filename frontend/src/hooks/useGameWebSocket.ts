@@ -21,12 +21,15 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     addPendingEvent,
     cancelBotReplay,
     startBotReplay,
+    startSnapshotReplay,
     botThinkingDelayMs,
     roundPauseDelayMs,
   } = useGameStore();
 
   const { showToast } = useToast();
   const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const isConnectedRef = useRef(false);
+  const pendingSnapshotRef = useRef<{ slots: (number | null)[]; delayMs: number } | null>(null);
 
   // Find the human player's id and position for WebSocket identity
   const humanPlayer = players.find((p) => p.type === 'human');
@@ -114,11 +117,14 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           // In step-by-step mode the round is evaluated on demand via the
           // "Evaluate Round" button, so the winner must be shown immediately
           // (no bot-chain buffering/replay involved).
-          if (state.stepByStep || (!state.isBotChainActive && !state.isReplayingBots)) {
+          if (state.stepByStep || state.isSnapshotReplaying || (!state.isBotChainActive && !state.isReplayingBots)) {
             // No bot chain in flight — show the winner. The deck is NOT cleared
             // here so the CardCollectionAnimation can animate the played cards
             // toward the winner; it is cleared via onDeckAnimationComplete once
             // the collection animation finishes.
+            if (state.isSnapshotReplaying) {
+              cancelBotReplay();
+            }
             setRoundWinner(winner);
             if (roundWinnerTimerRef.current) {
               clearTimeout(roundWinnerTimerRef.current);
@@ -252,7 +258,18 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               currentTurn = currentPlayer.display_position;
             }
           }
-          store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, deckSlots);
+
+          const human = snapshotPlayers.find((p) => p.type === 'human');
+          const turnPlayer = event.rank !== null && event.rank !== undefined
+            ? snapshotPlayers.find((p) => p.position === event.rank)
+            : undefined;
+          const hasPlayedCards = deckSlots.some((c) => c !== null);
+          const shouldReplaySnapshot = human !== undefined
+            && turnPlayer?.id === human.id
+            && hasPlayedCards
+            && !event.step_by_step;
+
+          store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, shouldReplaySnapshot ? null : deckSlots);
           if (event.step_by_step !== undefined) {
             store.setStepByStep(event.step_by_step);
           }
@@ -260,6 +277,14 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             store.setGameMode(event.game_mode as 'solo' | 'multiplayer');
           }
           clearRoundWinner();
+
+          if (shouldReplaySnapshot) {
+            if (isConnectedRef.current) {
+              startSnapshotReplay(deckSlots, store.botThinkingDelayMs);
+            } else {
+              pendingSnapshotRef.current = { slots: deckSlots, delayMs: store.botThinkingDelayMs };
+            }
+          }
           break;
         }
         case 'staleness_warning': {
@@ -290,6 +315,18 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     },
     autoReconnect: true,
   });
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (isConnected && pendingSnapshotRef.current) {
+      const { slots, delayMs } = pendingSnapshotRef.current;
+      pendingSnapshotRef.current = null;
+      startSnapshotReplay(slots, delayMs);
+    }
+  }, [isConnected, startSnapshotReplay]);
 
   useEffect(() => {
     if (!isConnected) return;

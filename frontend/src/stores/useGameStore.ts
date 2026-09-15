@@ -50,6 +50,7 @@ export interface GameState {
   gameMode: 'solo' | 'multiplayer' | null;
   pendingBotMoves: QueuedBotEvent[];
   isReplayingBots: boolean;
+  isSnapshotReplaying: boolean;
   botReplayTimerId: ReturnType<typeof setTimeout> | null;
   roundWinnerClearTimerId: ReturnType<typeof setTimeout> | null;
   isBotChainActive: boolean;
@@ -74,6 +75,7 @@ export interface GameState {
   clearPendingEvents: () => void;
   startBotReplay: (botDelayMs: number, roundPauseMs: number) => void;
   cancelBotReplay: () => void;
+  startSnapshotReplay: (slots: (number | null)[], delayMs: number) => void;
   flushPendingEvents: () => void;
   setBotDelays: (botThinkingDelayMs: number, roundPauseDelayMs: number) => void;
 }
@@ -93,6 +95,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   gameMode: null,
   pendingBotMoves: [],
   isReplayingBots: false,
+  isSnapshotReplaying: false,
   botReplayTimerId: null,
   roundWinnerClearTimerId: null,
   isBotChainActive: false,
@@ -152,6 +155,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       pendingBotMoves: [],
       gameMode: null,
       isReplayingBots: false,
+      isSnapshotReplaying: false,
       isBotChainActive: false,
       roundWinnerClearTimerId: null,
     }),
@@ -296,6 +300,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({
       pendingBotMoves: [],
       isReplayingBots: false,
+      isSnapshotReplaying: false,
       isBotChainActive: false,
       botReplayTimerId: null,
       roundWinnerClearTimerId: null,
@@ -305,6 +310,48 @@ export const useGameStore = create<GameState>((set, get) => ({
         ? { gameOver: state.pendingGameOver, pendingGameOver: null }
         : {}),
     });
+  },
+  startSnapshotReplay: (slots, delayMs) => {
+    const state = get();
+    if (state.botReplayTimerId !== null) {
+      clearTimeout(state.botReplayTimerId);
+    }
+
+    const cardsToReveal = slots.filter((s): s is number => s !== null);
+    if (cardsToReveal.length === 0) {
+      return;
+    }
+
+    set({
+      isSnapshotReplaying: true,
+      isReplayingBots: true,
+      isBotChainActive: true,
+      deckSlots: new Array(slots.length).fill(null),
+    });
+
+    const revealNext = (index: number) => {
+      const current = get();
+      if (!current.isSnapshotReplaying) {
+        return;
+      }
+      if (index >= cardsToReveal.length) {
+        set({
+          isSnapshotReplaying: false,
+          isReplayingBots: false,
+          isBotChainActive: false,
+          botReplayTimerId: null,
+        });
+        return;
+      }
+      const updatedDeck = [...current.deckSlots];
+      updatedDeck[index] = cardsToReveal[index];
+      set({ deckSlots: updatedDeck });
+      const timerId = setTimeout(() => revealNext(index + 1), delayMs);
+      set({ botReplayTimerId: timerId });
+    };
+
+    const timerId = setTimeout(() => revealNext(0), delayMs);
+    set({ botReplayTimerId: timerId });
   },
   flushPendingEvents: () => {
     const state = get();
