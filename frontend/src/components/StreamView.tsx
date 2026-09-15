@@ -1,9 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import GameTable from './GameTable';
 import { useWebSocket, GameEvent } from '../hooks/useWebSocket';
 import { RoundWinner, GameOverData, GameResult, Player } from '../stores/useGameStore';
+
+type StreamStatus = 'loading' | 'waiting' | 'live';
 
 export default function StreamView() {
   const { gameId } = useParams<{ gameId: string }>();
@@ -11,12 +13,30 @@ export default function StreamView() {
   const token = searchParams.get('token') ?? undefined;
   const { t } = useTranslation();
 
+  const [status, setStatus] = useState<StreamStatus>('loading');
+  const [cancelled, setCancelled] = useState(false);
   const [players, setPlayers] = useState<Player[]>([]);
   const [deckSlots, setDeckSlots] = useState<(number | null)[]>([]);
   const [remainingCards, setRemainingCards] = useState<Record<string, number>>({});
   const [currentTurn, setCurrentTurn] = useState<number | undefined>(undefined);
   const [roundWinner, setRoundWinner] = useState<RoundWinner | null>(null);
   const [gameOver, setGameOver] = useState<GameOverData | null>(null);
+
+  const deckClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const roundWinnerClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animationInFlightRef = useRef(false);
+
+  const clearDeckSlots = useCallback(() => {
+    setDeckSlots((prev) => prev.map(() => null));
+    animationInFlightRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (deckClearTimerRef.current) clearTimeout(deckClearTimerRef.current);
+      if (roundWinnerClearTimerRef.current) clearTimeout(roundWinnerClearTimerRef.current);
+    };
+  }, []);
 
   const onMessage = useCallback((event: GameEvent) => {
     switch (event.type) {
@@ -36,17 +56,60 @@ export default function StreamView() {
           remaining[p.id] = p.cards_count ?? 0;
         });
 
+        setPlayers(snapshotPlayers);
+        setRemainingCards(remaining);
+
+        if (event.status === 'pending' || event.status === 'ready') {
+          setStatus('waiting');
+        } else {
+          setStatus('live');
+        }
+
+        // While a round-completion animation is in flight, do not reset the
+        // winner ring or repopulate the deck from the snapshot, otherwise the
+        // collection animation would be torn down before it can clear the deck.
+        if (!animationInFlightRef.current) {
+          setDeckSlots(event.played_cards);
+          setRoundWinner(null);
+        }
+
         let turn: number | undefined;
         if (event.rank !== null && event.rank !== undefined) {
           const current = snapshotPlayers.find((p) => p.position === event.rank);
           turn = current?.display_position;
         }
-
-        setPlayers(snapshotPlayers);
-        setDeckSlots(event.played_cards);
-        setRemainingCards(remaining);
         setCurrentTurn(turn);
+        break;
+      }
+      case 'game_started': {
+        const startedPlayers: Player[] = event.players.map((p) => ({
+          id: p.id,
+          type: p.player_type as 'human' | 'bot',
+          name: p.name,
+          position: p.position,
+          display_position: p.display_position,
+          cards: [],
+          cards_count: p.cards_count,
+          is_current_user: false,
+        }));
+        const remaining: Record<string, number> = {};
+        startedPlayers.forEach((p) => {
+          remaining[p.id] = p.cards_count ?? 0;
+        });
+
+        setPlayers(startedPlayers);
+        setRemainingCards(remaining);
+        setDeckSlots(new Array(startedPlayers.length).fill(null));
+        const turnPlayer = startedPlayers.find((p) => p.id === event.current_turn);
+        setCurrentTurn(turnPlayer?.display_position ?? 0);
         setRoundWinner(null);
+        setCancelled(false);
+        setStatus('live');
+        break;
+      }
+      case 'game_cancelled': {
+        setCancelled(true);
+        setStatus('waiting');
         break;
       }
       case 'card_played': {
@@ -88,6 +151,22 @@ export default function StreamView() {
           winType: (event.win_type as 'normal' | 'kora' | 'doubleKora') || 'normal',
         };
         setRoundWinner(winner);
+        animationInFlightRef.current = true;
+
+        if (deckClearTimerRef.current) clearTimeout(deckClearTimerRef.current);
+        if (roundWinnerClearTimerRef.current) clearTimeout(roundWinnerClearTimerRef.current);
+
+        // Safety net: clear the deck just past the collection animation so the
+        // deck resets even if the animation component is torn down early.
+        deckClearTimerRef.current = setTimeout(() => {
+          clearDeckSlots();
+          deckClearTimerRef.current = null;
+        }, 900);
+
+        roundWinnerClearTimerRef.current = setTimeout(() => {
+          setRoundWinner(null);
+          roundWinnerClearTimerRef.current = null;
+        }, 3000);
         break;
       }
       case 'game_finished': {
@@ -107,7 +186,7 @@ export default function StreamView() {
       default:
         break;
     }
-  }, [players]);
+  }, [players, clearDeckSlots]);
 
   const { isConnected } = useWebSocket({
     gameId: gameId || '',
@@ -115,6 +194,22 @@ export default function StreamView() {
     wsToken: token,
     onMessage,
   });
+
+  if (status !== 'live') {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-center">
+          {status === 'loading' && (
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          )}
+          <h1 className="text-xl font-bold mb-2">{t('stream.spectatorWaitingTitle')}</h1>
+          <p className="text-gray-600">
+            {cancelled ? t('stream.gameCancelled') : t('stream.spectatorWaitingSubtitle')}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -132,6 +227,7 @@ export default function StreamView() {
           roundWinner={roundWinner}
           gameOver={gameOver}
           spectatorMode
+          onDeckAnimationComplete={clearDeckSlots}
         />
       </div>
     </div>

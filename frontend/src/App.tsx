@@ -549,7 +549,7 @@ function AppContent() {
               </div>
             </div>
           )}
-          <div className="container mx-auto px-4 sm:px-8 pb-8">
+          <div className="hidden md:block container mx-auto px-4 sm:px-8 pb-8">
             <button
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
               onClick={handleBackToDashboard}

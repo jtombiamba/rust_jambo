@@ -171,6 +171,11 @@
     "gameCancelled": "La partie a été annulée.",
     "noAccess": "Vous n'avez pas accès à ce salon de jeu."
   },
+  "stream": {
+    "spectatorWaitingTitle": "En attente du lancement de la partie",
+    "spectatorWaitingSubtitle": "Le stream démarrera automatiquement lorsque la partie sera lancée.",
+    "gameCancelled": "La partie a été annulée."
+  },
   "rules": {
     "title": "Comment jouer au Jambo",
     "objective": "Objectif",

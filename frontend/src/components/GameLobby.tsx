@@ -239,6 +239,25 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
     }
   }
 
+  const handleCopyStreamUrl = async () => {
+    try {
+      const res = await axios.post(`/api/games/${gameId}/spectate-token`)
+      const url = res.data.url as string
+      if (!url) {
+        showToast(t('game.streamUrlFailed'))
+        return
+      }
+      try {
+        await navigator.clipboard.writeText(url)
+        showToast(t('game.streamUrlCopied'))
+      } catch {
+        showToast(url)
+      }
+    } catch (err: unknown) {
+      showToast(extractApiError(err).message || t('game.streamUrlFailed'))
+    }
+  }
+
   return (
     <div className="container mx-auto p-4 sm:p-8">
       {toast && (
@@ -247,12 +266,20 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
         </div>
       )}
 
-      <button
-        onClick={onBack}
-        className="mb-4 px-3 sm:px-4 py-2 bg-gray-500 text-white text-sm sm:text-base rounded-lg hover:bg-gray-600"
-      >
-        {t('common.backToDashboard')}
-      </button>
+      <div className="flex items-center justify-between mb-4 gap-2">
+        <button
+          onClick={onBack}
+          className="px-3 sm:px-4 py-2 bg-gray-500 text-white text-sm sm:text-base rounded-lg hover:bg-gray-600"
+        >
+          {t('common.backToDashboard')}
+        </button>
+        <button
+          onClick={handleCopyStreamUrl}
+          className="px-3 sm:px-4 py-2 bg-indigo-600 text-white text-sm sm:text-base rounded-lg hover:bg-indigo-700"
+        >
+          {t('game.copyStreamUrl')}
+        </button>
+      </div>
 
       <h1 className="text-2xl sm:text-3xl font-bold mb-2">{t('lobby.gameLobby')}</h1>
       <p className="text-gray-500 mb-1 text-sm sm:text-base">{t('lobby.betCredits', { bet })}</p>

@@ -171,6 +171,11 @@
     "gameCancelled": "Game has been cancelled.",
     "noAccess": "You do not have access to this game lobby."
   },
+  "stream": {
+    "spectatorWaitingTitle": "Waiting for the game to start",
+    "spectatorWaitingSubtitle": "The stream will begin automatically when the game launches.",
+    "gameCancelled": "The game was cancelled."
+  },
   "rules": {
     "title": "How to Play Jambo",
     "objective": "Objective",

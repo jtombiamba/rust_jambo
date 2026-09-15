@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { useGameStore } from '../stores/useGameStore'
+import { getCachedConfig, saveConfig } from '../utils/configCache'
 import LegalMentions from './LegalMentions'
 import ContactForm from './ContactForm'
 
@@ -12,8 +13,21 @@ export default function Footer() {
   const [donateUrl, setDonateUrl] = useState('https://www.paypal.com/donate')
 
   useEffect(() => {
+    const cached = getCachedConfig()
+    if (cached) {
+      setDonateUrl(cached.paypal_donate_url)
+      if (cached.bot_thinking_delay_ms || cached.round_pause_delay_ms) {
+        useGameStore.getState().setBotDelays(
+          cached.bot_thinking_delay_ms ?? 1500,
+          cached.round_pause_delay_ms ?? 2500,
+        )
+      }
+      return
+    }
+
     axios.get('/api/config')
       .then((res) => {
+        saveConfig(res.data)
         setDonateUrl(res.data.paypal_donate_url)
         if (res.data.bot_thinking_delay_ms || res.data.round_pause_delay_ms) {
           useGameStore.getState().setBotDelays(

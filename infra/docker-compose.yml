@@ -361,7 +361,7 @@ services:
       - grafana_data:/var/lib/grafana
     environment:
       GF_SERVER_HTTP_PORT: 3000
-      GF_SERVER_ROOT_URL: /grafana
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://monitoring-nginx:8888/grafana}
       GF_SERVER_SERVE_FROM_SUB_PATH: true
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_AUTH_BASIC_ENABLED: "true"
