@@ -76,6 +76,7 @@
     "possessionGame": "{pseudo}'s game",
     "betInfo": "Bet: {bet} | Players: {current}/{max}",
     "expires": "Expires: {time}",
+    "newInvitation": "New invitation from {pseudo}",
     "accept": "Accept",
     "decline": "Decline",
     "frozen": "Frozen",

@@ -68,6 +68,27 @@ impl WebSocketManager {
             !connections.is_empty()
         });
 
+        inner.user_connections.retain(|user_id, connections| {
+            let before = connections.len();
+            connections.retain(|conn| {
+                let idle = now.duration_since(conn.last_activity);
+                let pong_age = now.duration_since(conn.last_pong);
+                idle <= max_idle_duration && pong_age <= heartbeat_timeout
+            });
+            let removed = before - connections.len();
+            total_removed += removed;
+
+            if removed > 0 {
+                tracing::info!(
+                    "Cleaned up {} stale/heartbeat connections for user {}",
+                    removed,
+                    user_id
+                );
+            }
+
+            !connections.is_empty()
+        });
+
         if total_removed > 0 {
             tracing::info!("Total stale connections cleaned up: {}", total_removed);
             metrics::WS_HEARTBEAT_TIMEOUTS_TOTAL.inc_by(total_removed as f64);

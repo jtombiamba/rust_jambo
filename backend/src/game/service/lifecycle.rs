@@ -12,7 +12,7 @@ use crate::database::models::{
 use crate::error::GameError;
 use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::service::types::GameCreationTimer;
-use crate::messaging::events::GameEvent;
+use crate::messaging::events::{GameEvent, UserEvent};
 use crate::messaging::redis::PublishResult;
 use crate::observability::metrics;
 
@@ -64,7 +64,9 @@ impl GameService {
             .filter(game_invite::Column::Status.eq(InviteStatus::Pending))
             .all(&txn)
             .await?;
+        let mut invited_user_ids: Vec<Uuid> = Vec::new();
         for inv in pending_invites {
+            invited_user_ids.push(inv.invited_user_id);
             let mut inv_active: game_invite::ActiveModel = inv.into();
             inv_active.status = ActiveValue::Set(InviteStatus::Declined);
             inv_active.update(&txn).await?;
@@ -86,6 +88,23 @@ impl GameService {
                     "CRITICAL: Failed to publish GameCancelled event after retries: {}",
                     e
                 );
+            }
+
+            for user_id in &invited_user_ids {
+                let user_event = UserEvent::InviteRemoved {
+                    user_id: *user_id,
+                    game_id,
+                };
+                if let PublishResult::RetryExhausted(e) = redis
+                    .clone()
+                    .publish_user_event_with_retry(&user_event)
+                    .await
+                {
+                    error!(
+                        "Failed to publish InviteRemoved event for user {} after retries: {}",
+                        user_id, e
+                    );
+                }
             }
         }
 

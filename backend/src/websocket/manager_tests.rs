@@ -299,3 +299,59 @@ async fn test_send_game_started_per_player_current_turn_preserved() {
         assert_eq!(parsed["type"], "game_started");
     }
 }
+
+#[tokio::test]
+async fn test_broadcast_to_user_delivers_to_matching_user_only() {
+    let manager = make_manager();
+    let user_a = Uuid::new_v4();
+    let user_b = Uuid::new_v4();
+
+    let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+    let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+    manager
+        .add_user_connection(user_a, tx_a, CorrelationId::default())
+        .await;
+    manager
+        .add_user_connection(user_b, tx_b, CorrelationId::default())
+        .await;
+
+    let event = UserEvent::InviteRemoved {
+        user_id: user_a,
+        game_id: Uuid::new_v4(),
+    };
+    manager.route_user_event(user_a, event).await;
+
+    let received = drain_receiver(&mut rx_a);
+    assert_eq!(received.len(), 1);
+    let parsed: serde_json::Value = serde_json::from_str(&received[0]).unwrap();
+    assert_eq!(parsed["type"], "invite_removed");
+
+    assert!(drain_receiver(&mut rx_b).is_empty());
+}
+
+#[tokio::test]
+async fn test_remove_user_connection_stops_delivery() {
+    let manager = make_manager();
+    let user_id = Uuid::new_v4();
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let conn_id = manager
+        .add_user_connection(user_id, tx, CorrelationId::default())
+        .await;
+    manager.remove_user_connection(user_id, conn_id).await;
+
+    let event = UserEvent::InviteReceived {
+        user_id,
+        invite_id: Uuid::new_v4(),
+        game_id: Uuid::new_v4(),
+        creator_pseudo: "alice".to_string(),
+        bet: 10,
+        player_count: 1,
+        max_players: 4,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        expires_at: None,
+    };
+    manager.route_user_event(user_id, event).await;
+
+    assert!(drain_receiver(&mut rx).is_empty());
+}

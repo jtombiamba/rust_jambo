@@ -1,5 +1,5 @@
 use crate::game::service::compute_display_position;
-use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent};
+use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent, UserEvent};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
@@ -13,7 +13,7 @@ use tokio::time;
 use uuid::Uuid;
 
 use super::connection::{ConnectionId, TrackedConnection, WsSender};
-use super::routing::{extract_game_id_from_channel, extract_room_id_from_channel, shard_for_id};
+use super::routing::{parse_channel, shard_for_id, Channel};
 
 /// Inner shared state for the WebSocket manager.
 struct Inner {
@@ -21,6 +21,9 @@ struct Inner {
     connections: HashMap<Uuid, Vec<TrackedConnection>>,
     /// Map from room ID to list of active tracked connections.
     room_connections: HashMap<Uuid, Vec<TrackedConnection>>,
+    /// Map from user ID to list of active tracked connections (user-scoped,
+    /// e.g. for real-time invitation push).
+    user_connections: HashMap<Uuid, Vec<TrackedConnection>>,
     /// Redis client for publishing/subscribing to game events.
     redis_client: Option<RedisClient>,
     /// Database connection for querying game state snapshots.
@@ -40,6 +43,7 @@ impl WebSocketManager {
             inner: Arc::new(RwLock::new(Inner {
                 connections: HashMap::new(),
                 room_connections: HashMap::new(),
+                user_connections: HashMap::new(),
                 redis_client,
                 db,
             })),
@@ -316,7 +320,7 @@ impl WebSocketManager {
             for connection in connections {
                 // Ignore errors if the receiver is closed
                 if let Err(e) = connection.sender.send(message.to_string()) {
-                    tracing::debug!(
+                    tracing::error!(
                         "Failed to send message to WebSocket connection {}: {}",
                         connection.id.uuid(),
                         e
@@ -324,7 +328,7 @@ impl WebSocketManager {
                 }
             }
         } else {
-            tracing::debug!("No connections for game {}, message not broadcast", game_id);
+            tracing::warn!("No connections for game {}, message not broadcast", game_id);
         }
     }
 
@@ -573,6 +577,8 @@ impl WebSocketManager {
         }
     }
 }
+
+include!("manager_user.rs");
 
 include!("manager_redis.rs");
 

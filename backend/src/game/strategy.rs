@@ -221,6 +221,32 @@ pub fn compute_strategy(
     compute_high(unplayed_cards, round_played_cards, current_winning_card)
 }
 
+pub fn check_triple_seven(unplayed_cards: &[i32]) -> bool {
+    // check if player has at least 3 cards of value 7
+    let seven_cards: Vec<i32> = unplayed_cards
+        .iter()
+        .cloned()
+        .filter(|&card| card % 8 == 7)
+        .collect();
+    seven_cards.len() >= 3
+}
+
+pub fn check_sum_value_under_21(unplayed_cards: &[i32]) -> bool {
+    // check if the sum of the values of the unplayed cards is less than 21
+    let sum: i32 = unplayed_cards.iter().map(|&card| card % 8).sum();
+    sum <= 21
+}
+
+pub fn check_a_square(unplayed_cards: &[i32]) -> bool {
+    // check if player has at least 4 cards of the same value
+    let mut value_counts = std::collections::HashMap::new();
+    for &card in unplayed_cards {
+        let value = card % 8;
+        *value_counts.entry(value).or_insert(0) += 1;
+    }
+    value_counts.values().any(|&count| count >= 4)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

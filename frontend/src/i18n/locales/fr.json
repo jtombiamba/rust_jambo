@@ -76,6 +76,7 @@
     "possessionGame": "Partie de {pseudo}",
     "betInfo": "Mise : {bet} | Joueurs : {current}/{max}",
     "expires": "Expire : {time}",
+    "newInvitation": "Nouvelle invitation de {pseudo}",
     "accept": "Accepter",
     "decline": "Refuser",
     "frozen": "Gelé",

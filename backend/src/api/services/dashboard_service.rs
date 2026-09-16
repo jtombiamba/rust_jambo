@@ -397,6 +397,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             return Ok(UserSearchResponse { users: vec![] });
         }
 
+        // TODO: define a max limit as environment variable for the query to avoid abuse
         let users = self
             .repo
             .find_users_by_pseudo_prefix(query.q.trim(), query.limit)

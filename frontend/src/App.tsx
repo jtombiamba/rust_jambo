@@ -24,6 +24,7 @@ import CreateRunModal from './components/CreateRunModal'
 import { useGameWebSocket } from './hooks/useGameWebSocket'
 import { useRoomWebSocket } from './hooks/useRoomWebSocket'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useUserWebSocket } from './hooks/useUserWebSocket'
 import { getStoredStats, saveStats, AnonymousStats } from './utils/storage'
 
 interface QuickGameResponse {
@@ -87,6 +88,7 @@ function AppContent() {
   const autoStartRef = useRef(false)
   const [roomRefreshKey, setRoomRefreshKey] = useState(0)
   useGameWebSocket(gameId, wsToken)
+  useUserWebSocket(isAuthenticated)
   useRoomWebSocket({
     roomId: isAuthenticated && roomId ? roomId : null,
     onEvent: (event) => {

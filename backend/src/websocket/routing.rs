@@ -11,16 +11,23 @@ pub(crate) fn shard_for_id(id: Uuid, shard_count: usize) -> usize {
     (hash as usize) % shard_count
 }
 
-/// Extract a game id from a Redis channel name of the form "game:{uuid}".
-pub(crate) fn extract_game_id_from_channel(channel: &str) -> Option<Uuid> {
-    const PREFIX: &str = "game:";
-    channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
+/// A typed route parsed from a Redis channel name.
+pub(crate) enum Channel {
+    Game(Uuid),
+    Room(Uuid),
+    User(Uuid),
 }
 
-/// Extract a room id from a Redis channel name of the form "room:{uuid}".
-pub(crate) fn extract_room_id_from_channel(channel: &str) -> Option<Uuid> {
-    const PREFIX: &str = "room:";
-    channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
+/// Parse a channel name of the form "{prefix}:{uuid}" into a typed route.
+pub(crate) fn parse_channel(channel: &str) -> Option<Channel> {
+    let (prefix, id) = channel.split_once(':')?;
+    let id = id.parse::<Uuid>().ok()?;
+    Some(match prefix {
+        "game" => Channel::Game(id),
+        "room" => Channel::Room(id),
+        "user" => Channel::User(id),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -38,31 +45,39 @@ mod tests {
     }
 
     #[test]
-    fn extract_game_id_from_channel_parses_valid_prefix() {
+    fn parse_channel_game() {
         let id = Uuid::new_v4();
         let channel = format!("game:{}", id);
-        assert_eq!(extract_game_id_from_channel(&channel), Some(id));
+        assert!(matches!(parse_channel(&channel), Some(Channel::Game(g)) if g == id));
     }
 
     #[test]
-    fn extract_game_id_from_channel_rejects_other_prefixes() {
-        let id = Uuid::new_v4();
-        assert_eq!(extract_game_id_from_channel(&format!("room:{}", id)), None);
-        assert_eq!(extract_game_id_from_channel("game:not-a-uuid"), None);
-        assert_eq!(extract_game_id_from_channel("game:"), None);
-    }
-
-    #[test]
-    fn extract_room_id_from_channel_parses_valid_prefix() {
+    fn parse_channel_room() {
         let id = Uuid::new_v4();
         let channel = format!("room:{}", id);
-        assert_eq!(extract_room_id_from_channel(&channel), Some(id));
+        assert!(matches!(parse_channel(&channel), Some(Channel::Room(r)) if r == id));
     }
 
     #[test]
-    fn extract_room_id_from_channel_rejects_other_prefixes() {
+    fn parse_channel_user() {
         let id = Uuid::new_v4();
-        assert_eq!(extract_room_id_from_channel(&format!("game:{}", id)), None);
-        assert_eq!(extract_room_id_from_channel("room:not-a-uuid"), None);
+        let channel = format!("user:{}", id);
+        assert!(matches!(parse_channel(&channel), Some(Channel::User(u)) if u == id));
+    }
+
+    #[test]
+    fn parse_channel_rejects_unknown_prefix() {
+        assert!(parse_channel("other:some-id").is_none());
+    }
+
+    #[test]
+    fn parse_channel_rejects_malformed_id() {
+        assert!(parse_channel("game:not-a-uuid").is_none());
+    }
+
+    #[test]
+    fn parse_channel_rejects_missing_colon() {
+        assert!(parse_channel("game").is_none());
+        assert!(parse_channel("game:").is_none());
     }
 }

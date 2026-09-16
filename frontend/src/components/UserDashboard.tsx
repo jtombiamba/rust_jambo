@@ -3,6 +3,7 @@ import axios from 'axios'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useLanguageStore } from '../stores/useLanguageStore'
+import { useInvitationStore, InvitationItem } from '../stores/useInvitationStore'
 import { extractApiError } from '../utils/errors'
 import GameRules from './GameRules'
 import LeaderboardPanel from './LeaderboardPanel'
@@ -69,17 +70,6 @@ interface Props {
   onStepByStepChange: (value: boolean) => void
 }
 
-interface InvitationItem {
-  invite_id: string
-  game_id: string
-  creator_pseudo: string
-  bet: number
-  player_count: number
-  max_players: number
-  created_at: string
-  expires_at: string | null
-}
-
 type SortField = 'date' | 'bet' | null
 type SortDir = 'asc' | 'desc'
 
@@ -110,7 +100,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [multiplayerCreating, setMultiplayerCreating] = useState(false)
   const [multiplayerError, setMultiplayerError] = useState<string | null>(null)
   const [multiplayerPseudos, setMultiplayerPseudos] = useState<Record<number, string>>({})
-  const [invitations, setInvitations] = useState<InvitationItem[]>([])
+  const invitations = useInvitationStore((s) => s.invitations)
   const [joiningGameId, setJoiningGameId] = useState<string | null>(null)
   const [showGames, setShowGames] = useState(false)
   const [showLeaderboard, setShowLeaderboard] = useState(false)
@@ -182,7 +172,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       .then(([profileRes, historyRes, invRes]) => {
         setProfile(profileRes.data)
         setHistory(historyRes.data)
-        setInvitations(invRes.data.invitations)
+        useInvitationStore.getState().setInvitations(invRes.data.invitations)
         if (profileRes.data.frozen_until) {
           const frozenUntil = new Date(profileRes.data.frozen_until).getTime()
           const now = Date.now()
@@ -391,7 +381,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     try {
       const res = await axios.post(`/api/games/${gameId}/respond?action=accept`)
       showToast(res.data.message)
-      setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
+      useInvitationStore.getState().removeInvitation(gameId)
       onViewLobby(gameId)
     } catch (err: unknown) {
       showToast(extractApiError(err).message || t('dashboard.failedJoinGame'))
@@ -404,7 +394,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     setJoiningGameId(gameId)
     try {
       await axios.post(`/api/games/${gameId}/respond?action=decline`)
-      setInvitations(prev => prev.filter(inv => inv.game_id !== gameId))
+      useInvitationStore.getState().removeInvitation(gameId)
       showToast(t('dashboard.invitationDeclined'))
     } catch (err: unknown) {
       showToast(extractApiError(err).message || t('dashboard.failedDeclineInvitation'))
