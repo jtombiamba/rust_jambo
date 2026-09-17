@@ -22,6 +22,19 @@ async fn add_player_connection(
     rx
 }
 
+/// Add a connection without any player identity (simulates a lobby member whose
+/// `join_game` identity has not yet been registered).
+async fn add_unidentified_connection(
+    manager: &WebSocketManager,
+    game_id: Uuid,
+) -> mpsc::UnboundedReceiver<String> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    manager
+        .add_connection(game_id, tx, CorrelationId::default())
+        .await;
+    rx
+}
+
 fn make_game_started_players(num: usize) -> Vec<GameStartedPlayer> {
     (0..num)
         .map(|i| GameStartedPlayer {
@@ -80,6 +93,11 @@ async fn test_route_event_sends_cards_dealt_to_target_player() {
         game_id,
         player_id: target_player,
         cards: vec![1, 2, 3, 4, 5],
+        special_cards: crate::game::special_cards::SpecialCards {
+            check_triple_seven: false,
+            check_sum_value_under_21: false,
+            check_a_square: false,
+        },
     };
     manager.route_event(game_id, event).await;
 
@@ -110,6 +128,7 @@ async fn test_send_game_started_per_player_rotates_display_positions() {
         game_id,
         players: players.clone(),
         current_turn,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -144,6 +163,40 @@ async fn test_send_game_started_per_player_rotates_display_positions() {
 }
 
 #[tokio::test]
+async fn test_send_game_started_per_player_delivers_to_unidentified_connection() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+    let players = make_game_started_players(2);
+
+    let mut identified_rx = add_player_connection(&manager, game_id, players[0].id, 0).await;
+    let mut unidentified_rx = add_unidentified_connection(&manager, game_id).await;
+
+    let current_turn = players[0].id;
+    let event = GameEvent::GameStarted {
+        game_id,
+        players: players.clone(),
+        current_turn,
+        game_mode: "multiplayer".to_string(),
+        correlation_id: None,
+    };
+    manager.send_game_started_per_player(game_id, &event).await;
+
+    let identified_events = drain_receiver(&mut identified_rx);
+    let unidentified_events = drain_receiver(&mut unidentified_rx);
+
+    // The identified player receives exactly one personalized event.
+    assert_eq!(identified_events.len(), 1);
+    let identified_parsed: serde_json::Value = serde_json::from_str(&identified_events[0]).unwrap();
+    assert_eq!(identified_parsed["type"], "game_started");
+
+    // The unidentified connection also receives a (non-rotated) game_started.
+    assert_eq!(unidentified_events.len(), 1);
+    let unidentified_parsed: serde_json::Value =
+        serde_json::from_str(&unidentified_events[0]).unwrap();
+    assert_eq!(unidentified_parsed["type"], "game_started");
+}
+
+#[tokio::test]
 async fn test_send_game_started_per_player_turn_player_consistent() {
     let manager = make_manager();
     let game_id = Uuid::new_v4();
@@ -160,6 +213,7 @@ async fn test_send_game_started_per_player_turn_player_consistent() {
         game_id,
         players: players.clone(),
         current_turn,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -208,6 +262,7 @@ async fn test_send_game_started_per_player_preserves_cards_count() {
         game_id,
         players: players.clone(),
         current_turn: players[0].id,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -241,6 +296,7 @@ async fn test_send_game_started_per_player_two_players() {
         game_id,
         players: players.clone(),
         current_turn: players[0].id,
+        game_mode: "multiplayer".to_string(),
         correlation_id: None,
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -281,6 +337,7 @@ async fn test_send_game_started_per_player_current_turn_preserved() {
         game_id,
         players: players.clone(),
         current_turn,
+        game_mode: "multiplayer".to_string(),
         correlation_id: Some(correlation_id),
     };
     manager.send_game_started_per_player(game_id, &event).await;
@@ -293,4 +350,113 @@ async fn test_send_game_started_per_player_current_turn_preserved() {
         assert_eq!(parsed["game_id"], game_id.to_string());
         assert_eq!(parsed["type"], "game_started");
     }
+}
+
+#[tokio::test]
+async fn test_broadcast_to_user_delivers_to_matching_user_only() {
+    let manager = make_manager();
+    let user_a = Uuid::new_v4();
+    let user_b = Uuid::new_v4();
+
+    let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+    let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+    manager
+        .add_user_connection(user_a, tx_a, CorrelationId::default())
+        .await;
+    manager
+        .add_user_connection(user_b, tx_b, CorrelationId::default())
+        .await;
+
+    let event = UserEvent::InviteRemoved {
+        user_id: user_a,
+        game_id: Uuid::new_v4(),
+    };
+    manager.route_user_event(user_a, event).await;
+
+    let received = drain_receiver(&mut rx_a);
+    assert_eq!(received.len(), 1);
+    let parsed: serde_json::Value = serde_json::from_str(&received[0]).unwrap();
+    assert_eq!(parsed["type"], "invite_removed");
+
+    assert!(drain_receiver(&mut rx_b).is_empty());
+}
+
+#[tokio::test]
+async fn test_remove_user_connection_stops_delivery() {
+    let manager = make_manager();
+    let user_id = Uuid::new_v4();
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let conn_id = manager
+        .add_user_connection(user_id, tx, CorrelationId::default())
+        .await;
+    manager.remove_user_connection(user_id, conn_id).await;
+
+    let event = UserEvent::InviteReceived {
+        user_id,
+        invite_id: Uuid::new_v4(),
+        game_id: Uuid::new_v4(),
+        creator_pseudo: "alice".to_string(),
+        bet: 10,
+        player_count: 1,
+        max_players: 4,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        expires_at: None,
+    };
+    manager.route_user_event(user_id, event).await;
+
+    assert!(drain_receiver(&mut rx).is_empty());
+}
+
+#[tokio::test]
+async fn test_spectator_gauge_tracks_join_and_removal() {
+    fn spectator_series_present(game_id: &Uuid) -> bool {
+        prometheus::gather().iter().any(|family| {
+            family.get_name() == "ws_spectators_per_game"
+                && family.get_metric().iter().any(|m| {
+                    m.get_label().iter().any(|lp| {
+                        lp.get_name() == "game_id" && lp.get_value() == game_id.to_string()
+                    })
+                })
+        })
+    }
+
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+
+    let (tx_player, _rx_player) = mpsc::unbounded_channel();
+    let player_id = Uuid::new_v4();
+    let player_conn = manager
+        .add_connection(game_id, tx_player, CorrelationId::default())
+        .await;
+    manager
+        .set_player_for_connection(game_id, player_conn, player_id, 0)
+        .await;
+
+    let (tx_spectator, _rx_spectator) = mpsc::unbounded_channel();
+    let spectator_conn = manager
+        .add_connection(game_id, tx_spectator, CorrelationId::default())
+        .await;
+    WebSocketManager::mark_spectator_for_latest_connection(&manager, game_id).await;
+
+    let label = game_id.to_string();
+    let gauge = crate::observability::metrics::WS_SPECTATORS_PER_GAME
+        .get_metric_with_label_values(&[&label])
+        .expect("spectator gauge series should exist after marking a spectator");
+    assert_eq!(gauge.get(), 1.0);
+    assert!(spectator_series_present(&game_id));
+
+    // Removing the non-spectator player leaves the spectator count unchanged.
+    manager.remove_connection(game_id, player_conn).await;
+    let gauge = crate::observability::metrics::WS_SPECTATORS_PER_GAME
+        .get_metric_with_label_values(&[&label])
+        .expect("spectator gauge series should still exist while a spectator remains");
+    assert_eq!(gauge.get(), 1.0);
+
+    // Removing the last spectator removes the series entirely.
+    manager.remove_connection(game_id, spectator_conn).await;
+    assert!(
+        !spectator_series_present(&game_id),
+        "spectator gauge series should be removed when the last spectator leaves"
+    );
 }

@@ -35,6 +35,9 @@ pub mod game {
         pub step_by_step: bool,
         #[sea_orm(column_type = "JsonBinary")]
         pub kicked_players: Value,
+        /// Player id currently offered the special-card claim, while set no card
+        /// may be played. Cleared once the player claims or declines.
+        pub pending_claim_player_id: Option<Uuid>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -166,6 +169,16 @@ pub enum GameMode {
     Multiplayer,
 }
 
+impl std::fmt::Display for GameMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            GameMode::Solo => "solo",
+            GameMode::Multiplayer => "multiplayer",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "invite_status")]
 pub enum InviteStatus {
@@ -202,6 +215,21 @@ impl std::fmt::Display for RunStatus {
         write!(f, "{}", s)
     }
 }
+
+impl utoipa::PartialSchema for RunStatus {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        utoipa::openapi::schema::Object::builder()
+            .schema_type(utoipa::openapi::schema::Type::String)
+            .enum_values(Some(vec![
+                serde_json::Value::String("active".to_string()),
+                serde_json::Value::String("cancelled".to_string()),
+                serde_json::Value::String("completed".to_string()),
+            ]))
+            .into()
+    }
+}
+
+impl utoipa::ToSchema for RunStatus {}
 
 impl std::fmt::Display for GameStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -539,3 +567,20 @@ pub use player_profile::Model as PlayerProfile;
 pub use room::Model as Room;
 pub use room_member::Model as RoomMember;
 pub use user::Model as User;
+
+#[cfg(test)]
+mod run_status_schema_tests {
+    use super::RunStatus;
+    use utoipa::PartialSchema;
+
+    #[test]
+    fn run_status_schema_matches_serialized_values() {
+        let schema = RunStatus::schema();
+        let json = serde_json::to_value(&schema).expect("schema must serialize");
+        assert_eq!(json["type"], "string");
+        assert_eq!(
+            json["enum"],
+            serde_json::json!(["active", "cancelled", "completed"])
+        );
+    }
+}

@@ -4,7 +4,9 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::api::dto::requests::CaptureOrderRequest;
-use crate::api::dto::responses::{UnfreezeCaptureResponse, UnfreezeOrderResponse};
+use crate::api::dto::responses::{
+    ApiErrorResponse, UnfreezeCaptureResponse, UnfreezeOrderResponse,
+};
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
 use crate::error::AppError;
@@ -28,6 +30,17 @@ pub(crate) fn close_window_html(title: &str) -> HttpResponse {
         ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/me/unfreeze",
+    tag = "payments",
+    security(("cookie_auth" = [])),
+    responses(
+        (status = 200, description = "Unfreeze order created", body = UnfreezeOrderResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 500, description = "Payment service unavailable", body = ApiErrorResponse),
+    )
+)]
 pub async fn create_unfreeze_order(
     auth_user: AuthenticatedUser,
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
@@ -85,6 +98,18 @@ pub async fn create_unfreeze_order(
     })
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/me/unfreeze/capture",
+    tag = "payments",
+    security(("cookie_auth" = [])),
+    request_body = CaptureOrderRequest,
+    responses(
+        (status = 200, description = "Payment captured, account unfrozen", body = UnfreezeCaptureResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 500, description = "Capture failed", body = ApiErrorResponse),
+    )
+)]
 pub async fn capture_unfreeze_order(
     auth_user: AuthenticatedUser,
     body: web::Json<CaptureOrderRequest>,
@@ -171,6 +196,13 @@ pub async fn capture_unfreeze_order(
     .await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/paypal/return",
+    tag = "payments",
+    params(("token" = String, Query, description = "PayPal order token")),
+    responses((status = 200, description = "Payment result page", content_type = "text/html"))
+)]
 pub async fn paypal_return(
     req: HttpRequest,
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
@@ -277,6 +309,12 @@ pub async fn paypal_return(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/paypal/cancel",
+    tag = "payments",
+    responses((status = 200, description = "Payment cancelled page", content_type = "text/html"))
+)]
 pub async fn paypal_cancel() -> HttpResponse {
     close_window_html("Payment Cancelled")
 }

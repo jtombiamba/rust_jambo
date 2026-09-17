@@ -16,17 +16,23 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     setGameOver,
     setPendingGameOver,
     updatePlayerCards,
+    setClaimOffered,
+    setClaimPending,
+    setRevealedHand,
     players,
     bet,
     addPendingEvent,
     cancelBotReplay,
     startBotReplay,
+    startSnapshotReplay,
     botThinkingDelayMs,
     roundPauseDelayMs,
   } = useGameStore();
 
   const { showToast } = useToast();
   const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const isConnectedRef = useRef(false);
+  const pendingSnapshotRef = useRef<{ slots: (number | null)[]; delayMs: number } | null>(null);
 
   // Find the human player's id and position for WebSocket identity
   const humanPlayer = players.find((p) => p.type === 'human');
@@ -114,11 +120,14 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           // In step-by-step mode the round is evaluated on demand via the
           // "Evaluate Round" button, so the winner must be shown immediately
           // (no bot-chain buffering/replay involved).
-          if (state.stepByStep || (!state.isBotChainActive && !state.isReplayingBots)) {
+          if (state.stepByStep || state.isSnapshotReplaying || (!state.isBotChainActive && !state.isReplayingBots)) {
             // No bot chain in flight — show the winner. The deck is NOT cleared
             // here so the CardCollectionAnimation can animate the played cards
             // toward the winner; it is cleared via onDeckAnimationComplete once
             // the collection animation finishes.
+            if (state.isSnapshotReplaying) {
+              cancelBotReplay();
+            }
             setRoundWinner(winner);
             if (roundWinnerTimerRef.current) {
               clearTimeout(roundWinnerTimerRef.current);
@@ -209,6 +218,37 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           }
           break;
         }
+        case 'claim_pending': {
+          setClaimPending(true);
+          break;
+        }
+        case 'claim_offered': {
+          const humanPlayer = players.find((p) => p.type === 'human');
+          if (humanPlayer && event.player_id === humanPlayer.id) {
+            setClaimOffered({
+              playerId: event.player_id,
+              specialCards: event.special_cards,
+            });
+          }
+          break;
+        }
+        case 'claim_resolved': {
+          setClaimPending(false);
+          setClaimOffered(null);
+          break;
+        }
+        case 'special_claim': {
+          const winnerPlayer = players.find((p) => p.id === event.player_id);
+          setRevealedHand({ playerId: event.player_id, cards: event.cards });
+          setClaimOffered(null);
+          setClaimPending(false);
+          setRoundWinner({
+            playerId: event.player_id,
+            position: winnerPlayer?.display_position ?? event.winner_position,
+            winType: 'normal',
+          });
+          break;
+        }
         case 'game_state_snapshot': {
           cancelBotReplay();
           const store = useGameStore.getState();
@@ -232,6 +272,7 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               display_position: p.display_position,
               cards: existing?.cards ?? [],
               cards_count: cardsCount,
+              is_current_user: existing?.is_current_user,
             };
           });
 
@@ -251,11 +292,43 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
               currentTurn = currentPlayer.display_position;
             }
           }
-          store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, deckSlots);
+
+          const human = snapshotPlayers.find((p) => p.type === 'human');
+          const turnPlayer = event.rank !== null && event.rank !== undefined
+            ? snapshotPlayers.find((p) => p.position === event.rank)
+            : undefined;
+          const hasPlayedCards = deckSlots.some((c) => c !== null);
+          const shouldReplaySnapshot = human !== undefined
+            && turnPlayer?.id === human.id
+            && hasPlayedCards
+            && !event.step_by_step;
+
+          store.setGame(event.game_id, snapshotPlayers, event.status, currentTurn, store.bet, shouldReplaySnapshot ? null : deckSlots);
           if (event.step_by_step !== undefined) {
             store.setStepByStep(event.step_by_step);
           }
+          if (event.game_mode) {
+            store.setGameMode(event.game_mode as 'solo' | 'multiplayer');
+          }
           clearRoundWinner();
+
+          // Restore the special-card claim state from the snapshot (e.g. after a
+          // reconnect). `claim_offered_to_me` is true only for the askee, and the
+          // snapshot's `special_cards` carries their own private flags.
+          if (event.claim_pending) {
+            setClaimPending(true);
+          }
+          if (event.claim_offered_to_me && event.special_cards && human) {
+            setClaimOffered({ playerId: human.id, specialCards: event.special_cards });
+          }
+
+          if (shouldReplaySnapshot) {
+            if (isConnectedRef.current) {
+              startSnapshotReplay(deckSlots, store.botThinkingDelayMs);
+            } else {
+              pendingSnapshotRef.current = { slots: deckSlots, delayMs: store.botThinkingDelayMs };
+            }
+          }
           break;
         }
         case 'staleness_warning': {
@@ -286,6 +359,18 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     },
     autoReconnect: true,
   });
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (isConnected && pendingSnapshotRef.current) {
+      const { slots, delayMs } = pendingSnapshotRef.current;
+      pendingSnapshotRef.current = null;
+      startSnapshotReplay(slots, delayMs);
+    }
+  }, [isConnected, startSnapshotReplay]);
 
   useEffect(() => {
     if (!isConnected) return;

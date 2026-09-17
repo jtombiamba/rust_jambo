@@ -4,7 +4,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::api::dto::requests::CaptureOrderRequest;
-use crate::api::dto::responses::{TopupCaptureResponse, TopupOrderResponse};
+use crate::api::dto::responses::{ApiErrorResponse, TopupCaptureResponse, TopupOrderResponse};
 use crate::api::unfreeze::close_window_html;
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
@@ -17,6 +17,18 @@ const TOPUP_ORDER_PREFIX: &str = "topup_order";
 const TOPUP_TTL_SECS: u64 = 86400;
 const TOPUP_IDEM_PREFIX: &str = "topup";
 
+#[utoipa::path(
+    post,
+    path = "/api/me/topup",
+    tag = "payments",
+    security(("cookie_auth" = [])),
+    responses(
+        (status = 200, description = "Top-up order created", body = TopupOrderResponse),
+        (status = 400, description = "Top-up not needed", body = ApiErrorResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 403, description = "Account frozen", body = ApiErrorResponse),
+    )
+)]
 pub async fn create_topup_order(
     auth_user: AuthenticatedUser,
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
@@ -100,6 +112,18 @@ pub async fn create_topup_order(
     })
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/me/topup/capture",
+    tag = "payments",
+    security(("cookie_auth" = [])),
+    request_body = CaptureOrderRequest,
+    responses(
+        (status = 200, description = "Credits topped up", body = TopupCaptureResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 500, description = "Capture failed", body = ApiErrorResponse),
+    )
+)]
 pub async fn capture_topup_order(
     auth_user: AuthenticatedUser,
     body: web::Json<CaptureOrderRequest>,
@@ -197,6 +221,13 @@ pub async fn capture_topup_order(
     .await
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/paypal/topup/return",
+    tag = "payments",
+    params(("token" = String, Query, description = "PayPal order token")),
+    responses((status = 200, description = "Top-up result page", content_type = "text/html"))
+)]
 pub async fn paypal_return_topup(
     req: HttpRequest,
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
@@ -304,6 +335,12 @@ pub async fn paypal_return_topup(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/paypal/topup/cancel",
+    tag = "payments",
+    responses((status = 200, description = "Top-up cancelled page", content_type = "text/html"))
+)]
 pub async fn paypal_cancel_topup() -> HttpResponse {
     close_window_html("Payment Cancelled")
 }

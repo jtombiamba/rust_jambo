@@ -1,4 +1,4 @@
-use crate::messaging::events::{GameEvent, RoomEvent};
+use crate::messaging::events::{GameEvent, RoomEvent, UserEvent};
 use crate::observability::metrics::{
     REDIS_BUFFER_OVERFLOW_TOTAL, REDIS_PUBLISH_DURATION_SECONDS, REDIS_PUBLISH_FAILURES_TOTAL,
     REDIS_PUBLISH_RETRIES_TOTAL,
@@ -204,6 +204,12 @@ impl RedisClient {
     }
 
     pub async fn publish_room_event_with_retry(&mut self, event: &RoomEvent) -> PublishResult {
+        let channel = event.channel();
+        let message = event.to_json();
+        self.publish_with_retry(&channel, &message).await
+    }
+
+    pub async fn publish_user_event_with_retry(&mut self, event: &UserEvent) -> PublishResult {
         let channel = event.channel();
         let message = event.to_json();
         self.publish_with_retry(&channel, &message).await

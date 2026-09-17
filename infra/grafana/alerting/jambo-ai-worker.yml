@@ -16,9 +16,9 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'avg by (instance) (rate(process_cpu_seconds_total{job="jambo-ai-worker"}[1m])) > 0.8'
+              expr: 'cpu_usage_percent{process="ai_worker"} > 80'
               instant: true
-        noDataState: NoData
+        noDataState: OK
         execErrState: Error
         for: 5m
         labels:
@@ -26,7 +26,7 @@ groups:
           team: backend
         annotations:
           summary: AI Worker CPU > 80% for 5 minutes
-          description: AI Worker instance {{ $labels.instance }} CPU above 80%. Scale AI worker replicas.
+          description: AI Worker process CPU above 80%. Scale AI worker replicas.
 
       - uid: ai-worker-task-errors
         title: AIWorkerTaskErrors
@@ -40,7 +40,7 @@ groups:
             model:
               expr: 'rate(bot_errors_total{job="jambo-ai-worker"}[5m]) / (rate(bot_move_duration_seconds_count{job="jambo-ai-worker"}[5m]) + 1) > 0.1'
               instant: true
-        noDataState: NoData
+        noDataState: OK
         execErrState: Error
         for: 5m
         labels:

@@ -8,6 +8,18 @@ use uuid::Uuid;
 use crate::database::models::{player, Player, PlayerType};
 use crate::database::traits::PlayerRepoTrait;
 
+/// A single player row for a quick game, ready to be persisted. Kept separate
+/// from `Player` so callers can build a heterogeneous human + bot roster
+/// without instantiating the full model.
+#[derive(Debug, Clone)]
+pub struct QuickGamePlayerRow {
+    pub name: String,
+    pub position: i32,
+    pub player_type: PlayerType,
+    pub credits: i32,
+    pub user_id: Option<Uuid>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PlayerRepository {
     connection: DatabaseConnection,
@@ -220,6 +232,38 @@ impl PlayerRepository {
         .await?;
         Ok(())
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn create_quick_game_players_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        rows: Vec<QuickGamePlayerRow>,
+    ) -> Result<(), DbErr> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now();
+        let models: Vec<player::ActiveModel> = rows
+            .into_iter()
+            .map(|row| player::ActiveModel {
+                id: Set(Uuid::now_v7()),
+                game_id: Set(game_id),
+                player_type: Set(row.player_type),
+                name: Set(row.name),
+                position: Set(row.position),
+                credits: Set(row.credits),
+                created_at: Set(now),
+                user_id: Set(row.user_id),
+                kicked: Set(false),
+                kicked_at: ActiveValue::NotSet,
+            })
+            .collect();
+        player::Entity::insert_many(models)
+            .exec_without_returning(txn)
+            .await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -279,5 +323,60 @@ impl PlayerRepoTrait for PlayerRepository {
         game_id: Uuid,
     ) -> Result<Vec<Player>, DbErr> {
         self.list_by_game_in_txn(txn, game_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, TransactionTrait};
+
+    fn row(name: &str, position: i32, player_type: PlayerType) -> QuickGamePlayerRow {
+        QuickGamePlayerRow {
+            name: name.to_string(),
+            position,
+            player_type,
+            credits: 0,
+            user_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_quick_game_players_inserts_human_and_bots() {
+        let game_id = Uuid::now_v7();
+        let rows = vec![
+            row("You", 0, PlayerType::Human),
+            row("Bot East", 1, PlayerType::Bot),
+            row("Bot North", 2, PlayerType::Bot),
+            row("Bot West", 3, PlayerType::Bot),
+        ];
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 4,
+            }])
+            .into_connection();
+        let repo = PlayerRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .create_quick_game_players_in_txn(&txn, game_id, rows)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_quick_game_players_no_ops_on_empty_rows() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+        let repo = PlayerRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .create_quick_game_players_in_txn(&txn, Uuid::now_v7(), vec![])
+            .await;
+
+        assert!(result.is_ok());
     }
 }

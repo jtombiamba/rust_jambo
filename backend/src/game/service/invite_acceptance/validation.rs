@@ -91,6 +91,7 @@ mod tests {
             game_run_id: None,
             step_by_step: false,
             kicked_players: serde_json::Value::Null,
+            pending_claim_player_id: None,
         }
     }
 

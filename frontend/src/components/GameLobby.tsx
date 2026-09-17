@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import axios from 'axios'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useWebSocket, GameEvent } from '../hooks/useWebSocket'
+import type { SpecialCards } from '../stores/useGameStore'
 import { extractApiError } from '../utils/errors'
 
 interface LobbyPlayer {
@@ -38,6 +39,9 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
   const [myPosition, setMyPosition] = useState<number | null>(null)
 
   const dealtCardsRef = useRef<Record<string, number[]>>({})
+  const specialCardsRef = useRef<Record<string, SpecialCards>>({})
+  const claimOfferedRef = useRef<{ playerId: string; specialCards: SpecialCards } | null>(null)
+  const claimPendingRef = useRef(false)
 
   const [slotPseudos, setSlotPseudos] = useState<Record<number, string>>({})
   const [slotSearchResults, setSlotSearchResults] = useState<Record<number, UserSearchItem[]>>({})
@@ -107,6 +111,7 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
   const handleGameStarted = useCallback((event: Extract<GameEvent, { type: 'game_started' }>) => {
     const turnPlayer = event.players.find(p => p.id === event.current_turn)
     const myPseudo = user?.pseudo
+    const myPlayer = event.players.find(p => myPseudo != null && p.name === myPseudo)
     onGameStart({
       game_id: event.game_id,
       players: event.players.map(p => {
@@ -124,6 +129,9 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
       status: 'active',
       current_turn: turnPlayer?.display_position ?? 0,
       bet: bet,
+      special_cards: myPlayer ? specialCardsRef.current[myPlayer.id] : undefined,
+      claim_offered: claimOfferedRef.current ?? undefined,
+      claim_pending: claimPendingRef.current || undefined,
     })
   }, [onGameStart, bet, user?.pseudo])
 
@@ -152,6 +160,18 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
           break
         case 'cards_dealt':
           dealtCardsRef.current[event.player_id] = event.cards
+          if (event.special_cards) {
+            specialCardsRef.current[event.player_id] = event.special_cards
+          }
+          break
+        case 'claim_offered':
+          claimOfferedRef.current = {
+            playerId: event.player_id,
+            specialCards: event.special_cards,
+          }
+          break
+        case 'claim_pending':
+          claimPendingRef.current = true
           break
         case 'game_started':
           handleGameStarted(event)
@@ -239,6 +259,25 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
     }
   }
 
+  const handleCopyStreamUrl = async () => {
+    try {
+      const res = await axios.post(`/api/games/${gameId}/spectate-token`)
+      const url = res.data.url as string
+      if (!url) {
+        showToast(t('game.streamUrlFailed'))
+        return
+      }
+      try {
+        await navigator.clipboard.writeText(url)
+        showToast(t('game.streamUrlCopied'))
+      } catch {
+        showToast(url)
+      }
+    } catch (err: unknown) {
+      showToast(extractApiError(err).message || t('game.streamUrlFailed'))
+    }
+  }
+
   return (
     <div className="container mx-auto p-4 sm:p-8">
       {toast && (
@@ -247,12 +286,20 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
         </div>
       )}
 
-      <button
-        onClick={onBack}
-        className="mb-4 px-3 sm:px-4 py-2 bg-gray-500 text-white text-sm sm:text-base rounded-lg hover:bg-gray-600"
-      >
-        {t('common.backToDashboard')}
-      </button>
+      <div className="flex items-center justify-between mb-4 gap-2">
+        <button
+          onClick={onBack}
+          className="px-3 sm:px-4 py-2 bg-gray-500 text-white text-sm sm:text-base rounded-lg hover:bg-gray-600"
+        >
+          {t('common.backToDashboard')}
+        </button>
+        <button
+          onClick={handleCopyStreamUrl}
+          className="px-3 sm:px-4 py-2 bg-indigo-600 text-white text-sm sm:text-base rounded-lg hover:bg-indigo-700"
+        >
+          {t('game.copyStreamUrl')}
+        </button>
+      </div>
 
       <h1 className="text-2xl sm:text-3xl font-bold mb-2">{t('lobby.gameLobby')}</h1>
       <p className="text-gray-500 mb-1 text-sm sm:text-base">{t('lobby.betCredits', { bet })}</p>

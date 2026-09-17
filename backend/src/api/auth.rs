@@ -3,8 +3,10 @@ use std::sync::Arc;
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, ResponseError};
 
 use crate::api::dto::auth::{
-    ForgotPasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest,
+    AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, LogoutResponse,
+    RegisterRequest, ResetPasswordRequest, ResetPasswordResponse, UserInfo,
 };
+use crate::api::dto::responses::ApiErrorResponse;
 use crate::api::services::auth_service::AuthService;
 use crate::auth::config::AuthConfig;
 use crate::auth::cookie;
@@ -15,6 +17,18 @@ use crate::messaging::RedisClient;
 
 pub type AuthServiceType = AuthService<super::super::database::repositories::UserRepository>;
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/register",
+    tag = "auth",
+    request_body = RegisterRequest,
+    responses(
+        (status = 201, description = "Registration successful", body = AuthResponse),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+        (status = 409, description = "Email already in use", body = ApiErrorResponse),
+        (status = 429, description = "Rate limited", body = ApiErrorResponse),
+    )
+)]
 pub async fn register(
     req: HttpRequest,
     body: web::Json<RegisterRequest>,
@@ -41,6 +55,17 @@ pub async fn register(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/login",
+    tag = "auth",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Login successful", body = AuthResponse),
+        (status = 401, description = "Invalid credentials", body = ApiErrorResponse),
+        (status = 429, description = "Rate limited", body = ApiErrorResponse),
+    )
+)]
 pub async fn login(
     req: HttpRequest,
     body: web::Json<LoginRequest>,
@@ -64,6 +89,16 @@ pub async fn login(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/forgot-password",
+    tag = "auth",
+    request_body = ForgotPasswordRequest,
+    responses(
+        (status = 200, description = "Reset email sent", body = ForgotPasswordResponse),
+        (status = 429, description = "Rate limited", body = ApiErrorResponse),
+    )
+)]
 pub async fn forgot_password(
     body: web::Json<ForgotPasswordRequest>,
     service: web::Data<Arc<AuthServiceType>>,
@@ -72,6 +107,17 @@ pub async fn forgot_password(
     HttpResponse::Ok().json(service.forgot_password(body.into_inner(), i18n.lang).await)
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/reset-password",
+    tag = "auth",
+    request_body = ResetPasswordRequest,
+    responses(
+        (status = 200, description = "Password reset", body = ResetPasswordResponse),
+        (status = 400, description = "Invalid token or validation error", body = ApiErrorResponse),
+        (status = 429, description = "Rate limited", body = ApiErrorResponse),
+    )
+)]
 pub async fn reset_password(
     body: web::Json<ResetPasswordRequest>,
     service: web::Data<Arc<AuthServiceType>>,
@@ -83,6 +129,12 @@ pub async fn reset_password(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout",
+    tag = "auth",
+    responses((status = 200, description = "Logged out", body = LogoutResponse))
+)]
 pub async fn logout(
     req: HttpRequest,
     auth_config: web::Data<AuthConfig>,
@@ -108,13 +160,22 @@ pub async fn logout(
 
     let mut resp = HttpResponse::Ok();
     cookie::clear_auth_cookie(&mut resp);
-    resp.json(serde_json::json!({
-        "success": true,
-        "message": i18n.t("auth.logged_out"),
-        "user": null
-    }))
+    resp.json(LogoutResponse {
+        success: true,
+        message: i18n.t("auth.logged_out"),
+    })
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/me",
+    tag = "auth",
+    security(("cookie_auth" = [])),
+    responses(
+        (status = 200, description = "Authenticated user info", body = UserInfo),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
 pub async fn me(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<AuthServiceType>>,

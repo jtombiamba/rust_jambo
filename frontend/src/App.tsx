@@ -11,10 +11,12 @@ import Footer from './components/Footer'
 import { ToastProvider } from './components/Toast'
 import { useToast } from './components/useToast'
 import { useGameStore } from './stores/useGameStore'
+import type { SpecialCards } from './stores/useGameStore'
 import { useAuthStore } from './stores/useAuthStore'
 import { useLanguageStore } from './stores/useLanguageStore'
 import { useRoomStore } from './stores/useRoomStore'
 import { extractApiError } from './utils/errors'
+import { generateIdempotencyKey } from './utils/idempotency'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import RoomList from './components/RoomList'
 import RoomDashboard from './components/RoomDashboard'
@@ -24,6 +26,7 @@ import CreateRunModal from './components/CreateRunModal'
 import { useGameWebSocket } from './hooks/useGameWebSocket'
 import { useRoomWebSocket } from './hooks/useRoomWebSocket'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useUserWebSocket } from './hooks/useUserWebSocket'
 import { getStoredStats, saveStats, AnonymousStats } from './utils/storage'
 
 interface QuickGameResponse {
@@ -36,6 +39,7 @@ interface QuickGameResponse {
     display_position: number
     cards: number[]
     cards_count: number
+    is_current_user?: boolean
   }>
   status: string
   current_turn: number
@@ -44,6 +48,9 @@ interface QuickGameResponse {
   deck_slots?: (number | null)[]
   ws_token?: string
   step_by_step?: boolean
+  special_cards?: SpecialCards
+  claim_offered?: { playerId: string; specialCards: SpecialCards }
+  claim_pending?: boolean
 }
 
 interface MultiplayerGameResponse {
@@ -67,8 +74,20 @@ function AppContent() {
   const [pendingInvite, setPendingInvite] = useState<{ gameId: string; action: string } | null>(null)
   const [wsToken, setWsToken] = useState<string | null>(null)
   const [reachLimit, setReachLimit] = useState(false)
-  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver, setStepByStep, clearDeckSlots } = useGameStore()
+  const { gameId, players, currentTurn, deckSlots, remainingCards, gameOver, roundWinner, setGame: setGameStore, resetGame, clearGameOver, setStepByStep, clearDeckSlots, setClaimOffered, setClaimPending } = useGameStore()
   const isMultiplayer = players.length > 0 && players.every(p => p.type === 'human')
+
+  const offerClaimFromResponse = useCallback((data: QuickGameResponse) => {
+    if (!data.special_cards) return
+    const list = data.players ?? []
+    const allHuman = list.length > 0 && list.every(p => p.type === 'human')
+    if (!allHuman) return
+    const s = data.special_cards
+    if (!s.check_a_square && !s.check_sum_value_under_21 && !s.check_triple_seven) return
+    const current = list.find(p => p.is_current_user)
+    if (!current) return
+    setClaimOffered({ playerId: current.id, specialCards: s })
+  }, [setClaimOffered])
   const { isAuthenticated, openAuthModal, checkAuth, clearPendingInvite, user } = useAuthStore()
   const { isConnected } = useWebSocket({ gameId: gameId || '' })
   const { showToast } = useToast()
@@ -86,6 +105,7 @@ function AppContent() {
   const autoStartRef = useRef(false)
   const [roomRefreshKey, setRoomRefreshKey] = useState(0)
   useGameWebSocket(gameId, wsToken)
+  useUserWebSocket(isAuthenticated)
   useRoomWebSocket({
     roomId: isAuthenticated && roomId ? roomId : null,
     onEvent: (event) => {
@@ -277,10 +297,11 @@ function AppContent() {
     if (!gameId || playingCard !== null) return;
     setCardError(null);
     setPlayingCard(cardIndex);
+    const idempotencyKey = generateIdempotencyKey();
     axios.post(`/api/game/${gameId}/play`, {
       player_id: playerId,
       card_index: cardIndex,
-    })
+    }, { headers: { 'X-Idempotency-Key': idempotencyKey } })
       .catch(err => {
         console.error('Failed to play card', err);
         const error = extractApiError(err);
@@ -313,9 +334,10 @@ function AppContent() {
     if (!humanPlayer) return;
     setPlayingCard(-1);
     const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    const idempotencyKey = generateIdempotencyKey();
     axios.post(`/api/game/${gameId}/evaluate-round${tokenParam}`, {
       player_id: humanPlayer.id,
-    })
+    }, { headers: { 'X-Idempotency-Key': idempotencyKey } })
       .catch(err => {
         console.error('Failed to evaluate round', err);
         const error = extractApiError(err);
@@ -324,11 +346,78 @@ function AppContent() {
       .finally(() => setPlayingCard(null));
   };
 
+  const handleClaim = () => {
+    if (!gameId) return;
+    const humanPlayer = players.find(p => p.type === 'human');
+    if (!humanPlayer) return;
+    const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    const idempotencyKey = generateIdempotencyKey();
+    axios.post(`/api/game/${gameId}/claim-special${tokenParam}`, {
+      player_id: humanPlayer.id,
+    }, { headers: { 'X-Idempotency-Key': idempotencyKey } })
+      .then(() => {
+        setClaimOffered(null);
+        setClaimPending(false);
+      })
+      .catch(err => {
+        console.error('Failed to claim special cards', err);
+        const error = extractApiError(err);
+        showToast(error.message, 'error');
+        setClaimOffered(null);
+      });
+  };
+
+  const handleDecline = () => {
+    if (!gameId) return;
+    const humanPlayer = players.find(p => p.type === 'human');
+    if (!humanPlayer) return;
+    const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    axios.post(`/api/game/${gameId}/decline-special${tokenParam}`, {
+      player_id: humanPlayer.id,
+    })
+      .then(() => {
+        setClaimOffered(null);
+        setClaimPending(false);
+      })
+      .catch(err => {
+        console.error('Failed to decline special cards', err);
+        const error = extractApiError(err);
+        showToast(error.message, 'error');
+      });
+  };
+
   const handleLocalStats = () => {
    const storedStats = getStoredStats()
     if (storedStats) {
       setStats(storedStats)
     }
+  }
+
+  const handleBackToDashboard = () => {
+    handleLocalStats()
+    resetGame()
+    setWsToken(null)
+    setRunId(null)
+    setAutoStartCountdown(0)
+  }
+
+  const handleCopyStreamUrl = () => {
+    if (!gameId) return
+    axios.post(`/api/games/${gameId}/spectate-token`)
+      .then((res) => {
+        const url = res.data.url as string
+        if (!url) {
+          showToast(t('game.streamUrlFailed'), 'error')
+          return
+        }
+        navigator.clipboard.writeText(url)
+          .then(() => showToast(t('game.streamUrlCopied'), 'success'))
+          .catch(() => showToast(url, 'info'))
+      })
+      .catch((err) => {
+        const error = extractApiError(err)
+        showToast(error.message || t('game.streamUrlFailed'), 'error')
+      })
   }
 
   const handleViewLobby = (gameId: string) => {
@@ -343,6 +432,13 @@ function AppContent() {
     const d = data as QuickGameResponse
     if (d.game_id && d.players) {
       setGameStore(d.game_id, d.players, d.status || 'active', d.current_turn || 0, d.bet || 10, d.deck_slots || null)
+      if (d.claim_offered) {
+        setClaimOffered(d.claim_offered)
+      } else if (d.claim_pending) {
+        setClaimPending(true)
+      } else {
+        offerClaimFromResponse(d)
+      }
       setLobbyGameId(null)
     }
   }
@@ -388,6 +484,7 @@ function AppContent() {
             gameRes.data.bet,
             gameRes.data.deck_slots || null
           )
+          offerClaimFromResponse(gameRes.data)
           clearGameOver()
         }
       }
@@ -396,7 +493,7 @@ function AppContent() {
     } finally {
       setStartingGame(false)
     }
-  }, [runId, clearGameOver, setGameStore, showToast])
+  }, [runId, clearGameOver, setGameStore, showToast, offerClaimFromResponse])
 
   useEffect(() => {
     if (!gameOver?.isGameOver || !runId || runGameIndex >= runTotalGames) return
@@ -454,16 +551,13 @@ function AppContent() {
             onCardClick={handleCardClick}
             showPlayAgain={!isMultiplayer && !runId && !reachLimit}
             onPlayAgain={runId ? handlePlayNextInRun : startGame}
-            onReturnToLobby={() => {
-              handleLocalStats()
-              resetGame()
-              setWsToken(null)
-              setRunId(null)
-              setAutoStartCountdown(0)
-            }}
+            onReturnToLobby={handleBackToDashboard}
             onCloseGameOver={clearGameOver}
             onAdvanceBot={handleAdvanceBot}
             onEvaluateRound={handleEvaluateRound}
+            onClaim={handleClaim}
+            onDecline={handleDecline}
+            onBack={handleBackToDashboard}
           />
           {gameOver?.isGameOver && runId && (
             <div className="container mx-auto px-4 sm:px-8">
@@ -526,19 +620,21 @@ function AppContent() {
               </div>
             </div>
           )}
-          <div className="container mx-auto px-4 sm:px-8 pb-8">
+          <div className="hidden md:block container mx-auto px-4 sm:px-8 pb-8">
             <button
               className="mt-4 px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-              onClick={() => {
-                handleLocalStats()
-                resetGame()
-                setWsToken(null)
-                setRunId(null)
-                setAutoStartCountdown(0)
-              }}
+              onClick={handleBackToDashboard}
             >
               {t('common.backToDashboard')}
             </button>
+            {isAuthenticated && (
+              <button
+                className="mt-4 ml-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                onClick={handleCopyStreamUrl}
+              >
+                {t('game.copyStreamUrl')}
+              </button>
+            )}
           </div>
         </div>
         <Footer />
@@ -617,6 +713,7 @@ function AppContent() {
                     gameRes.data.bet,
                     gameRes.data.deck_slots || null
                   )
+                  offerClaimFromResponse(gameRes.data)
                 }
               } catch {
                 showToast('Failed to load game', 'error')
@@ -637,6 +734,7 @@ function AppContent() {
     } else {
       setGameStore(data.game_id, data.players, data.status, data.current_turn, data.bet, data.deck_slots || null)
       setStepByStep(data.step_by_step ?? false)
+      offerClaimFromResponse(data)
     }
   }
 

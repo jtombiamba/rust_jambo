@@ -14,10 +14,11 @@ use crate::api::dto::responses::{
     UserSearchResponse,
 };
 use crate::cache::UserCache;
-use crate::database::models::{GameStatus, PlayerType, User};
+use crate::database::models::{GameMode, GameStatus, PlayerType, User};
 use crate::database::traits::{DashboardRepoTrait, GameCardRepoTrait, GameRepoTrait};
 use crate::error::AppError;
-use crate::game::service::compute_display_position;
+use crate::game::service::{build_played_card_slots, compute_display_position};
+use crate::game::special_cards::compute_special_cards;
 use crate::messaging::RedisClient;
 use crate::observability::metrics::{record_cache_hit, record_cache_miss};
 
@@ -397,6 +398,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             return Ok(UserSearchResponse { users: vec![] });
         }
 
+        // TODO: define a max limit as environment variable for the query to avoid abuse
         let users = self
             .repo
             .find_users_by_pseudo_prefix(query.q.trim(), query.limit)
@@ -465,6 +467,22 @@ async fn build_game_state_response(
         Vec::new()
     };
 
+    let my_special_cards: Option<crate::game::special_cards::SpecialCards> =
+        if matches!(game.game_mode, GameMode::Multiplayer) {
+            match my_player {
+                Some(mp) => match card_repo.list_by_player(mp.id).await {
+                    Ok(cards) => {
+                        let hand: Vec<i32> = cards.iter().map(|c| c.card_index).collect();
+                        Some(compute_special_cards(&hand))
+                    }
+                    Err(_) => None,
+                },
+                None => None,
+            }
+        } else {
+            None
+        };
+
     let all_game_cards = card_repo.list_by_game(game.id).await.unwrap_or_default();
 
     let mut remaining_counts: HashMap<Uuid, usize> = HashMap::new();
@@ -492,15 +510,7 @@ async fn build_game_state_response(
         vec![None; num_players]
     } else {
         let winner_pos = game.current_winning_player_position.unwrap_or(0) as usize;
-        played_pairs.sort_by_key(|(_, pos)| (num_players + *pos - winner_pos) % num_players);
-        let mut slots: Vec<Option<i32>> = played_pairs
-            .into_iter()
-            .map(|(card_idx, _)| Some(card_idx))
-            .collect();
-        if slots.len() < 4 {
-            slots.resize(4, None);
-        }
-        slots
+        build_played_card_slots(played_pairs, num_players, winner_pos)
     };
 
     let players_json: Vec<PlayerInfoDto> = all_players
@@ -547,6 +557,7 @@ async fn build_game_state_response(
         deck_slots: Some(deck_slots),
         ws_token: None,
         step_by_step: game.step_by_step,
+        special_cards: my_special_cards,
     })
 }
 

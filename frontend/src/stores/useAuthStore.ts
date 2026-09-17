@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api } from '../api/api'
 import { extractApiError } from '../utils/errors'
+import { useInvitationStore } from './useInvitationStore'
 
 export interface UserInfo {
   id: string
@@ -155,5 +156,6 @@ export const useAuthStore = create<AuthState>((set) => ({
       // ignore
     }
     set({ isAuthenticated: false, user: null, frozenUntil: null })
+    useInvitationStore.getState().clear()
   },
 }))

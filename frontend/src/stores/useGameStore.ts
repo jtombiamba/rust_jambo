@@ -8,6 +8,20 @@ export interface Player {
   display_position: number;
   cards: number[];
   cards_count?: number;
+  is_current_user?: boolean;
+}
+
+export interface SpecialCards {
+  check_triple_seven: boolean;
+  check_sum_value_under_21: boolean;
+  check_a_square: boolean;
+}
+
+export type SpecialSetKey = keyof SpecialCards;
+
+export interface ClaimOffer {
+  playerId: string;
+  specialCards: SpecialCards;
 }
 
 export interface RoundWinner {
@@ -46,8 +60,13 @@ export interface GameState {
   gameOver: GameOverData | null;
   pendingGameOver: GameOverData | null;
   stepByStep: boolean;
+  gameMode: 'solo' | 'multiplayer' | null;
+  claimOffered: ClaimOffer | null;
+  claimPending: boolean;
+  revealedHand: { playerId: string; cards: number[] } | null;
   pendingBotMoves: QueuedBotEvent[];
   isReplayingBots: boolean;
+  isSnapshotReplaying: boolean;
   botReplayTimerId: ReturnType<typeof setTimeout> | null;
   roundWinnerClearTimerId: ReturnType<typeof setTimeout> | null;
   isBotChainActive: boolean;
@@ -67,10 +86,15 @@ export interface GameState {
   clearGameOver: () => void;
   applyCardPlayed: (playerId: string, cardIndex: number, nextTurn?: string) => void;
   setStepByStep: (active: boolean) => void;
+  setGameMode: (mode: 'solo' | 'multiplayer') => void;
+  setClaimOffered: (offer: ClaimOffer | null) => void;
+  setClaimPending: (pending: boolean) => void;
+  setRevealedHand: (hand: { playerId: string; cards: number[] } | null) => void;
   addPendingEvent: (event: QueuedBotEvent) => void;
   clearPendingEvents: () => void;
   startBotReplay: (botDelayMs: number, roundPauseMs: number) => void;
   cancelBotReplay: () => void;
+  startSnapshotReplay: (slots: (number | null)[], delayMs: number) => void;
   flushPendingEvents: () => void;
   setBotDelays: (botThinkingDelayMs: number, roundPauseDelayMs: number) => void;
 }
@@ -87,8 +111,13 @@ export const useGameStore = create<GameState>((set, get) => ({
   gameOver: null,
   pendingGameOver: null,
   stepByStep: false,
+  gameMode: null,
+  claimOffered: null,
+  claimPending: false,
+  revealedHand: null,
   pendingBotMoves: [],
   isReplayingBots: false,
+  isSnapshotReplaying: false,
   botReplayTimerId: null,
   roundWinnerClearTimerId: null,
   isBotChainActive: false,
@@ -125,8 +154,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     const sameRemaining = playersWithDisplay.every(
       (p) => remainingCards[p.id] === state.remainingCards[p.id]
     );
+    // Compare seat rotation too: a re-rotated snapshot (display_position) must
+    // be applied, otherwise the "self at position 0" invariant can go stale.
+    const samePositions = playersWithDisplay.length === state.players.length
+      && playersWithDisplay.every((p) => {
+        const existing = state.players.find((ep) => ep.id === p.id);
+        if (!existing) return false;
+        return p.display_position === existing.display_position
+          && p.is_current_user === existing.is_current_user;
+      });
 
-    if (sameGameId && sameStatus && sameTurn && sameDecks && sameCards && sameRemaining) {
+    if (sameGameId && sameStatus && sameTurn && sameDecks && sameCards && sameRemaining && samePositions) {
       return;
     }
 
@@ -146,7 +184,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       pendingGameOver: null,
       stepByStep: false,
       pendingBotMoves: [],
+      gameMode: null,
+      claimOffered: null,
+      claimPending: false,
+      revealedHand: null,
       isReplayingBots: false,
+      isSnapshotReplaying: false,
       isBotChainActive: false,
       roundWinnerClearTimerId: null,
     }),
@@ -217,6 +260,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
   setStepByStep: (active) =>
     set({ stepByStep: active }),
+  setGameMode: (mode) =>
+    set({ gameMode: mode }),
+  setClaimOffered: (claimOffered) =>
+    set({ claimOffered }),
+  setClaimPending: (claimPending) =>
+    set({ claimPending }),
+  setRevealedHand: (revealedHand) =>
+    set({ revealedHand }),
   addPendingEvent: (event) =>
     set((state) => ({
       pendingBotMoves: [...state.pendingBotMoves, event],
@@ -289,6 +340,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({
       pendingBotMoves: [],
       isReplayingBots: false,
+      isSnapshotReplaying: false,
       isBotChainActive: false,
       botReplayTimerId: null,
       roundWinnerClearTimerId: null,
@@ -298,6 +350,48 @@ export const useGameStore = create<GameState>((set, get) => ({
         ? { gameOver: state.pendingGameOver, pendingGameOver: null }
         : {}),
     });
+  },
+  startSnapshotReplay: (slots, delayMs) => {
+    const state = get();
+    if (state.botReplayTimerId !== null) {
+      clearTimeout(state.botReplayTimerId);
+    }
+
+    const cardsToReveal = slots.filter((s): s is number => s !== null);
+    if (cardsToReveal.length === 0) {
+      return;
+    }
+
+    set({
+      isSnapshotReplaying: true,
+      isReplayingBots: true,
+      isBotChainActive: true,
+      deckSlots: new Array(slots.length).fill(null),
+    });
+
+    const revealNext = (index: number) => {
+      const current = get();
+      if (!current.isSnapshotReplaying) {
+        return;
+      }
+      if (index >= cardsToReveal.length) {
+        set({
+          isSnapshotReplaying: false,
+          isReplayingBots: false,
+          isBotChainActive: false,
+          botReplayTimerId: null,
+        });
+        return;
+      }
+      const updatedDeck = [...current.deckSlots];
+      updatedDeck[index] = cardsToReveal[index];
+      set({ deckSlots: updatedDeck });
+      const timerId = setTimeout(() => revealNext(index + 1), delayMs);
+      set({ botReplayTimerId: timerId });
+    };
+
+    const timerId = setTimeout(() => revealNext(0), delayMs);
+    set({ botReplayTimerId: timerId });
   },
   flushPendingEvents: () => {
     const state = get();

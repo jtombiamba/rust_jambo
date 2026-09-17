@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::game::special_cards::SpecialCards;
+
 /// Events that can be published to Redis and forwarded to WebSocket clients.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -57,11 +59,13 @@ pub enum GameEvent {
         game_id: Uuid,
         player_id: Uuid,
         cards: Vec<i32>,
+        special_cards: SpecialCards,
     },
     GameStarted {
         game_id: Uuid,
         players: Vec<GameStartedPlayer>,
         current_turn: Uuid,
+        game_mode: String,
         correlation_id: Option<Uuid>,
     },
     PlayerDisconnected {
@@ -95,6 +99,23 @@ pub enum GameEvent {
         game_id: Uuid,
         winner_id: Uuid,
         winner_name: String,
+    },
+    ClaimPending {
+        game_id: Uuid,
+    },
+    ClaimOffered {
+        game_id: Uuid,
+        player_id: Uuid,
+        special_cards: SpecialCards,
+    },
+    ClaimResolved {
+        game_id: Uuid,
+    },
+    SpecialClaim {
+        game_id: Uuid,
+        player_id: Uuid,
+        cards: Vec<i32>,
+        winner_position: i32,
     },
 }
 
@@ -140,6 +161,46 @@ pub struct GameStartedPlayer {
     pub player_type: String, // "human" or "bot"
 }
 
+/// Events scoped to a single user (rather than a game or room). These are
+/// pushed to the user's own WebSocket connection so the client can react in
+/// real time to things like incoming game invitations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum UserEvent {
+    /// A new game invitation was created for the target user.
+    InviteReceived {
+        user_id: Uuid,
+        invite_id: Uuid,
+        game_id: Uuid,
+        creator_pseudo: String,
+        bet: i32,
+        player_count: i64,
+        max_players: i32,
+        created_at: String,
+        expires_at: Option<String>,
+    },
+    /// An invitation is no longer valid (accepted, declined, or game cancelled).
+    InviteRemoved { user_id: Uuid, game_id: Uuid },
+}
+
+impl UserEvent {
+    pub fn channel(&self) -> String {
+        match self {
+            UserEvent::InviteReceived { user_id, .. }
+            | UserEvent::InviteRemoved { user_id, .. } => format!("user:{}", user_id),
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("Failed to serialize UserEvent")
+    }
+
+    #[allow(dead_code)]
+    pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(s)
+    }
+}
+
 impl RoomEvent {
     pub fn channel(&self) -> String {
         match self {
@@ -175,6 +236,10 @@ impl GameEvent {
             | GameEvent::PlayerKicked { game_id, .. }
             | GameEvent::GameReshuffled { game_id, .. }
             | GameEvent::PlayerForfeitWin { game_id, .. } => format!("game:{}", game_id),
+            GameEvent::ClaimPending { game_id }
+            | GameEvent::ClaimResolved { game_id }
+            | GameEvent::SpecialClaim { game_id, .. }
+            | GameEvent::ClaimOffered { game_id, .. } => format!("game:{}", game_id),
         }
     }
 
@@ -187,5 +252,58 @@ impl GameEvent {
     #[allow(dead_code)]
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_event_invite_received_channel_and_serialization() {
+        let user_id = Uuid::new_v4();
+        let event = UserEvent::InviteReceived {
+            user_id,
+            invite_id: Uuid::new_v4(),
+            game_id: Uuid::new_v4(),
+            creator_pseudo: "alice".to_string(),
+            bet: 20,
+            player_count: 1,
+            max_players: 4,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            expires_at: None,
+        };
+
+        assert_eq!(event.channel(), format!("user:{}", user_id));
+
+        let json = event.to_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "invite_received");
+        assert_eq!(parsed["creator_pseudo"], "alice");
+        assert_eq!(parsed["bet"], 20);
+    }
+
+    #[test]
+    fn user_event_invite_removed_channel_and_serialization() {
+        let user_id = Uuid::new_v4();
+        let game_id = Uuid::new_v4();
+        let event = UserEvent::InviteRemoved { user_id, game_id };
+
+        assert_eq!(event.channel(), format!("user:{}", user_id));
+
+        let json = event.to_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "invite_removed");
+        assert_eq!(parsed["game_id"], game_id.to_string());
+    }
+
+    #[test]
+    fn user_event_roundtrips_through_json() {
+        let event = UserEvent::InviteRemoved {
+            user_id: Uuid::new_v4(),
+            game_id: Uuid::new_v4(),
+        };
+        let roundtripped = UserEvent::from_json(&event.to_json()).unwrap();
+        assert!(matches!(roundtripped, UserEvent::InviteRemoved { .. }));
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, ResponseError};
 
-use crate::api::dto::responses::QuickGameResponse;
+use crate::api::dto::responses::{ApiErrorResponse, QuickGameResponse};
 use crate::auth::config::AuthConfig;
 use crate::auth::jwt;
 use crate::error::AppError;
@@ -13,6 +13,16 @@ use crate::observability::CorrelationId;
 /// TTL for one-time game tokens in seconds (2 hours).
 const GAME_TOKEN_TTL_SECS: u64 = 7200;
 
+#[utoipa::path(
+    post,
+    path = "/api/quickie",
+    tag = "game",
+    params(("step_by_step" = Option<bool>, Query, description = "Enable step-by-step mode")),
+    responses(
+        (status = 201, description = "Quick game created", body = QuickGameResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+    )
+)]
 #[post("/quickie")]
 pub async fn create_quick_game(
     req: HttpRequest,

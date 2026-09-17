@@ -3,9 +3,11 @@ use std::sync::Arc;
 use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, ResponseError};
 use uuid::Uuid;
 
+use crate::api::dto::requests::ClaimSpecialRequest;
 use crate::api::dto::requests::PlayCardRequest;
 use crate::api::dto::responses::{
-    AdvanceBotResponse, EvaluateRoundResponse, PlayCardResponse, PlayerActionRequest,
+    AdvanceBotResponse, ApiErrorResponse, EvaluateRoundResponse, PlayCardResponse,
+    PlayerActionRequest,
 };
 use crate::auth::config::AuthConfig;
 use crate::error::AppError;
@@ -13,6 +15,18 @@ use crate::game::service::GamePlayService;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/play",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = PlayCardRequest,
+    responses(
+        (status = 200, description = "Card played successfully", body = PlayCardResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 403, description = "Not your turn", body = ApiErrorResponse),
+    )
+)]
 #[post("/game/{id}/play")]
 pub async fn play_card(
     req: HttpRequest,
@@ -51,6 +65,18 @@ pub async fn play_card(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/advance-bot",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = PlayerActionRequest,
+    responses(
+        (status = 200, description = "Bot advanced", body = AdvanceBotResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 403, description = "Not your turn", body = ApiErrorResponse),
+    )
+)]
 pub async fn advance_bot(
     req: HttpRequest,
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
@@ -159,6 +185,18 @@ pub async fn advance_bot(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/evaluate-round",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = PlayerActionRequest,
+    responses(
+        (status = 200, description = "Round evaluated", body = EvaluateRoundResponse),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 403, description = "Not your turn", body = ApiErrorResponse),
+    )
+)]
 pub async fn evaluate_round(
     req: HttpRequest,
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
@@ -263,6 +301,135 @@ pub async fn evaluate_round(
             };
             HttpResponse::Ok().json(response)
         }
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+/// Resolve the acting user for game-action endpoints. Returns the authenticated
+/// user id and whether auth came from a one-time game token (anonymous).
+async fn resolve_player_user_id(req: &HttpRequest, game_id: Uuid) -> (Option<Uuid>, bool) {
+    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let redis_client = req
+        .app_data::<web::Data<Option<RedisClient>>>()
+        .cloned()
+        .and_then(|r| r.get_ref().clone());
+
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let mut auth_user_id =
+        crate::websocket::validate_ws_token(token, auth_config.clone(), redis_client.clone()).await;
+
+    let mut is_game_token_auth = false;
+    if auth_user_id.is_none() {
+        let game_token = req
+            .query_string()
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| *k == "token")
+            .map(|(_, v)| v.to_string());
+        if let Some(ref gt) = game_token {
+            auth_user_id =
+                crate::websocket::validate_game_token(gt, game_id, auth_config, redis_client).await;
+            if auth_user_id.is_some() {
+                is_game_token_auth = true;
+            }
+        }
+    }
+
+    (auth_user_id, is_game_token_auth)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/claim-special",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = ClaimSpecialRequest,
+    responses(
+        (status = 200, description = "Special-card victory claimed", body = crate::game::service::types::ClaimSpecialOutcome),
+        (status = 400, description = "Invalid request", body = ApiErrorResponse),
+        (status = 403, description = "Claim not allowed", body = ApiErrorResponse),
+    )
+)]
+pub async fn claim_special(
+    req: HttpRequest,
+    orchestrator: web::Data<Arc<dyn GamePlayService>>,
+    id: web::Path<Uuid>,
+    payload: web::Json<ClaimSpecialRequest>,
+) -> impl Responder {
+    let game_id = id.into_inner();
+    let (auth_user_id, is_game_token_auth) = resolve_player_user_id(&req, game_id).await;
+
+    if let Some(user_id) = auth_user_id {
+        if !is_game_token_auth {
+            match orchestrator
+                .verify_player_ownership(game_id, payload.player_id, user_id)
+                .await
+            {
+                Ok(false) | Err(_) => {
+                    return AppError::from(crate::error::GameError::SpecialClaimNotAllowed)
+                        .error_response();
+                }
+                Ok(true) => {}
+            }
+        }
+    }
+
+    let idempotency_key = req
+        .headers()
+        .get("X-Idempotency-Key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    match orchestrator
+        .claim_special_victory(game_id, payload.player_id, idempotency_key)
+        .await
+    {
+        Ok(outcome) => HttpResponse::Ok().json(outcome),
+        Err(e) => AppError::from(e).error_response(),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/game/{id}/decline-special",
+    tag = "game",
+    params(("id" = Uuid, Path, description = "Game ID")),
+    request_body = ClaimSpecialRequest,
+    responses(
+        (status = 200, description = "Special-card claim declined", body = crate::api::dto::responses::SimpleSuccessResponse),
+        (status = 403, description = "Decline not allowed", body = ApiErrorResponse),
+    )
+)]
+pub async fn decline_special(
+    req: HttpRequest,
+    orchestrator: web::Data<Arc<dyn GamePlayService>>,
+    id: web::Path<Uuid>,
+    payload: web::Json<ClaimSpecialRequest>,
+) -> impl Responder {
+    let game_id = id.into_inner();
+    let (auth_user_id, is_game_token_auth) = resolve_player_user_id(&req, game_id).await;
+
+    if let Some(user_id) = auth_user_id {
+        if !is_game_token_auth {
+            match orchestrator
+                .verify_player_ownership(game_id, payload.player_id, user_id)
+                .await
+            {
+                Ok(false) | Err(_) => {
+                    return AppError::from(crate::error::GameError::SpecialClaimNotAllowed)
+                        .error_response();
+                }
+                Ok(true) => {}
+            }
+        }
+    }
+
+    match orchestrator
+        .decline_special_claim(game_id, payload.player_id)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok()
+            .json(crate::api::dto::responses::SimpleSuccessResponse { success: true }),
         Err(e) => AppError::from(e).error_response(),
     }
 }

@@ -16,9 +16,9 @@ groups:
               from: 600
               to: 0
             model:
-              expr: 'avg by (instance) (rate(process_cpu_seconds_total{job="jambo-scheduler-worker"}[1m])) > 0.8'
+              expr: 'cpu_usage_percent{process="scheduler_worker"} > 80'
               instant: true
-        noDataState: NoData
+        noDataState: OK
         execErrState: Error
         for: 5m
         labels:
@@ -26,4 +26,4 @@ groups:
           team: backend
         annotations:
           summary: Scheduler Worker CPU > 80%
-          description: Scheduler Worker instance {{ $labels.instance }} CPU above 80%. Investigate background task performance.
+          description: Scheduler Worker process CPU above 80%. Investigate background task performance.

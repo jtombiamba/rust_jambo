@@ -7,7 +7,7 @@ use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
 
-use crate::database::models::{game, game_card, player, GameStatus};
+use crate::database::models::{game, game_card, player, GameMode, GameStatus};
 use crate::database::repositories::game::optimistic_update_round_result_in_txn;
 use crate::database::repositories::{
     GameCardRepository, PlayerProfileRepository, PlayerRepository,
@@ -20,6 +20,7 @@ use crate::game::constants::{
 use crate::game::payment::calculate_payment;
 use crate::game::round_evaluation::{evaluate_round, PlayedCard, RoundContext};
 use crate::game::service::types::{RoundEvalTimer, RoundEvaluationResult};
+use crate::game::special_cards::compute_special_cards;
 use crate::observability::metrics;
 
 use super::GameService;
@@ -74,6 +75,28 @@ fn compute_final_status(
         GameStatus::DoubleKora
     } else {
         GameStatus::Kora
+    }
+}
+
+/// Final game status with the special-card upgrade applied: a winner who holds
+/// an unclaimed special combination always finishes as a `Kora`, overriding any
+/// normal or double-kora detection.
+fn compute_final_status_with_special(
+    is_kora: bool,
+    round_4_winner_id: Option<Uuid>,
+    round_5_winner_id: Uuid,
+    round_4_winner_played_kora: bool,
+    winner_has_special: bool,
+) -> GameStatus {
+    if winner_has_special {
+        GameStatus::Kora
+    } else {
+        compute_final_status(
+            is_kora,
+            round_4_winner_id,
+            round_5_winner_id,
+            round_4_winner_played_kora,
+        )
     }
 }
 
@@ -209,12 +232,27 @@ impl GameService {
                 false
             };
 
+        let winner_has_special =
+            if game_ends && matches!(game_model.game_mode, GameMode::Multiplayer) {
+                game_card_repo
+                    .list_by_player_in_txn(txn, winner_id)
+                    .await
+                    .map(|cards| {
+                        let hand: Vec<i32> = cards.iter().map(|c| c.card_index).collect();
+                        compute_special_cards(&hand).has_any()
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
         let final_status = game_ends.then(|| {
-            compute_final_status(
+            compute_final_status_with_special(
                 round_result.is_kora,
                 game_model.winner_id,
                 winner_id,
                 round_4_winner_played_kora,
+                winner_has_special,
             )
         });
 
@@ -486,5 +524,36 @@ mod tests {
     fn compute_final_status_kora_when_no_round4_winner() {
         let p = Uuid::new_v4();
         assert_eq!(compute_final_status(true, None, p, true), GameStatus::Kora);
+    }
+
+    #[test]
+    fn compute_final_status_with_special_overrides_double_kora() {
+        let p = Uuid::new_v4();
+        assert_eq!(
+            compute_final_status_with_special(true, Some(p), p, true, true),
+            GameStatus::Kora
+        );
+    }
+
+    #[test]
+    fn compute_final_status_with_special_overrides_finished() {
+        let p = Uuid::new_v4();
+        assert_eq!(
+            compute_final_status_with_special(false, Some(p), p, false, true),
+            GameStatus::Kora
+        );
+    }
+
+    #[test]
+    fn compute_final_status_with_special_defers_when_no_special() {
+        let p = Uuid::new_v4();
+        assert_eq!(
+            compute_final_status_with_special(true, Some(p), p, true, false),
+            GameStatus::DoubleKora
+        );
+        assert_eq!(
+            compute_final_status_with_special(false, Some(p), p, false, false),
+            GameStatus::Finished
+        );
     }
 }

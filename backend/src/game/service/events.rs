@@ -2,8 +2,10 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tracing::error;
 use uuid::Uuid;
 
-use crate::database::models::{game, game_card, game_run, player, GameStatus};
+use crate::database::models::{game, game_card, game_run, player, GameStatus, PlayerType};
+use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::service::types::RoundEvaluationResult;
+use crate::game::special_cards::{compute_special_cards, SpecialCards};
 use crate::messaging::events::GameEvent;
 use crate::messaging::events::RoomEvent;
 use crate::messaging::redis::PublishResult;
@@ -169,6 +171,135 @@ impl GameService {
             if let Some(run_id) = game_model.game_run_id {
                 self.finalize_run_on_game_completion(run_id, &game_model)
                     .await;
+            }
+        }
+    }
+
+    pub(crate) async fn publish_claim_resolved(&self, game_id: Uuid) {
+        if let Some(mut redis_client) = self.redis_client.clone() {
+            let event = GameEvent::ClaimResolved { game_id };
+            match redis_client.publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!(
+                        "CRITICAL: Failed to publish ClaimResolved event for game {}: {}",
+                        game_id, e
+                    );
+                }
+            }
+        }
+    }
+
+    pub(crate) async fn publish_special_claim(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        cards: Vec<i32>,
+        winner_position: i32,
+    ) {
+        if let Some(mut redis_client) = self.redis_client.clone() {
+            let event = GameEvent::SpecialClaim {
+                game_id,
+                player_id,
+                cards,
+                winner_position,
+            };
+            match redis_client.publish_game_event_with_retry(&event).await {
+                PublishResult::Published => {}
+                PublishResult::RetryExhausted(e) => {
+                    error!(
+                        "CRITICAL: Failed to publish SpecialClaim event for game {} after retries: {}",
+                        game_id, e
+                    );
+                }
+            }
+        }
+    }
+
+    /// Publish the deal + start events for a freshly started game, including the
+    /// per-player `CardsDealt`, the `GameStarted` broadcast and, when a player
+    /// holds a claimable special combination, the `ClaimPending`/`ClaimOffered`
+    /// events.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn publish_game_start_events(
+        &self,
+        game_id: Uuid,
+        players: &[player::Model],
+        player_ids: &[Uuid],
+        cards: &[i32],
+        askee: Option<Uuid>,
+        askee_specials: Option<SpecialCards>,
+        game_mode: String,
+        first_player_id: Uuid,
+    ) {
+        let Some(mut redis) = self.redis_client.clone() else {
+            return;
+        };
+
+        for &pid in player_ids {
+            let player_cards: Vec<i32> = {
+                let offset =
+                    players.iter().position(|p| p.id == pid).unwrap_or(0) * CARDS_PER_PLAYER;
+                cards[offset..offset + CARDS_PER_PLAYER].to_vec()
+            };
+            let event = GameEvent::CardsDealt {
+                game_id,
+                player_id: pid,
+                cards: player_cards.clone(),
+                special_cards: compute_special_cards(&player_cards),
+            };
+            if let PublishResult::RetryExhausted(e) =
+                redis.publish_game_event_with_retry(&event).await
+            {
+                error!("Failed to publish CardsDealt event: {}", e);
+            }
+        }
+
+        let game_started_players: Vec<crate::messaging::events::GameStartedPlayer> = players
+            .iter()
+            .map(|p| {
+                let player_type_str = match p.player_type {
+                    PlayerType::Human => "human",
+                    PlayerType::Bot => "bot",
+                };
+                crate::messaging::events::GameStartedPlayer {
+                    id: p.id,
+                    name: p.name.clone(),
+                    position: p.position,
+                    display_position: p.position,
+                    cards_count: CARDS_PER_PLAYER as i32,
+                    player_type: player_type_str.to_string(),
+                }
+            })
+            .collect();
+
+        let event = GameEvent::GameStarted {
+            game_id,
+            players: game_started_players,
+            current_turn: first_player_id,
+            game_mode,
+            correlation_id: None,
+        };
+        match redis.publish_game_event_with_retry(&event).await {
+            PublishResult::Published => {}
+            PublishResult::RetryExhausted(e) => {
+                error!("Failed to publish GameStarted event: {}", e);
+            }
+        }
+
+        if let (Some(askee_id), Some(specials)) = (askee, askee_specials) {
+            let pending_event = GameEvent::ClaimPending { game_id };
+            let _ = redis.publish_game_event_with_retry(&pending_event).await;
+
+            let offered_event = GameEvent::ClaimOffered {
+                game_id,
+                player_id: askee_id,
+                special_cards: specials,
+            };
+            if let PublishResult::RetryExhausted(e) =
+                redis.publish_game_event_with_retry(&offered_event).await
+            {
+                error!("Failed to publish ClaimOffered event: {}", e);
             }
         }
     }

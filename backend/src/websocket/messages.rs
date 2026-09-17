@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::game::special_cards::SpecialCards;
+
 /// Incoming WebSocket messages from the frontend.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -12,6 +14,9 @@ pub enum IncomingMessage {
         player_id: Option<Uuid>,
         #[serde(default)]
         player_position: Option<i32>,
+        /// Read-only spectator join (no player identity, public state only).
+        #[serde(default)]
+        spectator: bool,
     },
     /// Leave the current game.
     LeaveGame,
@@ -36,6 +41,10 @@ pub enum OutgoingMessage {
         players: Vec<GameStatePlayer>,
         played_cards: Vec<Option<i32>>, //Vec<GameStateCard>,
         step_by_step: bool,
+        game_mode: String,
+        claim_pending: bool,
+        claim_offered_to_me: bool,
+        special_cards: Option<SpecialCards>,
     },
     /// Error response.
     Error { message: String, source: String },
@@ -80,6 +89,7 @@ mod tests {
                 game_id: gid,
                 player_id: _,
                 player_position: _,
+                spectator: _,
             } => assert_eq!(gid, game_id),
             _ => panic!("Expected JoinGame"),
         }
@@ -112,6 +122,36 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["type"], "game_joined");
         assert_eq!(parsed["game_id"], game_id.to_string());
+    }
+
+    #[test]
+    fn test_outgoing_game_state_snapshot_serializes_claim_fields() {
+        let game_id = Uuid::new_v4();
+        let msg = OutgoingMessage::GameStateSnapshot {
+            game_id,
+            roll: 1,
+            rank: Some(0),
+            status: "active".to_string(),
+            current_winning_card: None,
+            current_winning_player_position: None,
+            players: vec![],
+            played_cards: vec![],
+            step_by_step: false,
+            game_mode: "multiplayer".to_string(),
+            claim_pending: true,
+            claim_offered_to_me: true,
+            special_cards: Some(SpecialCards {
+                check_triple_seven: false,
+                check_sum_value_under_21: false,
+                check_a_square: true,
+            }),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["type"], "game_state_snapshot");
+        assert_eq!(parsed["claim_pending"], true);
+        assert_eq!(parsed["claim_offered_to_me"], true);
+        assert_eq!(parsed["special_cards"]["check_a_square"], true);
     }
 
     #[test]

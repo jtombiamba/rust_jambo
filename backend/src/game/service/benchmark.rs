@@ -114,6 +114,7 @@ impl GameService {
             game_run_id: ActiveValue::NotSet,
             step_by_step: Set(false),
             kicked_players: Set(serde_json::json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
         };
         game::Entity::insert(game_active)
             .exec(&txn)

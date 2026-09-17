@@ -4,6 +4,12 @@ use crate::api::dto::config::ClientConfigResponse;
 use crate::config::Config;
 use crate::game::constants::{BOT_THINKING_DELAY_MS, ROUND_PAUSE_DELAY_MS};
 
+#[utoipa::path(
+    get,
+    path = "/api/config",
+    tag = "config",
+    responses((status = 200, description = "Client configuration", body = ClientConfigResponse))
+)]
 #[get("/config")]
 pub async fn client_config(config: web::Data<Config>) -> impl Responder {
     let response = ClientConfigResponse {

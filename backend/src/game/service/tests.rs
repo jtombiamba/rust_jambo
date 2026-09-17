@@ -1,3 +1,4 @@
+use super::build_played_card_slots;
 use super::compute_display_position;
 use super::is_unique_violation;
 use super::GameService;
@@ -115,4 +116,33 @@ fn test_is_unique_violation_other_db_error() {
 fn test_is_unique_violation_non_exec_error() {
     let err = DbErr::Custom("custom error".to_string());
     assert!(!is_unique_violation(&err));
+}
+
+#[test]
+fn test_build_played_card_slots_empty_for_zero_players() {
+    assert_eq!(
+        build_played_card_slots(vec![], 0, 0),
+        Vec::<Option<i32>>::new()
+    );
+}
+
+#[test]
+fn test_build_played_card_slots_resizes_to_num_players() {
+    // 3 players, only 2 cards played -> 3 slots (regression: was hardcoded to 4)
+    let slots = build_played_card_slots(vec![(3, 1), (9, 2)], 3, 0);
+    assert_eq!(slots, vec![Some(3), Some(9), None]);
+}
+
+#[test]
+fn test_build_played_card_slots_orders_clockwise_from_winner() {
+    // 4 players, winner at position 1 -> slot order starts after winner.
+    // Keys: (4 + pos - 1) % 4 => pos2 = 1, pos0 = 3.
+    let slots = build_played_card_slots(vec![(5, 0), (7, 2)], 4, 1);
+    assert_eq!(slots, vec![Some(7), Some(5), None, None]);
+}
+
+#[test]
+fn test_build_played_card_slots_full_round_keeps_all() {
+    let slots = build_played_card_slots(vec![(1, 0), (2, 1), (3, 2), (4, 3)], 4, 0);
+    assert_eq!(slots, vec![Some(1), Some(2), Some(3), Some(4)]);
 }

@@ -64,6 +64,17 @@ describe('useGameStore', () => {
       const state = useGameStore.getState();
       expect(state.deckSlots).toEqual([null, null]);
     });
+
+    it('applies a re-rotated snapshot that only changes display_position', () => {
+      const players = [makePlayer('a', 0, 1), makePlayer('b', 1, 0)];
+      useGameStore.getState().setGame('g1', players, 'active', 0, 10);
+      expect(useGameStore.getState().players.find((p) => p.id === 'a')?.display_position).toBe(1);
+
+      // Same cards/status/turn/decks, but a different seat rotation.
+      const rotated = [makePlayer('a', 0, 0), makePlayer('b', 1, 1)];
+      useGameStore.getState().setGame('g1', rotated, 'active', 0, 10);
+      expect(useGameStore.getState().players.find((p) => p.id === 'a')?.display_position).toBe(0);
+    });
   });
 
   describe('clearDeckSlots', () => {
@@ -355,6 +366,106 @@ describe('useGameStore', () => {
       const state = useGameStore.getState();
       expect(state.pendingGameOver).toBeNull();
       expect(state.gameOver?.isGameOver).toBe(true);
+    });
+  });
+
+  describe('special claim state', () => {
+    it('setClaimOffered stores the offer', () => {
+      const specialCards = { check_triple_seven: true, check_sum_value_under_21: false, check_a_square: false };
+      useGameStore.getState().setClaimOffered({ playerId: 'a', specialCards });
+      expect(useGameStore.getState().claimOffered).toEqual({ playerId: 'a', specialCards });
+    });
+
+    it('setClaimPending toggles the waiting flag', () => {
+      expect(useGameStore.getState().claimPending).toBe(false);
+      useGameStore.getState().setClaimPending(true);
+      expect(useGameStore.getState().claimPending).toBe(true);
+      useGameStore.getState().setClaimPending(false);
+      expect(useGameStore.getState().claimPending).toBe(false);
+    });
+
+    it('setRevealedHand stores the revealed hand', () => {
+      useGameStore.getState().setRevealedHand({ playerId: 'b', cards: [4, 12, 20] });
+      expect(useGameStore.getState().revealedHand).toEqual({ playerId: 'b', cards: [4, 12, 20] });
+    });
+
+    it('resetGame clears claim offer, pending flag, and revealed hand', () => {
+      const specialCards = { check_triple_seven: false, check_sum_value_under_21: true, check_a_square: false };
+      useGameStore.getState().setClaimOffered({ playerId: 'a', specialCards });
+      useGameStore.getState().setClaimPending(true);
+      useGameStore.getState().setRevealedHand({ playerId: 'a', cards: [0, 8, 16] });
+
+      useGameStore.getState().resetGame();
+
+      const state = useGameStore.getState();
+      expect(state.claimOffered).toBeNull();
+      expect(state.claimPending).toBe(false);
+      expect(state.revealedHand).toBeNull();
+    });
+  });
+
+  describe('snapshot replay', () => {
+    it('reveals slots one at a time and clears flags when done', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1), makeBotPlayer('c', 2), makeBotPlayer('d', 3)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10, null);
+
+      store.startSnapshotReplay([5, 12, null, null], 100);
+
+      let state = useGameStore.getState();
+      expect(state.isSnapshotReplaying).toBe(true);
+      expect(state.isReplayingBots).toBe(true);
+      expect(state.isBotChainActive).toBe(true);
+      expect(state.deckSlots).toEqual([null, null, null, null]);
+
+      vi.advanceTimersByTime(100);
+      state = useGameStore.getState();
+      expect(state.deckSlots).toEqual([5, null, null, null]);
+
+      vi.advanceTimersByTime(100);
+      state = useGameStore.getState();
+      expect(state.deckSlots).toEqual([5, 12, null, null]);
+
+      vi.advanceTimersByTime(100);
+      state = useGameStore.getState();
+      expect(state.deckSlots).toEqual([5, 12, null, null]);
+      expect(state.isSnapshotReplaying).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.botReplayTimerId).toBeNull();
+    });
+
+    it('does nothing when there are no cards to reveal', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10, [null, null]);
+
+      store.startSnapshotReplay([null, null], 100);
+
+      const state = useGameStore.getState();
+      expect(state.isSnapshotReplaying).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.deckSlots).toEqual([null, null]);
+    });
+
+    it('cancelBotReplay stops an in-flight snapshot reveal', () => {
+      const players = [makePlayer('a', 0), makeBotPlayer('b', 1), makeBotPlayer('c', 2), makeBotPlayer('d', 3)];
+      const store = useGameStore.getState();
+      store.setGame('g1', players, 'active', 0, 10, null);
+
+      store.startSnapshotReplay([5, 12, null, null], 100);
+      vi.advanceTimersByTime(100);
+      expect(useGameStore.getState().deckSlots).toEqual([5, null, null, null]);
+
+      store.cancelBotReplay();
+      const state = useGameStore.getState();
+      expect(state.isSnapshotReplaying).toBe(false);
+      expect(state.isReplayingBots).toBe(false);
+      expect(state.isBotChainActive).toBe(false);
+      expect(state.botReplayTimerId).toBeNull();
+
+      vi.advanceTimersByTime(1000);
+      expect(useGameStore.getState().deckSlots).toEqual([5, null, null, null]);
     });
   });
 });

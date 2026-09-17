@@ -1,5 +1,5 @@
 use crate::game::service::compute_display_position;
-use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent};
+use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent, UserEvent};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
@@ -12,43 +12,8 @@ use tokio::sync::RwLock;
 use tokio::time;
 use uuid::Uuid;
 
-/// A single WebSocket connection is represented by a sender that can forward messages.
-pub type WsSender = tokio::sync::mpsc::UnboundedSender<String>;
-
-/// Connection identifier for tracking individual WebSocket connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ConnectionId(pub Uuid);
-
-impl ConnectionId {
-    /// Generate a new unique connection ID.
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-
-    /// Get the underlying UUID.
-    pub fn uuid(&self) -> Uuid {
-        self.0
-    }
-}
-
-impl Default for ConnectionId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Represents a tracked WebSocket connection.
-struct TrackedConnection {
-    sender: WsSender,
-    id: ConnectionId,
-    #[allow(dead_code)]
-    correlation_id: CorrelationId,
-    last_activity: Instant,
-    player_id: Option<Uuid>,
-    player_position: Option<i32>,
-    disconnected: bool,
-    last_pong: Instant,
-}
+use super::connection::{ConnectionId, TrackedConnection, WsSender};
+use super::routing::{parse_channel, shard_for_id, Channel};
 
 /// Inner shared state for the WebSocket manager.
 struct Inner {
@@ -56,6 +21,9 @@ struct Inner {
     connections: HashMap<Uuid, Vec<TrackedConnection>>,
     /// Map from room ID to list of active tracked connections.
     room_connections: HashMap<Uuid, Vec<TrackedConnection>>,
+    /// Map from user ID to list of active tracked connections (user-scoped,
+    /// e.g. for real-time invitation push).
+    user_connections: HashMap<Uuid, Vec<TrackedConnection>>,
     /// Redis client for publishing/subscribing to game events.
     redis_client: Option<RedisClient>,
     /// Database connection for querying game state snapshots.
@@ -75,6 +43,7 @@ impl WebSocketManager {
             inner: Arc::new(RwLock::new(Inner {
                 connections: HashMap::new(),
                 room_connections: HashMap::new(),
+                user_connections: HashMap::new(),
                 redis_client,
                 db,
             })),
@@ -113,6 +82,7 @@ impl WebSocketManager {
                 player_position: None,
                 disconnected: false,
                 last_pong: Instant::now(),
+                spectator: false,
             });
         tracing::info!(
             "New WebSocket connection {} for game {} (correlation_id={})",
@@ -277,6 +247,7 @@ impl WebSocketManager {
 
         metrics::WS_CONNECTIONS_ACTIVE.dec();
         metrics::WS_DISCONNECTS_TOTAL.inc();
+        self.refresh_spectator_gauge(game_id).await;
 
         if already_disconnected {
             return;
@@ -302,12 +273,17 @@ impl WebSocketManager {
     /// Remove all connections for a specific game (e.g., when game ends).
     #[allow(dead_code)]
     pub async fn remove_all_connections(&self, game_id: Uuid) {
-        let mut inner = self.inner.write().await;
-        if let Some(conns) = inner.connections.remove(&game_id) {
-            let count = conns.len();
-            metrics::WS_CONNECTIONS_ACTIVE.sub(count as f64);
-            metrics::WS_DISCONNECTS_TOTAL.inc_by(count as f64);
-            tracing::info!("Removed all {} connections for game {}", count, game_id);
+        let removed = {
+            let mut inner = self.inner.write().await;
+            inner.connections.remove(&game_id).map(|conns| {
+                let count = conns.len();
+                metrics::WS_CONNECTIONS_ACTIVE.sub(count as f64);
+                metrics::WS_DISCONNECTS_TOTAL.inc_by(count as f64);
+                tracing::info!("Removed all {} connections for game {}", count, game_id);
+            })
+        };
+        if removed.is_some() {
+            self.refresh_spectator_gauge(game_id).await;
         }
     }
 
@@ -315,28 +291,35 @@ impl WebSocketManager {
     /// a PlayerDisconnected event (the player was kicked, not disconnected).
     /// This prevents the kicked player from receiving further game events.
     pub async fn remove_player_connections(&self, game_id: Uuid, player_id: Uuid) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.connections.get_mut(&game_id) {
-            let before = connections.len();
-            connections.retain(|c| c.player_id != Some(player_id));
-            let removed = before - connections.len();
-            if connections.is_empty() {
-                inner.connections.remove(&game_id);
-                tracing::info!(
-                    "No more connections for game {} after removing player {}",
-                    game_id,
-                    player_id
-                );
+        let mut changed = false;
+        {
+            let mut inner = self.inner.write().await;
+            if let Some(connections) = inner.connections.get_mut(&game_id) {
+                let before = connections.len();
+                connections.retain(|c| c.player_id != Some(player_id));
+                let removed = before - connections.len();
+                if connections.is_empty() {
+                    inner.connections.remove(&game_id);
+                    tracing::info!(
+                        "No more connections for game {} after removing player {}",
+                        game_id,
+                        player_id
+                    );
+                }
+                if removed > 0 {
+                    metrics::WS_CONNECTIONS_ACTIVE.sub(removed as f64);
+                    changed = true;
+                    tracing::info!(
+                        "Removed {} connection(s) for kicked player {} from game {}",
+                        removed,
+                        player_id,
+                        game_id
+                    );
+                }
             }
-            if removed > 0 {
-                metrics::WS_CONNECTIONS_ACTIVE.sub(removed as f64);
-                tracing::info!(
-                    "Removed {} connection(s) for kicked player {} from game {}",
-                    removed,
-                    player_id,
-                    game_id
-                );
-            }
+        }
+        if changed {
+            self.refresh_spectator_gauge(game_id).await;
         }
     }
 
@@ -345,20 +328,22 @@ impl WebSocketManager {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.connections.get(&game_id) {
             let count = connections.len();
-            metrics::WS_MESSAGES_SENT_TOTAL.inc_by(count as f64);
             tracing::debug!("Broadcasting to {} connections for game {}", count, game_id);
             for connection in connections {
-                // Ignore errors if the receiver is closed
-                if let Err(e) = connection.sender.send(message.to_string()) {
-                    tracing::debug!(
-                        "Failed to send message to WebSocket connection {}: {}",
-                        connection.id.uuid(),
-                        e
-                    );
+                match connection.sender.send(message.to_string()) {
+                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                    Err(e) => {
+                        metrics::WS_SEND_FAILED_TOTAL.inc();
+                        tracing::warn!(
+                            "Failed to send message to WebSocket connection {}: {}",
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
                 }
             }
         } else {
-            tracing::debug!("No connections for game {}, message not broadcast", game_id);
+            tracing::warn!("No connections for game {}, message not broadcast", game_id);
         }
     }
 
@@ -399,16 +384,19 @@ impl WebSocketManager {
     pub async fn send_to_player(&self, game_id: Uuid, player_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.connections.get(&game_id) {
-            metrics::WS_MESSAGES_SENT_TOTAL.inc();
             for connection in connections {
                 if connection.player_id == Some(player_id) {
-                    if let Err(e) = connection.sender.send(message.to_string()) {
-                        tracing::debug!(
-                            "Failed to send message to player {} (conn {}): {}",
-                            player_id,
-                            connection.id.uuid(),
-                            e
-                        );
+                    match connection.sender.send(message.to_string()) {
+                        Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                        Err(e) => {
+                            metrics::WS_SEND_FAILED_TOTAL.inc();
+                            tracing::warn!(
+                                "Failed to send message to player {} (conn {}): {}",
+                                player_id,
+                                connection.id.uuid(),
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -516,6 +504,7 @@ impl WebSocketManager {
                 player_position: None,
                 disconnected: false,
                 last_pong: Instant::now(),
+                spectator: false,
             });
 
         metrics::WS_CONNECTIONS_ACTIVE.inc();
@@ -550,20 +539,26 @@ impl WebSocketManager {
     pub async fn broadcast_to_room(&self, room_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.room_connections.get(&room_id) {
-            let count = connections.len();
-            metrics::WS_MESSAGES_SENT_TOTAL.inc_by(count as f64);
             for connection in connections {
-                if let Err(e) = connection.sender.send(message.to_string()) {
-                    tracing::debug!(
-                        "Failed to send message to room connection {}: {}",
-                        connection.id.uuid(),
-                        e
-                    );
+                match connection.sender.send(message.to_string()) {
+                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                    Err(e) => {
+                        metrics::WS_SEND_FAILED_TOTAL.inc();
+                        tracing::warn!(
+                            "Failed to send message to room connection {}: {}",
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
                 }
             }
         }
     }
 }
+
+include!("manager_user.rs");
+
+include!("manager_spectators.rs");
 
 include!("manager_redis.rs");
 

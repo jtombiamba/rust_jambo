@@ -13,8 +13,9 @@ impl WebSocketManager {
         };
 
         let shard_count = num_cpus::get().clamp(1, 8);
+        tracing::info!("[WS-INFO] Redis subscriber shard_count={}", shard_count);
         tracing::info!(
-            "Starting {} sharded Redis subscribers (pattern: game:*)",
+            "Starting {} sharded Redis subscribers (pattern: game:*, room:*, user:*)",
             shard_count
         );
 
@@ -26,7 +27,7 @@ impl WebSocketManager {
                 let mut attempt: u64 = 0;
 
                 loop {
-                    let mut pubsub = match redis.psubscribe(&["game:*", "room:*"]).await {
+                    let mut pubsub = match redis.psubscribe(&["game:*", "room:*", "user:*"]).await {
                         Ok(ps) => {
                             attempt = 0;
                             crate::observability::metrics::REDIS_SUBSCRIBER_SHARDS_ACTIVE.inc();
@@ -52,10 +53,27 @@ impl WebSocketManager {
                     while let Some(msg) = stream.next().await {
                         let channel: String = msg.get_channel().unwrap_or_default();
                         let payload: String = msg.get_payload().unwrap_or_default();
-                        tracing::debug!("Redis message on channel {} (shard {})", channel, shard);
+                        tracing::info!("Redis message on channel {} (shard {})", channel, shard);
 
-                        if let Some(game_id) = Self::extract_game_id_from_channel(&channel) {
-                            if Self::shard_for_game(game_id, shard_count) == shard {
+                        match parse_channel(&channel) {
+                            Some(Channel::Game(game_id)) => {
+                                let target = shard_for_id(game_id, shard_count);
+                                tracing::info!(
+                                    "[WS-INFO] game {} -> target shard {} (this shard {}, shard_count {})",
+                                    game_id,
+                                    target,
+                                    shard,
+                                    shard_count
+                                );
+                                if target != shard {
+                                    tracing::info!(
+                                        "[WS-INFO] DROPPING game event for {} on shard {} (target {})",
+                                        game_id,
+                                        shard,
+                                        target
+                                    );
+                                    continue;
+                                }
                                 match serde_json::from_str::<GameEvent>(&payload) {
                                     Ok(event) => {
                                         manager.route_event(game_id, event).await;
@@ -76,8 +94,24 @@ impl WebSocketManager {
                                     }
                                 }
                             }
-                        } else if let Some(room_id) = Self::extract_room_id_from_channel(&channel) {
-                            if Self::shard_for_game(room_id, shard_count) == shard {
+                            Some(Channel::Room(room_id)) => {
+                                let target = shard_for_id(room_id, shard_count);
+                                tracing::info!(
+                                    "[WS-INFO] room {} -> target shard {} (this shard {}, shard_count {})",
+                                    room_id,
+                                    target,
+                                    shard,
+                                    shard_count
+                                );
+                                if target != shard {
+                                    tracing::info!(
+                                        "[WS-INFO] DROPPING room event for {} on shard {} (target {})",
+                                        room_id,
+                                        shard,
+                                        target
+                                    );
+                                    continue;
+                                }
                                 match serde_json::from_str::<RoomEvent>(&payload) {
                                     Ok(event) => {
                                         manager.route_room_event(room_id, event).await;
@@ -92,8 +126,44 @@ impl WebSocketManager {
                                     }
                                 }
                             }
-                        } else {
-                            tracing::warn!("Received message on unexpected channel: {}", channel);
+                            Some(Channel::User(user_id)) => {
+                                let target = shard_for_id(user_id, shard_count);
+                                tracing::info!(
+                                    "[WS-INFO] user {} -> target shard {} (this shard {}, shard_count {})",
+                                    user_id,
+                                    target,
+                                    shard,
+                                    shard_count
+                                );
+                                if target != shard {
+                                    tracing::info!(
+                                        "[WS-INFO] DROPPING user event for {} on shard {} (target {})",
+                                        user_id,
+                                        shard,
+                                        target
+                                    );
+                                    continue;
+                                }
+                                match serde_json::from_str::<UserEvent>(&payload) {
+                                    Ok(event) => {
+                                        manager.route_user_event(user_id, event).await;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to parse user event for user {}: {}",
+                                            user_id,
+                                            e
+                                        );
+                                        manager.broadcast_to_user(user_id, &payload).await;
+                                    }
+                                }
+                            }
+                            _ => {
+                                tracing::warn!(
+                                    "Received message on unexpected channel: {}",
+                                    channel
+                                );
+                            }
                         }
                     }
 
@@ -113,6 +183,10 @@ impl WebSocketManager {
     async fn route_event(&self, game_id: Uuid, event: GameEvent) {
         match &event {
             GameEvent::CardsDealt { player_id, .. } => {
+                self.send_to_player(game_id, *player_id, &event.to_json())
+                    .await;
+            }
+            GameEvent::ClaimOffered { player_id, .. } => {
                 self.send_to_player(game_id, *player_id, &event.to_json())
                     .await;
             }
@@ -136,16 +210,42 @@ impl WebSocketManager {
         }
     }
 
+    /// Send a message to connections of a game that have not yet registered a
+    /// player identity. Used as a fallback so lobby members who joined before
+    /// their player id arrived still receive game-scoped broadcasts.
+    pub async fn send_to_unidentified(&self, game_id: Uuid, message: &str) {
+        let inner = self.inner.read().await;
+        if let Some(connections) = inner.connections.get(&game_id) {
+            for connection in connections {
+                if connection.player_id.is_none() {
+                    match connection.sender.send(message.to_string()) {
+                        Ok(()) => crate::observability::metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                        Err(e) => {
+                            crate::observability::metrics::WS_SEND_FAILED_TOTAL.inc();
+                            tracing::warn!(
+                                "Failed to send message to unidentified connection {}: {}",
+                                connection.id.uuid(),
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Send a personalized GameStarted event to each player with `display_position`
     /// rotated so that the receiving player is always at position 0 (south).
+    /// Spectators receive the original (non-rotated) event.
     async fn send_game_started_per_player(&self, game_id: Uuid, event: &GameEvent) {
-        let (players, current_turn, correlation_id) = match event {
+        let (players, current_turn, game_mode, correlation_id) = match event {
             GameEvent::GameStarted {
                 players,
                 current_turn,
+                game_mode,
                 correlation_id,
                 ..
-            } => (players, current_turn, correlation_id),
+            } => (players, current_turn, game_mode, correlation_id),
             _ => return,
         };
 
@@ -174,20 +274,23 @@ impl WebSocketManager {
                 game_id,
                 players: rotated_players,
                 current_turn: *current_turn,
+                game_mode: game_mode.clone(),
                 correlation_id: *correlation_id,
             };
 
             self.send_to_player(game_id, player.id, &personalized.to_json())
                 .await;
         }
-    }
 
-    fn shard_for_game(game_id: Uuid, shard_count: usize) -> usize {
-        let bytes = game_id.as_bytes();
-        let hash = bytes
-            .iter()
-            .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
-        (hash as usize) % shard_count
+        // Fallback: connections that have not yet registered their player
+        // identity (e.g. a lobby member whose join_game identity arrived late)
+        // still need to learn the game started so they can leave the lobby. They
+        // receive the non-rotated event; the personalized game_state_snapshot
+        // corrects seat positions once they re-join with identity.
+        self.send_to_unidentified(game_id, &event.to_json()).await;
+
+        // Spectators get the public (non-rotated) game_started.
+        self.send_to_spectators(game_id, &event.to_json()).await;
     }
 
     /// Route a parsed room event to broadcast to room connections.
@@ -195,15 +298,8 @@ impl WebSocketManager {
         self.broadcast_to_room(room_id, &event.to_json()).await;
     }
 
-    /// Extract game ID from a Redis channel name of the form "game:{uuid}".
-    fn extract_game_id_from_channel(channel: &str) -> Option<Uuid> {
-        const PREFIX: &str = "game:";
-        channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
-    }
-
-    /// Extract room ID from a Redis channel name of the form "room:{uuid}".
-    fn extract_room_id_from_channel(channel: &str) -> Option<Uuid> {
-        const PREFIX: &str = "room:";
-        channel.strip_prefix(PREFIX).and_then(|s| s.parse().ok())
+    /// Route a parsed user event to the target user's connections.
+    async fn route_user_event(&self, user_id: Uuid, event: UserEvent) {
+        self.broadcast_to_user(user_id, &event.to_json()).await;
     }
 }

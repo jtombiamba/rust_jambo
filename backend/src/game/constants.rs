@@ -18,18 +18,27 @@ pub const KORA_CREDIT_MULTIPLIER: i32 = 2;
 /// A Double KORA occurs when the same player wins rounds 4 and 5 both with a 3.
 pub const DOUBLE_KORA_CREDIT_MULTIPLIER: i32 = 4;
 
+pub const DEFAULT_BOT_THINKING_DELAY_MS: u64 = 800;
+pub const DEFAULT_ROUND_PAUSE_DELAY_MS: u64 = 2500;
+
+/// Resolve a delay from an optional raw environment value, falling back to
+/// `default` when the value is absent or unparseable.
+fn parse_delay_ms(raw: Option<&str>, default: u64) -> u64 {
+    raw.and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
 pub static BOT_THINKING_DELAY_MS: LazyLock<u64> = LazyLock::new(|| {
-    std::env::var("BOT_THINKING_DELAY_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(800)
+    parse_delay_ms(
+        std::env::var("BOT_THINKING_DELAY_MS").ok().as_deref(),
+        DEFAULT_BOT_THINKING_DELAY_MS,
+    )
 });
 
 pub static ROUND_PAUSE_DELAY_MS: LazyLock<u64> = LazyLock::new(|| {
-    std::env::var("ROUND_PAUSE_DELAY_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(2500)
+    parse_delay_ms(
+        std::env::var("ROUND_PAUSE_DELAY_MS").ok().as_deref(),
+        DEFAULT_ROUND_PAUSE_DELAY_MS,
+    )
 });
 
 #[cfg(test)]
@@ -48,14 +57,17 @@ mod tests {
 
     #[test]
     fn test_default_thinking_delay() {
-        assert_eq!(*BOT_THINKING_DELAY_MS, 800);
+        assert_eq!(*BOT_THINKING_DELAY_MS, DEFAULT_BOT_THINKING_DELAY_MS);
     }
 
     #[test]
     fn test_thinking_delay_from_env() {
-        std::env::set_var("BOT_THINKING_DELAY_MS", "500");
-        // LazyLock is evaluated once; clear env after test
-        // Since we can't reset a LazyLock, this test verifies the default only
-        std::env::remove_var("BOT_THINKING_DELAY_MS");
+        assert_eq!(parse_delay_ms(Some("500"), 800), 500);
+    }
+
+    #[test]
+    fn test_delay_falls_back_to_default_when_unparseable() {
+        assert_eq!(parse_delay_ms(Some("not-a-number"), 800), 800);
+        assert_eq!(parse_delay_ms(None, 800), 800);
     }
 }

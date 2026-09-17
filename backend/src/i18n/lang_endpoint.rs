@@ -3,18 +3,24 @@ use serde::{Deserialize, Serialize};
 
 use super::{Lang, Translator};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LanguagesResponse {
     pub current: String,
     pub languages: Vec<LanguageInfo>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct LanguageInfo {
     pub code: String,
     pub label: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/languages",
+    tag = "i18n",
+    responses((status = 200, description = "Available languages", body = LanguagesResponse))
+)]
 pub async fn get_languages(req: actix_web::HttpRequest) -> HttpResponse {
     let lang = super::extract_lang_from_req(&req);
     let languages: Vec<LanguageInfo> = Lang::all()
@@ -31,18 +37,33 @@ pub async fn get_languages(req: actix_web::HttpRequest) -> HttpResponse {
     })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct SetLanguageRequest {
     pub lang: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SetLanguageResponse {
     pub success: bool,
     pub message: String,
     pub lang: String,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CurrentLangResponse {
+    pub lang: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/lang",
+    tag = "i18n",
+    request_body = SetLanguageRequest,
+    responses(
+        (status = 200, description = "Language set", body = SetLanguageResponse),
+        (status = 400, description = "Invalid language"),
+    )
+)]
 pub async fn set_language(
     req: actix_web::HttpRequest,
     body: web::Json<SetLanguageRequest>,
@@ -76,9 +97,15 @@ pub async fn set_language(
     })
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/lang",
+    tag = "i18n",
+    responses((status = 200, description = "Current language", body = CurrentLangResponse))
+)]
 pub async fn get_current_lang(req: actix_web::HttpRequest) -> HttpResponse {
     let lang = super::extract_lang_from_req(&req);
-    HttpResponse::Ok().json(serde_json::json!({
-        "lang": lang.as_str()
-    }))
+    HttpResponse::Ok().json(CurrentLangResponse {
+        lang: lang.as_str().to_string(),
+    })
 }

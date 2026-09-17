@@ -76,6 +76,7 @@
     "possessionGame": "Partie de {pseudo}",
     "betInfo": "Mise : {bet} | Joueurs : {current}/{max}",
     "expires": "Expire : {time}",
+    "newInvitation": "Nouvelle invitation de {pseudo}",
     "accept": "Accepter",
     "decline": "Refuser",
     "frozen": "Gelé",
@@ -144,7 +145,19 @@
     "playNextBot": "Jouer le Bot Suivant",
     "evaluateRound": "Évaluer le Tour",
     "waitingForBot": "En attente du bot...",
-    "allCardsPlayed": "Toutes les cartes jouées ! Évaluez le tour."
+    "allCardsPlayed": "Toutes les cartes jouées ! Évaluez le tour.",
+    "copyStreamUrl": "Copier l'URL du stream",
+    "streamUrlCopied": "URL du stream copiée dans le presse-papiers",
+    "streamUrlFailed": "Impossible de générer l'URL du stream",
+    "specialTripleSeven": "Triple Sept",
+    "specialSumUnder21": "Somme sous 21",
+    "specialSquare": "Carré",
+    "claimSet": "combinaison spéciale",
+    "claimTitle": "Cartes spéciales !",
+    "claimDescription": "Vous détenez un {set}. Réclamez la victoire maintenant, ou continuez la partie.",
+    "claimVictory": "Réclamer la victoire",
+    "claimContinue": "Continuer",
+    "claimWaiting": "En attente d'une décision sur les cartes spéciales..."
   },
   "lobby": {
     "gameLobby": "Salon de jeu",
@@ -167,6 +180,11 @@
     "failedStartGame": "Échec du lancement de la partie",
     "gameCancelled": "La partie a été annulée.",
     "noAccess": "Vous n'avez pas accès à ce salon de jeu."
+  },
+  "stream": {
+    "spectatorWaitingTitle": "En attente du lancement de la partie",
+    "spectatorWaitingSubtitle": "Le stream démarrera automatiquement lorsque la partie sera lancée.",
+    "gameCancelled": "La partie a été annulée."
   },
   "rules": {
     "title": "Comment jouer au Jambo",

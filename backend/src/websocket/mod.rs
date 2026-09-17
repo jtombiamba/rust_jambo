@@ -1,6 +1,12 @@
 pub mod manager;
 pub mod messages;
 
+mod auth;
+pub(crate) mod connection;
+mod routing;
+
+pub use auth::{validate_game_token, validate_spectate_token, validate_ws_token};
+
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
 use actix_ws::{self, Message, Session};
 use futures_util::StreamExt;
@@ -9,14 +15,13 @@ use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use crate::auth::config::AuthConfig;
-use crate::auth::jwt;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
 use manager::WebSocketManager;
 use messages::{IncomingMessage, OutgoingMessage};
 
 mod game_state;
-use game_state::send_game_state_snapshot;
+use game_state::{send_game_state_snapshot, send_spectator_snapshot};
 
 /// WebSocket endpoint for a specific game.
 /// Path parameter: game_id (UUID)
@@ -59,7 +64,18 @@ pub async fn ws_handler(
             .map(|(_, v)| v.to_string());
         if let Some(ref gt) = game_token {
             tracing::info!("[DEBUG] WebSocket validating token for game {}", game_id);
-            validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await
+            let game_id_auth =
+                validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await;
+            if game_id_auth.is_some() {
+                game_id_auth
+            } else {
+                tracing::info!(
+                    "[DEBUG] WebSocket validating spectator token for game {}",
+                    game_id
+                );
+                validate_spectate_token(gt, game_id, auth_config.clone(), redis_client.clone())
+                    .await
+            }
         } else {
             tracing::warn!(
                 "[WARN] WebSocket connection via token: no query params for game {}",
@@ -286,6 +302,7 @@ async fn handle_message(
                     game_id: join_id,
                     player_id,
                     player_position,
+                    spectator,
                 } => {
                     trace!("Processing join game: {}", join_id);
                     if join_id != game_id {
@@ -295,8 +312,17 @@ async fn handle_message(
                             game_id
                         );
                     }
-                    // Set player identity if provided (for disconnect/reconnect tracking)
-                    if let (Some(pid), Some(pos)) = (player_id, player_position) {
+                    if spectator {
+                        // Read-only spectator join: public state only, no player identity.
+                        crate::websocket::manager::WebSocketManager::mark_spectator_for_latest_connection(
+                            manager.get_ref(),
+                            game_id,
+                        )
+                        .await;
+                        if let Some(db) = &db {
+                            send_spectator_snapshot(manager.get_ref(), db, game_id).await;
+                        }
+                    } else if let (Some(pid), Some(pos)) = (player_id, player_position) {
                         // We need the connection_id to set player. Since this is called from
                         // the incoming handler, we don't have it directly. Register via
                         // a simple method: set_player_for_latest_connection.
@@ -348,8 +374,9 @@ async fn handle_message(
 
 pub fn scope() -> actix_web::Scope {
     web::scope("/ws")
-        .service(web::resource("/{game_id}").route(web::get().to(ws_handler)))
+        .service(web::resource("/me").route(web::get().to(ws_user_handler)))
         .service(web::resource("/room/{room_id}").route(web::get().to(ws_room_handler)))
+        .service(web::resource("/{game_id}").route(web::get().to(ws_handler)))
 }
 
 pub async fn ws_room_handler(
@@ -441,100 +468,107 @@ pub async fn ws_room_handler(
     Ok(res)
 }
 
-pub async fn validate_ws_token(
-    token: Option<String>,
-    auth_config: Option<web::Data<AuthConfig>>,
-    mut redis_client: Option<RedisClient>,
-) -> Option<Uuid> {
-    let config = auth_config?;
-    let t = token?;
-    let claims = jwt::validate_token(&t, &config).ok()?;
+/// WebSocket endpoint for a single authenticated user.
+/// Used to push user-scoped events (e.g. game invitations) in real time.
+pub async fn ws_user_handler(
+    req: HttpRequest,
+    stream: web::Payload,
+    manager: web::Data<WebSocketManager>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let redis_client = req
+        .app_data::<web::Data<Option<RedisClient>>>()
+        .cloned()
+        .and_then(|r| r.get_ref().clone());
+    let user_id = validate_ws_token(token, auth_config, redis_client).await;
+    if user_id.is_none() {
+        tracing::warn!("Unauthenticated user WebSocket connection attempt");
+        return Err(actix_web::error::ErrorUnauthorized(
+            "Authentication required",
+        ));
+    }
+    let user_id = user_id.unwrap();
+    info!("User WebSocket connection established for user {}", user_id);
 
-    if let Some(ref mut r) = redis_client {
-        match r.exists(&format!("token:blacklist:{}", claims.jti)).await {
-            Ok(true) => {
-                return None;
-            }
-            Ok(false) => {}
-            Err(e) => {
-                // Fail-open: if Redis is unavailable, allow the connection.
-                // The JWT signature and expiry have already been validated;
-                // the Redis check is only for token revocation.
-                tracing::warn!(
-                    "Redis unavailable during blacklist check, allowing connection: {}",
+    let correlation_id = req
+        .extensions()
+        .get::<CorrelationId>()
+        .copied()
+        .unwrap_or_else(CorrelationId::new);
+
+    let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    if let Err(e) = session
+        .text(serde_json::json!({"type": "user_joined", "user_id": user_id}).to_string())
+        .await
+    {
+        tracing::error!("Failed to send user welcome, not registering: {}", e);
+        return Ok(res);
+    }
+
+    let connection_id = manager
+        .add_user_connection(user_id, tx, correlation_id)
+        .await;
+    info!(
+        "User WebSocket connection registered for user {} with connection ID {}",
+        user_id,
+        connection_id.uuid()
+    );
+
+    let mut session_clone = session.clone();
+    let manager_clone = manager.clone();
+    actix_rt::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if let Err(e) = session_clone.text(msg).await {
+                tracing::error!(
+                    "Failed to forward to user connection {}: {}",
+                    connection_id.uuid(),
                     e
                 );
-                crate::observability::metrics::WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL.inc();
+                manager_clone
+                    .remove_user_connection(user_id, connection_id)
+                    .await;
+                break;
             }
         }
-    }
+    });
 
-    Some(claims.sub)
-}
-
-/// Validate a one-time game token for unauthenticated WebSocket connections.
-/// The token must:
-/// 1. Be a valid JWT with purpose "ws:game" and matching game_id
-/// 2. Exist in Redis (single-use enforcement) — consumed on first use
-pub async fn validate_game_token(
-    token: &str,
-    game_id: Uuid,
-    auth_config: Option<web::Data<AuthConfig>>,
-    mut redis_client: Option<RedisClient>,
-) -> Option<Uuid> {
-    let config = auth_config?;
-
-    // Validate the JWT signature, expiry, and purpose
-    let claims = jwt::validate_game_token(token, &config).ok()?;
-
-    // Ensure the token is for this specific game
-    if claims.sub != game_id {
-        tracing::warn!(
-            "Game token mismatch: token is for game {} but connection is for game {}",
-            claims.sub,
-            game_id
-        );
-        return None;
-    }
-
-    // Validate the token exists in Redis (inserted at generation time).
-    // We don't delete it — it persists for its full TTL so anonymous users
-    // can reconnect after transient disconnections. JWT signature, expiry,
-    // and purpose checks already secure the token.
-    let redis_key = format!("ws_token:{}:{}", game_id, claims.jti);
-    if let Some(ref mut r) = redis_client {
-        match r.exists(&redis_key).await {
-            Ok(true) => {
-                tracing::info!(
-                    "Game token validated for game {}, jti: {}",
-                    game_id,
-                    claims.jti
-                );
-            }
-            Ok(false) => {
-                tracing::warn!(
-                    "Game token not found in Redis (never issued or expired) for game {}",
-                    game_id
-                );
-                return None;
-            }
-            Err(e) => {
-                // Fail-open: if Redis is unavailable, allow the connection.
-                // The JWT signature, expiry, and purpose have already been validated;
-                // the Redis check is only for single-use token enforcement.
-                tracing::error!("Redis error checking game token: {}", e);
-                crate::observability::metrics::WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc();
-                tracing::warn!(
-                    "Redis unavailable, allowing game token connection for game {}",
-                    game_id
-                );
+    actix_rt::spawn(async move {
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(actix_ws::Message::Text(text)) => {
+                    if let Ok(IncomingMessage::Ping) =
+                        serde_json::from_str::<IncomingMessage>(&text)
+                    {
+                        let response = OutgoingMessage::Pong;
+                        let _ = session
+                            .text(serde_json::to_string(&response).unwrap_or_default())
+                            .await;
+                        manager.update_user_pong(user_id, connection_id).await;
+                    }
+                }
+                Ok(actix_ws::Message::Ping(bytes)) => {
+                    let _ = session.pong(&bytes).await;
+                }
+                Ok(actix_ws::Message::Pong(_)) => {
+                    manager.update_user_pong(user_id, connection_id).await;
+                }
+                Ok(actix_ws::Message::Close(reason)) => {
+                    tracing::info!("User WS closed for user {}: {:?}", user_id, reason);
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!("User WS stream error: {}", e);
+                    break;
+                }
+                _ => {}
             }
         }
-    }
+        manager.remove_user_connection(user_id, connection_id).await;
+    });
 
-    // Use a deterministic UUID derived from the game_id for unauthenticated users.
-    // This ensures the same "anonymous" user identity within a game session.
-    // The namespace constant is arbitrary but fixed to avoid collisions with real user IDs.
-    const ANON_NAMESPACE: u128 = 0x006A_6F6E_6573_5F61_6E6F_6E5F_7575_6964_u128;
-    Some(uuid::Uuid::from_u128(game_id.as_u128() ^ ANON_NAMESPACE))
+    Ok(res)
 }

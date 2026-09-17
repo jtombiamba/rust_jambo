@@ -27,6 +27,18 @@ async fn main() -> std::io::Result<()> {
 
     crate::observability::metrics_init::init_all();
 
+    // Periodically publish process CPU/memory usage. The Rust prometheus
+    // crate does not auto-export process metrics, so we collect them here
+    // with sysinfo and expose them as cpu_usage_percent / memory_usage_bytes.
+    tokio::spawn(async {
+        let mut sys = sysinfo::System::new();
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            crate::observability::metrics::update_process_metrics(&mut sys, "backend");
+        }
+    });
+
     let config = crate::config::Config::from_env().expect("Failed to load configuration");
     let cpu_count = num_cpus::get();
     info!(
@@ -57,13 +69,12 @@ async fn main() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[actix_web::test]
     async fn test_health_check() {
-        let app =
-            actix_web::test::init_service(actix_web::App::new().service(routes::health_check))
-                .await;
+        let app = actix_web::test::init_service(
+            actix_web::App::new().service(crate::api::system::health_check),
+        )
+        .await;
         let req = actix_web::test::TestRequest::get()
             .uri("/health")
             .to_request();
@@ -75,8 +86,10 @@ mod tests {
 
     #[actix_web::test]
     async fn test_metrics() {
-        let app =
-            actix_web::test::init_service(actix_web::App::new().service(routes::metrics)).await;
+        let app = actix_web::test::init_service(
+            actix_web::App::new().service(crate::api::system::metrics),
+        )
+        .await;
         let req = actix_web::test::TestRequest::get()
             .uri("/metrics")
             .to_request();
@@ -97,8 +110,10 @@ mod tests {
     #[actix_web::test]
     async fn test_metrics_contains_default_metrics() {
         crate::observability::metrics_init::init_all();
-        let app =
-            actix_web::test::init_service(actix_web::App::new().service(routes::metrics)).await;
+        let app = actix_web::test::init_service(
+            actix_web::App::new().service(crate::api::system::metrics),
+        )
+        .await;
         let req = actix_web::test::TestRequest::get()
             .uri("/metrics")
             .to_request();
@@ -129,6 +144,18 @@ mod tests {
         assert!(
             body_str.contains("games_finished_total"),
             "Expected games_finished_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("ws_send_failed_total"),
+            "Expected ws_send_failed_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("ws_messages_dropped_total"),
+            "Expected ws_messages_dropped_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("ws_slow_consumer_disconnects_total"),
+            "Expected ws_slow_consumer_disconnects_total in metrics, got: {body_str}"
         );
     }
 }

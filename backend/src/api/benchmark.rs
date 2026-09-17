@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::error::AppError;
 use crate::game::service::BenchmarkService;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateBenchmarkGameRequest {
     pub user_ids: Vec<Uuid>,
     #[serde(default = "default_bet")]
@@ -19,7 +19,7 @@ fn default_bet() -> i32 {
     10
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct BenchmarkPlayerInfo {
     pub player_id: Uuid,
     pub user_id: Uuid,
@@ -28,7 +28,7 @@ pub struct BenchmarkPlayerInfo {
     pub cards: Vec<i32>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CreateBenchmarkGameResponse {
     pub game_id: Uuid,
     pub players: Vec<BenchmarkPlayerInfo>,
@@ -36,7 +36,7 @@ pub struct CreateBenchmarkGameResponse {
     pub bet: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CleanupResponse {
     pub success: bool,
     pub users_deleted: u64,
@@ -65,6 +65,16 @@ fn validate_benchmark_token(req: &HttpRequest, config: &Config) -> Option<HttpRe
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/benchmark/create-multiplayer-game",
+    tag = "benchmark",
+    request_body = CreateBenchmarkGameRequest,
+    responses(
+        (status = 201, description = "Benchmark game created", body = CreateBenchmarkGameResponse),
+        (status = 401, description = "Invalid benchmark token"),
+    )
+)]
 pub async fn create_benchmark_game(
     req: HttpRequest,
     config: web::Data<Config>,
@@ -123,6 +133,15 @@ pub async fn create_benchmark_game(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/benchmark/cleanup",
+    tag = "benchmark",
+    responses(
+        (status = 200, description = "Benchmark data cleaned up", body = CleanupResponse),
+        (status = 401, description = "Invalid benchmark token"),
+    )
+)]
 pub async fn cleanup_benchmark_data(
     req: HttpRequest,
     config: web::Data<Config>,

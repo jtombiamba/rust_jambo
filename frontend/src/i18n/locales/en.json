@@ -76,6 +76,7 @@
     "possessionGame": "{pseudo}'s game",
     "betInfo": "Bet: {bet} | Players: {current}/{max}",
     "expires": "Expires: {time}",
+    "newInvitation": "New invitation from {pseudo}",
     "accept": "Accept",
     "decline": "Decline",
     "frozen": "Frozen",
@@ -144,7 +145,19 @@
     "playNextBot": "Play Next Bot",
     "evaluateRound": "Evaluate Round",
     "waitingForBot": "Waiting for bot move...",
-    "allCardsPlayed": "All cards played! Evaluate the round."
+    "allCardsPlayed": "All cards played! Evaluate the round.",
+    "copyStreamUrl": "Copy Stream URL",
+    "streamUrlCopied": "Stream URL copied to clipboard",
+    "streamUrlFailed": "Could not generate stream URL",
+    "specialTripleSeven": "Triple Seven",
+    "specialSumUnder21": "Sum Under 21",
+    "specialSquare": "Square",
+    "claimSet": "special combination",
+    "claimTitle": "Special Cards!",
+    "claimDescription": "You hold a {set}. Claim victory now, or continue the game.",
+    "claimVictory": "Claim Victory",
+    "claimContinue": "Continue",
+    "claimWaiting": "Waiting for a special-card decision..."
   },
   "lobby": {
     "gameLobby": "Game Lobby",
@@ -167,6 +180,11 @@
     "failedStartGame": "Failed to start game",
     "gameCancelled": "Game has been cancelled.",
     "noAccess": "You do not have access to this game lobby."
+  },
+  "stream": {
+    "spectatorWaitingTitle": "Waiting for the game to start",
+    "spectatorWaitingSubtitle": "The stream will begin automatically when the game launches.",
+    "gameCancelled": "The game was cancelled."
   },
   "rules": {
     "title": "How to Play Jambo",
