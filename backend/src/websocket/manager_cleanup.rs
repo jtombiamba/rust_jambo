@@ -11,6 +11,7 @@ impl WebSocketManager {
         let mut total_removed = 0;
         let now = Instant::now();
         let mut expired_players: Vec<(Uuid, Uuid, i32)> = Vec::new();
+        let mut changed_games: Vec<Uuid> = Vec::new();
 
         inner.connections.retain(|game_id, connections| {
             let before = connections.len();
@@ -37,6 +38,7 @@ impl WebSocketManager {
             total_removed += removed;
 
             if removed > 0 {
+                changed_games.push(*game_id);
                 tracing::info!(
                     "Cleaned up {} stale/heartbeat connections for game {}",
                     removed,
@@ -106,6 +108,14 @@ impl WebSocketManager {
             };
             self.broadcast_to_game(game_id, &event.to_json()).await;
             inner = self.inner.write().await;
+        }
+        drop(inner);
+
+        // Refresh the per-game spectator gauge for every game that lost a
+        // connection during this sweep (spectators have no player_id and are
+        // therefore absent from `expired_players`).
+        for game_id in changed_games {
+            self.refresh_spectator_gauge(game_id).await;
         }
 
         total_removed

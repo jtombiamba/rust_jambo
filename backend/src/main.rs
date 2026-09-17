@@ -145,5 +145,17 @@ mod tests {
             body_str.contains("games_finished_total"),
             "Expected games_finished_total in metrics, got: {body_str}"
         );
+        assert!(
+            body_str.contains("ws_send_failed_total"),
+            "Expected ws_send_failed_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("ws_messages_dropped_total"),
+            "Expected ws_messages_dropped_total in metrics, got: {body_str}"
+        );
+        assert!(
+            body_str.contains("ws_slow_consumer_disconnects_total"),
+            "Expected ws_slow_consumer_disconnects_total in metrics, got: {body_str}"
+        );
     }
 }

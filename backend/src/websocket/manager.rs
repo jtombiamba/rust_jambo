@@ -247,6 +247,7 @@ impl WebSocketManager {
 
         metrics::WS_CONNECTIONS_ACTIVE.dec();
         metrics::WS_DISCONNECTS_TOTAL.inc();
+        self.refresh_spectator_gauge(game_id).await;
 
         if already_disconnected {
             return;
@@ -272,12 +273,17 @@ impl WebSocketManager {
     /// Remove all connections for a specific game (e.g., when game ends).
     #[allow(dead_code)]
     pub async fn remove_all_connections(&self, game_id: Uuid) {
-        let mut inner = self.inner.write().await;
-        if let Some(conns) = inner.connections.remove(&game_id) {
-            let count = conns.len();
-            metrics::WS_CONNECTIONS_ACTIVE.sub(count as f64);
-            metrics::WS_DISCONNECTS_TOTAL.inc_by(count as f64);
-            tracing::info!("Removed all {} connections for game {}", count, game_id);
+        let removed = {
+            let mut inner = self.inner.write().await;
+            inner.connections.remove(&game_id).map(|conns| {
+                let count = conns.len();
+                metrics::WS_CONNECTIONS_ACTIVE.sub(count as f64);
+                metrics::WS_DISCONNECTS_TOTAL.inc_by(count as f64);
+                tracing::info!("Removed all {} connections for game {}", count, game_id);
+            })
+        };
+        if removed.is_some() {
+            self.refresh_spectator_gauge(game_id).await;
         }
     }
 
@@ -285,28 +291,35 @@ impl WebSocketManager {
     /// a PlayerDisconnected event (the player was kicked, not disconnected).
     /// This prevents the kicked player from receiving further game events.
     pub async fn remove_player_connections(&self, game_id: Uuid, player_id: Uuid) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.connections.get_mut(&game_id) {
-            let before = connections.len();
-            connections.retain(|c| c.player_id != Some(player_id));
-            let removed = before - connections.len();
-            if connections.is_empty() {
-                inner.connections.remove(&game_id);
-                tracing::info!(
-                    "No more connections for game {} after removing player {}",
-                    game_id,
-                    player_id
-                );
+        let mut changed = false;
+        {
+            let mut inner = self.inner.write().await;
+            if let Some(connections) = inner.connections.get_mut(&game_id) {
+                let before = connections.len();
+                connections.retain(|c| c.player_id != Some(player_id));
+                let removed = before - connections.len();
+                if connections.is_empty() {
+                    inner.connections.remove(&game_id);
+                    tracing::info!(
+                        "No more connections for game {} after removing player {}",
+                        game_id,
+                        player_id
+                    );
+                }
+                if removed > 0 {
+                    metrics::WS_CONNECTIONS_ACTIVE.sub(removed as f64);
+                    changed = true;
+                    tracing::info!(
+                        "Removed {} connection(s) for kicked player {} from game {}",
+                        removed,
+                        player_id,
+                        game_id
+                    );
+                }
             }
-            if removed > 0 {
-                metrics::WS_CONNECTIONS_ACTIVE.sub(removed as f64);
-                tracing::info!(
-                    "Removed {} connection(s) for kicked player {} from game {}",
-                    removed,
-                    player_id,
-                    game_id
-                );
-            }
+        }
+        if changed {
+            self.refresh_spectator_gauge(game_id).await;
         }
     }
 
@@ -315,16 +328,18 @@ impl WebSocketManager {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.connections.get(&game_id) {
             let count = connections.len();
-            metrics::WS_MESSAGES_SENT_TOTAL.inc_by(count as f64);
             tracing::debug!("Broadcasting to {} connections for game {}", count, game_id);
             for connection in connections {
-                // Ignore errors if the receiver is closed
-                if let Err(e) = connection.sender.send(message.to_string()) {
-                    tracing::error!(
-                        "Failed to send message to WebSocket connection {}: {}",
-                        connection.id.uuid(),
-                        e
-                    );
+                match connection.sender.send(message.to_string()) {
+                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                    Err(e) => {
+                        metrics::WS_SEND_FAILED_TOTAL.inc();
+                        tracing::warn!(
+                            "Failed to send message to WebSocket connection {}: {}",
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
                 }
             }
         } else {
@@ -369,16 +384,19 @@ impl WebSocketManager {
     pub async fn send_to_player(&self, game_id: Uuid, player_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.connections.get(&game_id) {
-            metrics::WS_MESSAGES_SENT_TOTAL.inc();
             for connection in connections {
                 if connection.player_id == Some(player_id) {
-                    if let Err(e) = connection.sender.send(message.to_string()) {
-                        tracing::debug!(
-                            "Failed to send message to player {} (conn {}): {}",
-                            player_id,
-                            connection.id.uuid(),
-                            e
-                        );
+                    match connection.sender.send(message.to_string()) {
+                        Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                        Err(e) => {
+                            metrics::WS_SEND_FAILED_TOTAL.inc();
+                            tracing::warn!(
+                                "Failed to send message to player {} (conn {}): {}",
+                                player_id,
+                                connection.id.uuid(),
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -447,48 +465,6 @@ impl WebSocketManager {
             manager
                 .set_player_for_connection(game_id, cid, player_id, player_position)
                 .await;
-        }
-    }
-
-    /// Mark the most recently added connection for a game as a spectator.
-    pub async fn mark_spectator_for_latest_connection(manager: &WebSocketManager, game_id: Uuid) {
-        let conn_id = {
-            let inner = manager.inner.read().await;
-            inner
-                .connections
-                .get(&game_id)
-                .and_then(|conns| conns.last())
-                .map(|c| c.id)
-        };
-        if let Some(cid) = conn_id {
-            let mut inner = manager.inner.write().await;
-            if let Some(connections) = inner.connections.get_mut(&game_id) {
-                for conn in connections.iter_mut() {
-                    if conn.id == cid {
-                        conn.spectator = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Send a message to all spectator connections of a game (player_id == None
-    /// and marked as spectator).
-    pub async fn send_to_spectators(&self, game_id: Uuid, message: &str) {
-        let inner = self.inner.read().await;
-        if let Some(connections) = inner.connections.get(&game_id) {
-            for connection in connections {
-                if connection.spectator {
-                    if let Err(e) = connection.sender.send(message.to_string()) {
-                        tracing::debug!(
-                            "Failed to send message to spectator connection {}: {}",
-                            connection.id.uuid(),
-                            e
-                        );
-                    }
-                }
-            }
         }
     }
 
@@ -563,15 +539,17 @@ impl WebSocketManager {
     pub async fn broadcast_to_room(&self, room_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.room_connections.get(&room_id) {
-            let count = connections.len();
-            metrics::WS_MESSAGES_SENT_TOTAL.inc_by(count as f64);
             for connection in connections {
-                if let Err(e) = connection.sender.send(message.to_string()) {
-                    tracing::debug!(
-                        "Failed to send message to room connection {}: {}",
-                        connection.id.uuid(),
-                        e
-                    );
+                match connection.sender.send(message.to_string()) {
+                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                    Err(e) => {
+                        metrics::WS_SEND_FAILED_TOTAL.inc();
+                        tracing::warn!(
+                            "Failed to send message to room connection {}: {}",
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -579,6 +557,8 @@ impl WebSocketManager {
 }
 
 include!("manager_user.rs");
+
+include!("manager_spectators.rs");
 
 include!("manager_redis.rs");
 

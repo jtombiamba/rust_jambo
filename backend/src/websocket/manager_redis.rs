@@ -218,13 +218,16 @@ impl WebSocketManager {
         if let Some(connections) = inner.connections.get(&game_id) {
             for connection in connections {
                 if connection.player_id.is_none() {
-                    crate::observability::metrics::WS_MESSAGES_SENT_TOTAL.inc();
-                    if let Err(e) = connection.sender.send(message.to_string()) {
-                        tracing::debug!(
-                            "Failed to send message to unidentified connection {}: {}",
-                            connection.id.uuid(),
-                            e
-                        );
+                    match connection.sender.send(message.to_string()) {
+                        Ok(()) => crate::observability::metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                        Err(e) => {
+                            crate::observability::metrics::WS_SEND_FAILED_TOTAL.inc();
+                            tracing::warn!(
+                                "Failed to send message to unidentified connection {}: {}",
+                                connection.id.uuid(),
+                                e
+                            );
+                        }
                     }
                 }
             }

@@ -4,6 +4,9 @@ use prometheus::{
     register_histogram_vec, Counter, CounterVec, Gauge, GaugeVec, HistogramVec,
 };
 
+mod metrics_ws;
+pub use metrics_ws::*;
+
 pub static RABBITMQ_PUBLISH_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "rabbitmq_publish_total",
@@ -57,22 +60,6 @@ pub static GAMES_FINISHED_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     .unwrap()
 });
 
-pub static WS_MESSAGES_SENT_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!(
-        "ws_messages_sent_total",
-        "Total number of WebSocket messages sent to clients"
-    )
-    .unwrap()
-});
-
-pub static WS_CONNECTIONS_ACTIVE: Lazy<Gauge> = Lazy::new(|| {
-    register_gauge!(
-        "ws_connections_active",
-        "Current number of active WebSocket connections"
-    )
-    .unwrap()
-});
-
 pub static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
     register_counter_vec!(
         "http_requests_total",
@@ -99,14 +86,6 @@ pub static RATE_LIMIT_HITS_TOTAL: Lazy<Counter> = Lazy::new(|| {
     register_counter!(
         "rate_limit_hits_total",
         "Total number of rate limit rejections"
-    )
-    .unwrap()
-});
-
-pub static WS_DISCONNECTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!(
-        "ws_disconnects_total",
-        "Total number of WebSocket disconnections"
     )
     .unwrap()
 });
@@ -444,14 +423,6 @@ pub static REDIS_SUBSCRIBER_SHARDS_ACTIVE: Lazy<Gauge> = Lazy::new(|| {
     register_gauge!(
         "redis_subscriber_shards_active",
         "Number of active Redis subscriber shards"
-    )
-    .unwrap()
-});
-
-pub static WS_HEARTBEAT_TIMEOUTS_TOTAL: Lazy<Counter> = Lazy::new(|| {
-    register_counter!(
-        "ws_heartbeat_timeouts_total",
-        "Total number of WebSocket connections timed out on heartbeat"
     )
     .unwrap()
 });

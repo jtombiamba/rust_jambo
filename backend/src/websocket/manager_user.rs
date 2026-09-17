@@ -70,15 +70,17 @@ impl WebSocketManager {
     pub async fn broadcast_to_user(&self, user_id: Uuid, message: &str) {
         let inner = self.inner.read().await;
         if let Some(connections) = inner.user_connections.get(&user_id) {
-            let count = connections.len();
-            metrics::WS_MESSAGES_SENT_TOTAL.inc_by(count as f64);
             for connection in connections {
-                if let Err(e) = connection.sender.send(message.to_string()) {
-                    tracing::debug!(
-                        "Failed to send message to user connection {}: {}",
-                        connection.id.uuid(),
-                        e
-                    );
+                match connection.sender.send(message.to_string()) {
+                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
+                    Err(e) => {
+                        metrics::WS_SEND_FAILED_TOTAL.inc();
+                        tracing::warn!(
+                            "Failed to send message to user connection {}: {}",
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
                 }
             }
         } else {

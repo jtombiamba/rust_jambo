@@ -555,3 +555,113 @@ groups:
         annotations:
           summary: Rate limit hits > 100/min
           description: Rate limit hits exceed 100 per minute. Possible abuse or misconfigured client.
+
+      - uid: ws-spectators-per-game-warning
+        title: WSSpectatorsPerGameWarning
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'sum by (game_id) (ws_spectators_per_game) > 700'
+              instant: true
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: A single game has more than 700 spectators
+          description: Game {{ $labels.game_id }} has {{ $value }} spectators for 5 minutes. Fan-out cost is linear in viewers; verify queue depth and dropped-message rate.
+
+      - uid: ws-spectators-per-game-critical
+        title: WSSpectatorsPerGameCritical
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'sum by (game_id) (ws_spectators_per_game) > 1500'
+              instant: true
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: A single game has more than 1,500 spectators
+          description: Game {{ $labels.game_id }} has {{ $value }} spectators. This concentration risks OOM from the unbounded send queue. Consider edge aggregation or a dedicated broadcast channel.
+
+      - uid: ws-send-failed
+        title: WSSendFailed
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(ws_send_failed_total[5m]) > 0'
+              instant: true
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: WebSocket sends failing on closed receivers
+          description: WebSocket sends to already-closed receivers are occurring. This signals clients disconnecting mid-broadcast; verify the drop rate and connection churn.
+
+      - uid: ws-messages-dropped
+        title: WSMessagesDropped
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(ws_messages_dropped_total[5m]) > 0'
+              instant: true
+        noDataState: OK
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+          team: backend
+        annotations:
+          summary: WebSocket messages dropped on a full send queue
+          description: Snapshots are being dropped because a per-connection send queue is full. A slow spectator is present. This alert is only meaningful once bounded send queues are enabled.
+
+      - uid: ws-slow-consumer-disconnects
+        title: WSSlowConsumerDisconnects
+        condition: A
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: 'rate(ws_slow_consumer_disconnects_total[5m]) > 0'
+              instant: true
+        noDataState: OK
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+          team: backend
+        annotations:
+          summary: WebSocket connections torn down for a full send queue
+          description: A control message hit a full queue and a client was disconnected. This alert is only meaningful once bounded send queues are enabled.

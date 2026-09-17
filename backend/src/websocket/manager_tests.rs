@@ -407,3 +407,56 @@ async fn test_remove_user_connection_stops_delivery() {
 
     assert!(drain_receiver(&mut rx).is_empty());
 }
+
+#[tokio::test]
+async fn test_spectator_gauge_tracks_join_and_removal() {
+    fn spectator_series_present(game_id: &Uuid) -> bool {
+        prometheus::gather().iter().any(|family| {
+            family.get_name() == "ws_spectators_per_game"
+                && family.get_metric().iter().any(|m| {
+                    m.get_label().iter().any(|lp| {
+                        lp.get_name() == "game_id" && lp.get_value() == game_id.to_string()
+                    })
+                })
+        })
+    }
+
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+
+    let (tx_player, _rx_player) = mpsc::unbounded_channel();
+    let player_id = Uuid::new_v4();
+    let player_conn = manager
+        .add_connection(game_id, tx_player, CorrelationId::default())
+        .await;
+    manager
+        .set_player_for_connection(game_id, player_conn, player_id, 0)
+        .await;
+
+    let (tx_spectator, _rx_spectator) = mpsc::unbounded_channel();
+    let spectator_conn = manager
+        .add_connection(game_id, tx_spectator, CorrelationId::default())
+        .await;
+    WebSocketManager::mark_spectator_for_latest_connection(&manager, game_id).await;
+
+    let label = game_id.to_string();
+    let gauge = crate::observability::metrics::WS_SPECTATORS_PER_GAME
+        .get_metric_with_label_values(&[&label])
+        .expect("spectator gauge series should exist after marking a spectator");
+    assert_eq!(gauge.get(), 1.0);
+    assert!(spectator_series_present(&game_id));
+
+    // Removing the non-spectator player leaves the spectator count unchanged.
+    manager.remove_connection(game_id, player_conn).await;
+    let gauge = crate::observability::metrics::WS_SPECTATORS_PER_GAME
+        .get_metric_with_label_values(&[&label])
+        .expect("spectator gauge series should still exist while a spectator remains");
+    assert_eq!(gauge.get(), 1.0);
+
+    // Removing the last spectator removes the series entirely.
+    manager.remove_connection(game_id, spectator_conn).await;
+    assert!(
+        !spectator_series_present(&game_id),
+        "spectator gauge series should be removed when the last spectator leaves"
+    );
+}
