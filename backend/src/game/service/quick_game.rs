@@ -1,14 +1,13 @@
 use rand::RngExt;
-use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, Set, TransactionTrait,
-};
-use serde_json::json;
+use sea_orm::{ActiveModelTrait, ActiveValue, DatabaseConnection, TransactionTrait};
 use uuid::Uuid;
 
 use crate::api::dto::responses::PlayerInfoDto;
-use crate::database::models::{self, GameStatus, PlayerType};
-use crate::database::repositories::PlayerProfileRepository;
+use crate::database::models::PlayerType;
+use crate::database::repositories::{
+    GameCardRepository, GameRepository, PlayerProfileRepository, PlayerRepository,
+    QuickGamePlayerRow,
+};
 use crate::error::GameError;
 use crate::game::distribution::distribute_cards;
 use crate::game::service::types::QuickGameOutcome;
@@ -136,32 +135,13 @@ impl GameService {
         let now = chrono::Utc::now();
         let initial_rank = rand::rng().random_range(0..4) as i32;
 
-        // TODO: should be in a repository
-        let game_active = models::game::ActiveModel {
-            id: Set(game_id),
-            status: Set(GameStatus::Active),
-            bet: Set(10),
-            created_at: Set(now),
-            updated_at: Set(now),
-            finished_at: ActiveValue::NotSet,
-            rank: Set(Some(initial_rank)),
-            roll: Set(1),
-            auto: Set(false),
-            winner_id: ActiveValue::NotSet,
-            player_positions: Set(json!({})),
-            current_winning_card: ActiveValue::NotSet,
-            current_winning_player_position: ActiveValue::NotSet,
-            creator_id: Set(human_user_id),
-            game_mode: Set(models::GameMode::Solo),
-            max_players: Set(4),
-            invite_expires_at: ActiveValue::NotSet,
-            stall_warning_sent_at: ActiveValue::NotSet,
-            game_run_id: ActiveValue::NotSet,
-            step_by_step: Set(step_by_step),
-            kicked_players: Set(json!([])),
-            pending_claim_player_id: ActiveValue::NotSet,
-        };
-        models::game::Entity::insert(game_active).exec(txn).await?;
+        let game_repo = GameRepository::new(self.db.clone());
+        let player_repo = PlayerRepository::new(self.db.clone());
+        let card_repo = GameCardRepository::new(self.db.clone());
+
+        game_repo
+            .create_quick_game_in_txn(txn, game_id, now, initial_rank, human_user_id, step_by_step)
+            .await?;
 
         let bot_names = ["Bot East", "Bot North", "Bot West"];
         let num_bots = 3;
@@ -196,52 +176,25 @@ impl GameService {
             } else {
                 None
             };
-            // TODO: should be in a repository
-            player_rows.push(models::player::ActiveModel {
-                id: Set(Uuid::now_v7()),
-                game_id: Set(game_id),
-                player_type: Set(player_type),
-                name: Set(name.to_string()),
-                position: Set(position),
-                credits: Set(credits),
-                created_at: Set(now),
-                user_id: Set(user_id),
-                kicked: Set(false),
-                kicked_at: ActiveValue::NotSet,
+            player_rows.push(QuickGamePlayerRow {
+                name: name.to_string(),
+                position,
+                player_type,
+                credits,
+                user_id,
             });
         }
-        models::player::Entity::insert_many(player_rows)
-            .exec(txn)
+        player_repo
+            .create_quick_game_players_in_txn(txn, game_id, player_rows)
             .await?;
 
-        // TODO: should be in a repository
-        let players = models::player::Entity::find()
-            .filter(models::player::Column::GameId.eq(game_id))
-            .order_by_asc(models::player::Column::Position)
-            .all(txn)
-            .await?;
+        let players = player_repo.list_by_game_in_txn(txn, game_id).await?;
         let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
         let card_assignments = distribute_cards(&player_ids);
-        // TODO: mechanism in the map should be in a repository
-        let card_models: Vec<models::game_card::ActiveModel> = card_assignments
-            .iter()
-            .map(|&(player_id, card_index)| models::game_card::ActiveModel {
-                id: Set(Uuid::now_v7()),
-                game_id: Set(game_id),
-                player_id: Set(Some(player_id)),
-                card_index: Set(card_index),
-                played: Set(false),
-                played_at: ActiveValue::NotSet,
-                round: Set(None),
-                created_at: Set(now),
-            })
-            .collect();
-        if !card_models.is_empty() {
-            models::game_card::Entity::insert_many(card_models)
-                .exec(txn)
-                .await?;
-        }
+        card_repo
+            .create_quick_game_cards_in_txn(txn, game_id, card_assignments.clone())
+            .await?;
 
         let human_player = players
             .iter()

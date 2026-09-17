@@ -11,7 +11,7 @@ use crate::database::traits::GameRepoTrait;
 
 #[derive(Debug, Clone)]
 pub struct GameRepository {
-    connection: DatabaseConnection,
+    pub(crate) connection: DatabaseConnection,
 }
 
 impl GameRepository {

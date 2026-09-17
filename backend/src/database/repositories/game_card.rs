@@ -188,6 +188,36 @@ impl GameCardRepository {
         }
         Ok(())
     }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn create_quick_game_cards_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        cards: Vec<(Uuid, i32)>,
+    ) -> Result<(), DbErr> {
+        if cards.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now();
+        let models: Vec<game_card::ActiveModel> = cards
+            .into_iter()
+            .map(|(player_id, card_index)| game_card::ActiveModel {
+                id: Set(Uuid::now_v7()),
+                game_id: Set(game_id),
+                player_id: Set(Some(player_id)),
+                card_index: Set(card_index),
+                played: Set(false),
+                played_at: ActiveValue::NotSet,
+                round: Set(None),
+                created_at: Set(now),
+            })
+            .collect();
+        game_card::Entity::insert_many(models)
+            .exec_without_returning(txn)
+            .await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -229,5 +259,49 @@ impl GameCardRepoTrait for GameCardRepository {
         cards: Vec<crate::database::models::game_card::ActiveModel>,
     ) -> Result<(), DbErr> {
         self.bulk_insert_in_txn(txn, cards).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, TransactionTrait};
+
+    #[tokio::test]
+    async fn create_quick_game_cards_inserts_assigned_cards() {
+        let game_id = Uuid::now_v7();
+        let cards = vec![
+            (Uuid::now_v7(), 0),
+            (Uuid::now_v7(), 5),
+            (Uuid::now_v7(), 12),
+        ];
+
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 3,
+            }])
+            .into_connection();
+        let repo = GameCardRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .create_quick_game_cards_in_txn(&txn, game_id, cards)
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_quick_game_cards_no_ops_on_empty() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+        let repo = GameCardRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .create_quick_game_cards_in_txn(&txn, Uuid::now_v7(), vec![])
+            .await;
+
+        assert!(result.is_ok());
     }
 }

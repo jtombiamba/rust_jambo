@@ -1,14 +1,13 @@
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
-    TransactionTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, TransactionTrait,
 };
 use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::database::models::{
-    game, game_card, game_invite, player, player_profile, GameMode, GameStatus, InviteStatus,
-    PlayerType,
+    game, game_invite, player, player_profile, GameMode, GameStatus, InviteStatus, PlayerType,
 };
+use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::error::GameError;
 use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::service::types::GameCreationTimer;
@@ -403,13 +402,8 @@ impl GameService {
     pub async fn cancel_expired_games(&self) -> Result<u64, GameError> {
         let now = chrono::Utc::now();
 
-        // TODO: should be in a repository
-        let expired_games = game::Entity::find()
-            .filter(game::Column::Status.eq(GameStatus::Pending))
-            .filter(game::Column::GameMode.eq(GameMode::Multiplayer))
-            .filter(game::Column::InviteExpiresAt.lte(now))
-            .all(&self.db)
-            .await?;
+        let game_repo = GameRepository::new(self.db.clone());
+        let expired_games = game_repo.list_expired_pending_multiplayer(now).await?;
 
         let mut cancelled = 0u64;
         for g in expired_games {
@@ -431,9 +425,12 @@ impl GameService {
 
         let txn = self.db.begin().await?;
 
-        // TODO: should be in a repository
-        let game_model = game::Entity::find_by_id(game_id)
-            .one(&txn)
+        let game_repo = GameRepository::new(self.db.clone());
+        let player_repo = PlayerRepository::new(self.db.clone());
+        let card_repo = GameCardRepository::new(self.db.clone());
+
+        let game_model = game_repo
+            .find_by_id_in_txn(&txn, game_id)
             .await?
             .ok_or(GameError::GameNotFound)?;
 
@@ -446,11 +443,7 @@ impl GameService {
             return Err(GameError::NotCreator);
         }
 
-        let players = player::Entity::find()
-            .filter(player::Column::GameId.eq(game_id))
-            .order_by_asc(player::Column::Position)
-            .all(&txn)
-            .await?;
+        let players = player_repo.list_by_game_in_txn(&txn, game_id).await?;
 
         let num_players = players.len();
         if num_players < 2 {
@@ -470,9 +463,7 @@ impl GameService {
         let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
         let (card_models, cards) = crate::game::cards::build_game_cards(game_id, &players);
-        game_card::Entity::insert_many(card_models)
-            .exec(&txn)
-            .await?;
+        card_repo.bulk_insert_in_txn(&txn, card_models).await?;
 
         let special_hands: Vec<(Uuid, crate::game::special_cards::SpecialCards)> = players
             .iter()
@@ -496,16 +487,11 @@ impl GameService {
         let initial_rank = 0i32;
         let first_player_id = player_ids[0];
 
-        // TODO: should be a function in a repository
         let now = chrono::Utc::now();
         let game_mode = game_model.game_mode.to_string();
-        let mut game_active: game::ActiveModel = game_model.into();
-        game_active.status = ActiveValue::Set(GameStatus::Active);
-        game_active.rank = ActiveValue::Set(Some(initial_rank));
-        game_active.roll = ActiveValue::Set(1);
-        game_active.updated_at = ActiveValue::Set(now);
-        game_active.pending_claim_player_id = ActiveValue::Set(askee);
-        game_active.update(&txn).await?;
+        game_repo
+            .mark_started_in_txn(&txn, game_id, initial_rank, 1, now, askee)
+            .await?;
 
         txn.commit().await?;
 
