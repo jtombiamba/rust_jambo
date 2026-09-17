@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { getWsUrl } from '../utils/runtimeConfig';
+import type { SpecialCards } from '../stores/useGameStore';
 
 const log = (...args: unknown[]) => {
   if (import.meta.env.DEV) console.log(...args);
@@ -36,15 +37,19 @@ export type GameEvent =
   | { type: 'player_joined'; game_id: string; player_id: string; user_id: string; pseudo: string; position: number; player_count: number; max_players: number }
   | { type: 'game_cancelled'; game_id: string; reason: string }
   | { type: 'game_ready'; game_id: string }
-  | { type: 'cards_dealt'; game_id: string; player_id: string; cards: number[] }
+  | { type: 'cards_dealt'; game_id: string; player_id: string; cards: number[]; special_cards?: SpecialCards }
   | { type: 'game_started'; game_id: string; players: GameStartedPlayer[]; current_turn: string; game_mode: string }
-  | { type: 'game_state_snapshot'; game_id: string; roll: number; rank: number | null; status: string; current_winning_card: number | null; current_winning_player_position: number | null; players: GameStatePlayer[]; played_cards: (number | null)[]; step_by_step?: boolean; game_mode?: string }
+  | { type: 'game_state_snapshot'; game_id: string; roll: number; rank: number | null; status: string; current_winning_card: number | null; current_winning_player_position: number | null; players: GameStatePlayer[]; played_cards: (number | null)[]; step_by_step?: boolean; game_mode?: string; claim_pending?: boolean; claim_offered_to_me?: boolean; special_cards?: SpecialCards }
   | { type: 'player_disconnected'; game_id: string; player_id: string; player_position: number; disconnected_at?: string }
   | { type: 'player_reconnected'; game_id: string; player_id: string; player_position: number; reconnected_at?: string }
   | { type: 'staleness_warning'; game_id: string; player_id: string; player_name: string; kicked_after_seconds: number }
   | { type: 'player_kicked'; game_id: string; player_id: string; player_name: string }
   | { type: 'game_reshuffled'; game_id: string; remaining_players: number }
-  | { type: 'player_forfeit_win'; game_id: string; winner_id: string; winner_name: string };
+  | { type: 'player_forfeit_win'; game_id: string; winner_id: string; winner_name: string }
+  | { type: 'claim_pending'; game_id: string }
+  | { type: 'claim_offered'; game_id: string; player_id: string; special_cards: SpecialCards }
+  | { type: 'claim_resolved'; game_id: string }
+  | { type: 'special_claim'; game_id: string; player_id: string; cards: number[]; winner_position: number };
 
 export type OutgoingMessage =
   | { type: 'ping' }
@@ -226,7 +231,7 @@ class WebSocketManager {
       ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed', 'player_joined', 'game_cancelled', 'game_ready', 'cards_dealt', 'game_started', 'game_state_snapshot', 'player_disconnected', 'player_reconnected', 'staleness_warning', 'player_kicked', 'game_reshuffled', 'player_forfeit_win'].includes(data.type)) {
+        if (data.type && ['card_played', 'round_completed', 'game_finished', 'turn_changed', 'player_joined', 'game_cancelled', 'game_ready', 'cards_dealt', 'game_started', 'game_state_snapshot', 'player_disconnected', 'player_reconnected', 'staleness_warning', 'player_kicked', 'game_reshuffled', 'player_forfeit_win', 'claim_pending', 'claim_offered', 'claim_resolved', 'special_claim'].includes(data.type)) {
           log('Received GameEvent:', data);
           this.subscribers.forEach(callback => callback(data as GameEvent));
         } else {

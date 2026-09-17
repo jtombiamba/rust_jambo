@@ -8,7 +8,7 @@ import WinnerRing from './WinnerRing';
 import GameOverModal from './GameOverModal';
 import GameRules from './GameRules';
 import MobileTopBar from './MobileTopBar';
-import { RoundWinner, GameOverData, useStepByStepPhase, useGameStore } from '../stores/useGameStore';
+import { RoundWinner, GameOverData, SpecialCards, useStepByStepPhase, useGameStore } from '../stores/useGameStore';
 
 export interface GamePlayer {
   id: string;
@@ -35,6 +35,10 @@ export interface GameTableProps {
   showPlayAgain?: boolean;
   onAdvanceBot?: () => void;
   onEvaluateRound?: () => void;
+  /** Claim the pending special-card victory. */
+  onClaim?: () => void;
+  /** Decline the pending special-card claim (final). */
+  onDecline?: () => void;
   /** Read-only spectator view: hide all hands and disable interactions. */
   spectatorMode?: boolean;
   /** Navigate back to the dashboard (mobile top bar). */
@@ -42,6 +46,13 @@ export interface GameTableProps {
 }
 
 type LayoutMode = 'mobile-portrait' | 'mobile-landscape' | 'desktop';
+
+function getSpecialSetLabelKey(specialCards: SpecialCards): string | null {
+  if (specialCards.check_a_square) return 'game.specialSquare';
+  if (specialCards.check_sum_value_under_21) return 'game.specialSumUnder21';
+  if (specialCards.check_triple_seven) return 'game.specialTripleSeven';
+  return null;
+}
 
 function getPositionMap(numPlayers: number): Record<number, PlayerSlotProps['position']> {
   if (numPlayers <= 2) {
@@ -74,6 +85,8 @@ const GameTable: React.FC<GameTableProps> = ({
   showPlayAgain = true,
   onAdvanceBot,
   onEvaluateRound,
+  onClaim,
+  onDecline,
   spectatorMode = false,
   onBack,
 }) => {
@@ -81,6 +94,9 @@ const GameTable: React.FC<GameTableProps> = ({
   const phase = useStepByStepPhase();
   const isReplayingBots = useGameStore((s) => s.isReplayingBots);
   const isBotChainActive = useGameStore((s) => s.isBotChainActive);
+  const claimOffered = useGameStore((s) => s.claimOffered);
+  const claimPending = useGameStore((s) => s.claimPending);
+  const revealedHand = useGameStore((s) => s.revealedHand);
 
   const getLayoutMode = (): LayoutMode => {
     if (typeof window === 'undefined') return 'desktop';
@@ -129,7 +145,15 @@ const GameTable: React.FC<GameTableProps> = ({
 
   const shouldShowCardsFaceUp = (player: GamePlayer) => {
     if (spectatorMode) return false;
+    if (revealedHand && revealedHand.playerId === player.id) return true;
     return player.is_current_user ?? player.cards.length > 0;
+  };
+
+  const getPlayerCards = (player: GamePlayer) => {
+    if (revealedHand && revealedHand.playerId === player.id) {
+      return revealedHand.cards;
+    }
+    return player.cards;
   };
 
   const renderPlayerSlot = (player: GamePlayer, compact = false) => {
@@ -150,12 +174,12 @@ const GameTable: React.FC<GameTableProps> = ({
           name={player.name}
           position={position}
           type={player.type}
-          cards={player.cards}
+          cards={getPlayerCards(player)}
           cardsFaceUp={shouldShowCardsFaceUp(player)}
           remainingCount={remainingCards[player.id]}
           isCurrentTurn={isCurrentTurn}
           isThinking={isBotThinking}
-          onCardClick={(cardIndex) => isReplayingBots ? undefined : onCardClick?.(player.id, cardIndex)}
+          onCardClick={(cardIndex) => (isReplayingBots || claimOffered || claimPending) ? undefined : onCardClick?.(player.id, cardIndex)}
           compact={compact}
           orientation={layoutMode === 'mobile-portrait' ? 'portrait' : 'landscape'}
         />
@@ -416,12 +440,12 @@ const GameTable: React.FC<GameTableProps> = ({
                     name={player.name}
                     position={position}
                     type={player.type}
-                    cards={player.cards}
+                    cards={getPlayerCards(player)}
                     cardsFaceUp={shouldShowCardsFaceUp(player)}
                     remainingCount={remainingCards[player.id]}
                     isCurrentTurn={isCurrentTurn}
                     isThinking={isBotThinking}
-                    onCardClick={(cardIndex) => isReplayingBots ? undefined : onCardClick?.(player.id, cardIndex)}
+                    onCardClick={(cardIndex) => (isReplayingBots || claimOffered || claimPending) ? undefined : onCardClick?.(player.id, cardIndex)}
                     overlapCards={false}
                   />
                   {isWinner && roundWinner && (
@@ -510,6 +534,43 @@ const GameTable: React.FC<GameTableProps> = ({
                   {t('game.evaluateRound')}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {claimPending && !claimOffered && (
+        <div className="container mx-auto px-2 sm:px-4 md:px-8 mt-4">
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <span className="text-sm text-amber-700">{t('game.claimWaiting')}</span>
+          </div>
+        </div>
+      )}
+
+      {claimOffered && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div
+            className="relative w-full max-w-md bg-white rounded-xl shadow-2xl mx-4 p-6"
+            role="dialog"
+            aria-modal="true"
+          >
+            <h2 className="text-2xl font-bold mb-2">{t('game.claimTitle')}</h2>
+            <p className="text-gray-700 mb-4">
+              {t('game.claimDescription', { set: t(getSpecialSetLabelKey(claimOffered.specialCards) ?? 'game.claimSet') })}
+            </p>
+            <div className="flex gap-3">
+              <button
+                className="flex-1 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700"
+                onClick={onClaim}
+              >
+                {t('game.claimVictory')}
+              </button>
+              <button
+                className="flex-1 px-4 py-2 bg-gray-500 text-white text-sm font-semibold rounded-lg hover:bg-gray-600"
+                onClick={onDecline}
+              >
+                {t('game.claimContinue')}
+              </button>
             </div>
           </div>
         </div>

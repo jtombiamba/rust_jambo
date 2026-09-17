@@ -12,6 +12,7 @@ use crate::database::models::{
 use crate::error::GameError;
 use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::service::types::GameCreationTimer;
+use crate::game::special_cards::{compute_special_cards, select_askee};
 use crate::messaging::events::{GameEvent, UserEvent};
 use crate::messaging::redis::PublishResult;
 use crate::observability::metrics;
@@ -430,6 +431,7 @@ impl GameService {
 
         let txn = self.db.begin().await?;
 
+        // TODO: should be in a repository
         let game_model = game::Entity::find_by_id(game_id)
             .one(&txn)
             .await?
@@ -472,9 +474,29 @@ impl GameService {
             .exec(&txn)
             .await?;
 
+        let special_hands: Vec<(Uuid, crate::game::special_cards::SpecialCards)> = players
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let offset = i * CARDS_PER_PLAYER;
+                let hand = &cards[offset..offset + CARDS_PER_PLAYER];
+                (p.id, compute_special_cards(hand))
+            })
+            .collect();
+
+        let all_human = players
+            .iter()
+            .all(|p| matches!(p.player_type, PlayerType::Human));
+        let askee = if all_human {
+            select_askee(&special_hands)
+        } else {
+            None
+        };
+
         let initial_rank = 0i32;
         let first_player_id = player_ids[0];
 
+        // TODO: should be a function in a repository
         let now = chrono::Utc::now();
         let game_mode = game_model.game_mode.to_string();
         let mut game_active: game::ActiveModel = game_model.into();
@@ -482,6 +504,7 @@ impl GameService {
         game_active.rank = ActiveValue::Set(Some(initial_rank));
         game_active.roll = ActiveValue::Set(1);
         game_active.updated_at = ActiveValue::Set(now);
+        game_active.pending_claim_player_id = ActiveValue::Set(askee);
         game_active.update(&txn).await?;
 
         txn.commit().await?;
@@ -491,57 +514,24 @@ impl GameService {
             game_id, num_players, first_player_id
         );
 
-        if let Some(ref redis) = self.redis_client {
-            for &pid in &player_ids {
-                let player_cards: Vec<i32> = {
-                    let offset =
-                        players.iter().position(|p| p.id == pid).unwrap_or(0) * CARDS_PER_PLAYER;
-                    cards[offset..offset + CARDS_PER_PLAYER].to_vec()
-                };
-                let event = GameEvent::CardsDealt {
-                    game_id,
-                    player_id: pid,
-                    cards: player_cards,
-                };
-                if let PublishResult::RetryExhausted(e) =
-                    redis.clone().publish_game_event_with_retry(&event).await
-                {
-                    error!("Failed to publish CardsDealt event: {}", e);
-                }
-            }
-
-            let game_started_players: Vec<crate::messaging::events::GameStartedPlayer> = players
+        let askee_specials = askee.and_then(|id| {
+            special_hands
                 .iter()
-                .map(|p| {
-                    let player_type_str = match p.player_type {
-                        PlayerType::Human => "human",
-                        PlayerType::Bot => "bot",
-                    };
-                    crate::messaging::events::GameStartedPlayer {
-                        id: p.id,
-                        name: p.name.clone(),
-                        position: p.position,
-                        display_position: p.position,
-                        cards_count: CARDS_PER_PLAYER as i32,
-                        player_type: player_type_str.to_string(),
-                    }
-                })
-                .collect();
+                .find(|(pid, _)| *pid == id)
+                .map(|(_, s)| *s)
+        });
 
-            let event = GameEvent::GameStarted {
-                game_id,
-                players: game_started_players,
-                current_turn: first_player_id,
-                game_mode,
-                correlation_id: None,
-            };
-            match redis.clone().publish_game_event_with_retry(&event).await {
-                PublishResult::Published => {}
-                PublishResult::RetryExhausted(e) => {
-                    error!("Failed to publish GameStarted event: {}", e);
-                }
-            }
-        }
+        self.publish_game_start_events(
+            game_id,
+            &players,
+            &player_ids,
+            &cards,
+            askee,
+            askee_specials,
+            game_mode,
+            first_player_id,
+        )
+        .await;
 
         self.cache_game_state(game_id).await;
 

@@ -30,6 +30,8 @@ impl Modify for SecurityAddon {
         crate::api::game::play_card,
         crate::api::game::advance_bot,
         crate::api::game::evaluate_round,
+        crate::api::game::claim_special,
+        crate::api::game::decline_special,
         crate::i18n::lang_endpoint::set_language,
         crate::i18n::lang_endpoint::get_current_lang,
         crate::i18n::lang_endpoint::get_languages,

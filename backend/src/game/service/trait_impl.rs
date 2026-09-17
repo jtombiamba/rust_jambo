@@ -9,8 +9,9 @@ use crate::error::GameError;
 use crate::game::service::idempotency::IdempotencyGuard;
 use crate::game::service::types::{
     AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
-    BenchmarkService, EvaluateRoundOutcome, GameLifecycleService, GamePlayService,
-    GameServiceTrait, InviteService, MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
+    BenchmarkService, ClaimSpecialOutcome, EvaluateRoundOutcome, GameLifecycleService,
+    GamePlayService, GameServiceTrait, InviteService, MultiplayerCreationOutcome, PlayCardOutcome,
+    QuickGameOutcome,
 };
 use crate::observability::CorrelationId;
 
@@ -191,6 +192,56 @@ impl GamePlayService for GameService {
     ) -> Result<bool, GameError> {
         self.verify_player_ownership(game_id, player_id, user_id)
             .await
+    }
+
+    async fn claim_special_victory(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        idempotency_key: Option<String>,
+    ) -> Result<ClaimSpecialOutcome, GameError> {
+        let idem_redis_key = idempotency_key
+            .as_ref()
+            .map(|k| format!("idem:claim:{}:{}", game_id, k));
+
+        let mut idem_guard =
+            if let (Some(idem_key), Some(redis)) = (&idem_redis_key, self.redis_client()) {
+                let mut guard = IdempotencyGuard::new(redis, idem_key.clone());
+                match guard.acquire::<ClaimSpecialOutcome>().await? {
+                    Some(cached) => return Ok(cached),
+                    None => Some(guard),
+                }
+            } else {
+                None
+            };
+
+        let outcome = match self.claim_special_victory(game_id, player_id).await {
+            Ok(result) => ClaimSpecialOutcome {
+                success: true,
+                winner_id: result.winner_id,
+                winner_position: result.winner_position,
+            },
+            Err(e) => {
+                if let Some(ref mut g) = idem_guard {
+                    g.release().await;
+                }
+                return Err(e);
+            }
+        };
+
+        if let Some(ref mut g) = idem_guard {
+            g.complete(&outcome).await;
+        }
+
+        Ok(outcome)
+    }
+
+    async fn decline_special_claim(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+    ) -> Result<bool, GameError> {
+        self.decline_special_claim(game_id, player_id).await
     }
 }
 

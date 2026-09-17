@@ -35,6 +35,9 @@ pub mod game {
         pub step_by_step: bool,
         #[sea_orm(column_type = "JsonBinary")]
         pub kicked_players: Value,
+        /// Player id currently offered the special-card claim, while set no card
+        /// may be played. Cleared once the player claims or declines.
+        pub pending_claim_player_id: Option<Uuid>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

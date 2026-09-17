@@ -11,6 +11,19 @@ export interface Player {
   is_current_user?: boolean;
 }
 
+export interface SpecialCards {
+  check_triple_seven: boolean;
+  check_sum_value_under_21: boolean;
+  check_a_square: boolean;
+}
+
+export type SpecialSetKey = keyof SpecialCards;
+
+export interface ClaimOffer {
+  playerId: string;
+  specialCards: SpecialCards;
+}
+
 export interface RoundWinner {
   playerId: string | null;
   position: number | null;
@@ -48,6 +61,9 @@ export interface GameState {
   pendingGameOver: GameOverData | null;
   stepByStep: boolean;
   gameMode: 'solo' | 'multiplayer' | null;
+  claimOffered: ClaimOffer | null;
+  claimPending: boolean;
+  revealedHand: { playerId: string; cards: number[] } | null;
   pendingBotMoves: QueuedBotEvent[];
   isReplayingBots: boolean;
   isSnapshotReplaying: boolean;
@@ -71,6 +87,9 @@ export interface GameState {
   applyCardPlayed: (playerId: string, cardIndex: number, nextTurn?: string) => void;
   setStepByStep: (active: boolean) => void;
   setGameMode: (mode: 'solo' | 'multiplayer') => void;
+  setClaimOffered: (offer: ClaimOffer | null) => void;
+  setClaimPending: (pending: boolean) => void;
+  setRevealedHand: (hand: { playerId: string; cards: number[] } | null) => void;
   addPendingEvent: (event: QueuedBotEvent) => void;
   clearPendingEvents: () => void;
   startBotReplay: (botDelayMs: number, roundPauseMs: number) => void;
@@ -93,6 +112,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   pendingGameOver: null,
   stepByStep: false,
   gameMode: null,
+  claimOffered: null,
+  claimPending: false,
+  revealedHand: null,
   pendingBotMoves: [],
   isReplayingBots: false,
   isSnapshotReplaying: false,
@@ -132,8 +154,17 @@ export const useGameStore = create<GameState>((set, get) => ({
     const sameRemaining = playersWithDisplay.every(
       (p) => remainingCards[p.id] === state.remainingCards[p.id]
     );
+    // Compare seat rotation too: a re-rotated snapshot (display_position) must
+    // be applied, otherwise the "self at position 0" invariant can go stale.
+    const samePositions = playersWithDisplay.length === state.players.length
+      && playersWithDisplay.every((p) => {
+        const existing = state.players.find((ep) => ep.id === p.id);
+        if (!existing) return false;
+        return p.display_position === existing.display_position
+          && p.is_current_user === existing.is_current_user;
+      });
 
-    if (sameGameId && sameStatus && sameTurn && sameDecks && sameCards && sameRemaining) {
+    if (sameGameId && sameStatus && sameTurn && sameDecks && sameCards && sameRemaining && samePositions) {
       return;
     }
 
@@ -154,6 +185,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       stepByStep: false,
       pendingBotMoves: [],
       gameMode: null,
+      claimOffered: null,
+      claimPending: false,
+      revealedHand: null,
       isReplayingBots: false,
       isSnapshotReplaying: false,
       isBotChainActive: false,
@@ -228,6 +262,12 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({ stepByStep: active }),
   setGameMode: (mode) =>
     set({ gameMode: mode }),
+  setClaimOffered: (claimOffered) =>
+    set({ claimOffered }),
+  setClaimPending: (claimPending) =>
+    set({ claimPending }),
+  setRevealedHand: (revealedHand) =>
+    set({ revealedHand }),
   addPendingEvent: (event) =>
     set((state) => ({
       pendingBotMoves: [...state.pendingBotMoves, event],

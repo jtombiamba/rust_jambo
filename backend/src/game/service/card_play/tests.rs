@@ -34,6 +34,7 @@ fn make_test_game(id: Uuid) -> crate::database::models::game::Model {
         game_run_id: None,
         step_by_step: false,
         kicked_players: serde_json::json!([]),
+        pending_claim_player_id: None,
     }
 }
 

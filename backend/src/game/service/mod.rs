@@ -2,6 +2,7 @@ mod ai_task;
 mod benchmark;
 mod caching;
 pub(crate) mod card_play;
+mod claim;
 mod creation;
 pub(crate) mod credit;
 mod evaluation;
@@ -35,8 +36,8 @@ use crate::messaging::RedisClient;
 #[allow(unused_imports)]
 pub use types::{
     AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
-    BenchmarkPlayerOutcome, BenchmarkService, BotMoveOutcome, CardPlayResult, EvaluateRoundOutcome,
-    GameLifecycleService, GamePlayService, GameServiceTrait, InviteService,
+    BenchmarkPlayerOutcome, BenchmarkService, BotMoveOutcome, CardPlayResult, ClaimSpecialOutcome,
+    EvaluateRoundOutcome, GameLifecycleService, GamePlayService, GameServiceTrait, InviteService,
     MultiplayerCreationOutcome, MultiplayerGameOutcome, PlayCardOutcome, QuickGameOutcome,
     RoundEvaluationResult,
 };

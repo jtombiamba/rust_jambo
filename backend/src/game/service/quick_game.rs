@@ -136,6 +136,7 @@ impl GameService {
         let now = chrono::Utc::now();
         let initial_rank = rand::rng().random_range(0..4) as i32;
 
+        // TODO: should be in a repository
         let game_active = models::game::ActiveModel {
             id: Set(game_id),
             status: Set(GameStatus::Active),
@@ -158,6 +159,7 @@ impl GameService {
             game_run_id: ActiveValue::NotSet,
             step_by_step: Set(step_by_step),
             kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
         };
         models::game::Entity::insert(game_active).exec(txn).await?;
 
@@ -194,6 +196,7 @@ impl GameService {
             } else {
                 None
             };
+            // TODO: should be in a repository
             player_rows.push(models::player::ActiveModel {
                 id: Set(Uuid::now_v7()),
                 game_id: Set(game_id),
@@ -211,6 +214,7 @@ impl GameService {
             .exec(txn)
             .await?;
 
+        // TODO: should be in a repository
         let players = models::player::Entity::find()
             .filter(models::player::Column::GameId.eq(game_id))
             .order_by_asc(models::player::Column::Position)
@@ -219,6 +223,7 @@ impl GameService {
         let player_ids: Vec<Uuid> = players.iter().map(|p| p.id).collect();
 
         let card_assignments = distribute_cards(&player_ids);
+        // TODO: mechanism in the map should be in a repository
         let card_models: Vec<models::game_card::ActiveModel> = card_assignments
             .iter()
             .map(|&(player_id, card_index)| models::game_card::ActiveModel {

@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::database::models::RunStatus;
 use crate::game::service::types::{MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome};
+use crate::game::special_cards::SpecialCards;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct StartNextGameResponse {
@@ -167,6 +168,8 @@ pub struct QuickGameResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ws_token: Option<String>,
     pub step_by_step: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub special_cards: Option<SpecialCards>,
 }
 
 #[allow(dead_code)]
@@ -360,6 +363,7 @@ impl From<QuickGameOutcome> for QuickGameResponse {
             deck_slots: o.deck_slots.map(|v| v.into_iter().map(Some).collect()),
             ws_token: o.ws_token,
             step_by_step: o.step_by_step,
+            special_cards: None,
         }
     }
 }

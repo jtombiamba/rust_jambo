@@ -65,6 +65,10 @@ pub enum GameError {
     NotABot,
     #[error("A request with this idempotency key is already in progress")]
     IdempotencyConflict,
+    #[error("Special-card claim is not allowed for this player")]
+    SpecialClaimNotAllowed,
+    #[error("A special-card claim is pending; no card can be played")]
+    ClaimPending,
 }
 
 impl From<sea_orm::TransactionError<sea_orm::DbErr>> for GameError {
@@ -108,6 +112,8 @@ impl GameError {
             GameError::StepByStepOnly => "game:step_by_step_only",
             GameError::NotABot => "game:not_a_bot",
             GameError::IdempotencyConflict => "game:idempotency_conflict",
+            GameError::SpecialClaimNotAllowed => "game:special_claim_not_allowed",
+            GameError::ClaimPending => "game:claim_pending",
         }
     }
 }

@@ -2,13 +2,43 @@ use std::collections::HashMap;
 use tracing::{error, info};
 use uuid::Uuid;
 
-use crate::database::models::PlayerType;
+use crate::database::models::{GameMode, PlayerType};
 use crate::database::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 use crate::game::constants::CARDS_PER_PLAYER;
 use crate::game::service::{build_played_card_slots, compute_display_position};
+use crate::game::special_cards::{compute_special_cards, SpecialCards};
 
 use super::manager::WebSocketManager;
 use super::messages::{GameStatePlayer, OutgoingMessage};
+
+/// Compute the recipient's own special-card flags for a snapshot. Only
+/// multiplayer games have the claim mechanic, so solo games and spectators get
+/// `None`. Returns `None` on any error (the snapshot must never fail).
+async fn resolve_special_cards(
+    db: &sea_orm::DatabaseConnection,
+    game_model: &crate::database::models::game::Model,
+    player_id: Option<Uuid>,
+) -> Option<SpecialCards> {
+    if !matches!(game_model.game_mode, GameMode::Multiplayer) {
+        return None;
+    }
+    let player_id = player_id?;
+    let repo = GameCardRepository::new(db.clone());
+    match repo.list_by_player(player_id).await {
+        Ok(cards) => {
+            let hand: Vec<i32> = cards.iter().map(|c| c.card_index).collect();
+            Some(compute_special_cards(&hand))
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Failed to load hand for special cards (player {}): {}",
+                player_id,
+                e
+            );
+            None
+        }
+    }
+}
 
 pub(super) async fn send_game_state_snapshot(
     manager: &WebSocketManager,
@@ -115,6 +145,9 @@ pub(super) async fn send_game_state_snapshot(
         played_cards: played_cards.clone(),
         step_by_step: game_model.step_by_step,
         game_mode: game_model.game_mode.to_string(),
+        claim_pending: game_model.pending_claim_player_id.is_some(),
+        claim_offered_to_me: game_model.pending_claim_player_id == Some(player_id),
+        special_cards: resolve_special_cards(db, &game_model, Some(player_id)).await,
     };
 
     match serde_json::to_string(&snapshot) {
@@ -197,6 +230,7 @@ pub(super) async fn send_snapshots_to_all_players(
     };
 
     let connected: Vec<(Uuid, i32)> = manager.get_connected_player_info(game_id).await;
+    let claim_pending = game_model.pending_claim_player_id.is_some();
 
     for (player_id, player_position) in connected {
         let my_pos = player_position as usize;
@@ -233,6 +267,9 @@ pub(super) async fn send_snapshots_to_all_players(
             played_cards: played_cards.clone(),
             step_by_step: game_model.step_by_step,
             game_mode: game_model.game_mode.to_string(),
+            claim_pending,
+            claim_offered_to_me: game_model.pending_claim_player_id == Some(player_id),
+            special_cards: resolve_special_cards(db, &game_model, Some(player_id)).await,
         };
 
         match serde_json::to_string(&snapshot) {
@@ -360,6 +397,9 @@ pub(super) async fn send_spectator_snapshot(
         played_cards,
         step_by_step: game_model.step_by_step,
         game_mode: game_model.game_mode.to_string(),
+        claim_pending: game_model.pending_claim_player_id.is_some(),
+        claim_offered_to_me: false,
+        special_cards: None,
     };
 
     match serde_json::to_string(&snapshot) {

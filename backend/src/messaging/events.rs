@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::game::special_cards::SpecialCards;
+
 /// Events that can be published to Redis and forwarded to WebSocket clients.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -57,6 +59,7 @@ pub enum GameEvent {
         game_id: Uuid,
         player_id: Uuid,
         cards: Vec<i32>,
+        special_cards: SpecialCards,
     },
     GameStarted {
         game_id: Uuid,
@@ -96,6 +99,23 @@ pub enum GameEvent {
         game_id: Uuid,
         winner_id: Uuid,
         winner_name: String,
+    },
+    ClaimPending {
+        game_id: Uuid,
+    },
+    ClaimOffered {
+        game_id: Uuid,
+        player_id: Uuid,
+        special_cards: SpecialCards,
+    },
+    ClaimResolved {
+        game_id: Uuid,
+    },
+    SpecialClaim {
+        game_id: Uuid,
+        player_id: Uuid,
+        cards: Vec<i32>,
+        winner_position: i32,
     },
 }
 
@@ -216,6 +236,10 @@ impl GameEvent {
             | GameEvent::PlayerKicked { game_id, .. }
             | GameEvent::GameReshuffled { game_id, .. }
             | GameEvent::PlayerForfeitWin { game_id, .. } => format!("game:{}", game_id),
+            GameEvent::ClaimPending { game_id }
+            | GameEvent::ClaimResolved { game_id }
+            | GameEvent::SpecialClaim { game_id, .. }
+            | GameEvent::ClaimOffered { game_id, .. } => format!("game:{}", game_id),
         }
     }
 

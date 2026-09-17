@@ -56,4 +56,25 @@ describe('useInvitationStore', () => {
     useInvitationStore.getState().clear();
     expect(useInvitationStore.getState().invitations).toEqual([]);
   });
+
+  it('seedInvitations adds items not already present', () => {
+    useInvitationStore.getState().seedInvitations([makeInvitation()]);
+    useInvitationStore.getState().seedInvitations([
+      makeInvitation({ invite_id: 'inv-2', game_id: 'game-2' }),
+    ]);
+    expect(useInvitationStore.getState().invitations).toHaveLength(2);
+  });
+
+  it('seedInvitations does not remove socket-pushed invitations', () => {
+    // A WS push arrives first, then a stale server seed (empty list) resolves.
+    useInvitationStore.getState().addInvitation(makeInvitation());
+    useInvitationStore.getState().seedInvitations([]);
+    expect(useInvitationStore.getState().invitations).toHaveLength(1);
+  });
+
+  it('seedInvitations deduplicates by invite_id', () => {
+    useInvitationStore.getState().addInvitation(makeInvitation());
+    useInvitationStore.getState().seedInvitations([makeInvitation()]);
+    expect(useInvitationStore.getState().invitations).toHaveLength(1);
+  });
 });

@@ -148,7 +148,16 @@
     "allCardsPlayed": "All cards played! Evaluate the round.",
     "copyStreamUrl": "Copy Stream URL",
     "streamUrlCopied": "Stream URL copied to clipboard",
-    "streamUrlFailed": "Could not generate stream URL"
+    "streamUrlFailed": "Could not generate stream URL",
+    "specialTripleSeven": "Triple Seven",
+    "specialSumUnder21": "Sum Under 21",
+    "specialSquare": "Square",
+    "claimSet": "special combination",
+    "claimTitle": "Special Cards!",
+    "claimDescription": "You hold a {set}. Claim victory now, or continue the game.",
+    "claimVictory": "Claim Victory",
+    "claimContinue": "Continue",
+    "claimWaiting": "Waiting for a special-card decision..."
   },
   "lobby": {
     "gameLobby": "Game Lobby",

@@ -22,6 +22,19 @@ async fn add_player_connection(
     rx
 }
 
+/// Add a connection without any player identity (simulates a lobby member whose
+/// `join_game` identity has not yet been registered).
+async fn add_unidentified_connection(
+    manager: &WebSocketManager,
+    game_id: Uuid,
+) -> mpsc::UnboundedReceiver<String> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    manager
+        .add_connection(game_id, tx, CorrelationId::default())
+        .await;
+    rx
+}
+
 fn make_game_started_players(num: usize) -> Vec<GameStartedPlayer> {
     (0..num)
         .map(|i| GameStartedPlayer {
@@ -80,6 +93,11 @@ async fn test_route_event_sends_cards_dealt_to_target_player() {
         game_id,
         player_id: target_player,
         cards: vec![1, 2, 3, 4, 5],
+        special_cards: crate::game::special_cards::SpecialCards {
+            check_triple_seven: false,
+            check_sum_value_under_21: false,
+            check_a_square: false,
+        },
     };
     manager.route_event(game_id, event).await;
 
@@ -142,6 +160,40 @@ async fn test_send_game_started_per_player_rotates_display_positions() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn test_send_game_started_per_player_delivers_to_unidentified_connection() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+    let players = make_game_started_players(2);
+
+    let mut identified_rx = add_player_connection(&manager, game_id, players[0].id, 0).await;
+    let mut unidentified_rx = add_unidentified_connection(&manager, game_id).await;
+
+    let current_turn = players[0].id;
+    let event = GameEvent::GameStarted {
+        game_id,
+        players: players.clone(),
+        current_turn,
+        game_mode: "multiplayer".to_string(),
+        correlation_id: None,
+    };
+    manager.send_game_started_per_player(game_id, &event).await;
+
+    let identified_events = drain_receiver(&mut identified_rx);
+    let unidentified_events = drain_receiver(&mut unidentified_rx);
+
+    // The identified player receives exactly one personalized event.
+    assert_eq!(identified_events.len(), 1);
+    let identified_parsed: serde_json::Value = serde_json::from_str(&identified_events[0]).unwrap();
+    assert_eq!(identified_parsed["type"], "game_started");
+
+    // The unidentified connection also receives a (non-rotated) game_started.
+    assert_eq!(unidentified_events.len(), 1);
+    let unidentified_parsed: serde_json::Value =
+        serde_json::from_str(&unidentified_events[0]).unwrap();
+    assert_eq!(unidentified_parsed["type"], "game_started");
 }
 
 #[tokio::test]

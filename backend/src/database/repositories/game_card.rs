@@ -84,6 +84,19 @@ impl GameCardRepository {
             .await
     }
 
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn list_by_player_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        player_id: Uuid,
+    ) -> Result<Vec<GameCard>, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::PlayerId.eq(player_id))
+            .order_by_asc(game_card::Column::CardIndex)
+            .all(txn)
+            .await
+    }
+
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
     pub async fn list_by_game_and_round(
         &self,

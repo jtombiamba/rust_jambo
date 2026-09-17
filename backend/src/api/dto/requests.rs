@@ -18,6 +18,11 @@ impl PlayCardRequest {
     }
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ClaimSpecialRequest {
+    pub player_id: Uuid,
+}
+
 fn default_max_players() -> i16 {
     4
 }

@@ -64,6 +64,17 @@ describe('useGameStore', () => {
       const state = useGameStore.getState();
       expect(state.deckSlots).toEqual([null, null]);
     });
+
+    it('applies a re-rotated snapshot that only changes display_position', () => {
+      const players = [makePlayer('a', 0, 1), makePlayer('b', 1, 0)];
+      useGameStore.getState().setGame('g1', players, 'active', 0, 10);
+      expect(useGameStore.getState().players.find((p) => p.id === 'a')?.display_position).toBe(1);
+
+      // Same cards/status/turn/decks, but a different seat rotation.
+      const rotated = [makePlayer('a', 0, 0), makePlayer('b', 1, 1)];
+      useGameStore.getState().setGame('g1', rotated, 'active', 0, 10);
+      expect(useGameStore.getState().players.find((p) => p.id === 'a')?.display_position).toBe(0);
+    });
   });
 
   describe('clearDeckSlots', () => {
@@ -355,6 +366,41 @@ describe('useGameStore', () => {
       const state = useGameStore.getState();
       expect(state.pendingGameOver).toBeNull();
       expect(state.gameOver?.isGameOver).toBe(true);
+    });
+  });
+
+  describe('special claim state', () => {
+    it('setClaimOffered stores the offer', () => {
+      const specialCards = { check_triple_seven: true, check_sum_value_under_21: false, check_a_square: false };
+      useGameStore.getState().setClaimOffered({ playerId: 'a', specialCards });
+      expect(useGameStore.getState().claimOffered).toEqual({ playerId: 'a', specialCards });
+    });
+
+    it('setClaimPending toggles the waiting flag', () => {
+      expect(useGameStore.getState().claimPending).toBe(false);
+      useGameStore.getState().setClaimPending(true);
+      expect(useGameStore.getState().claimPending).toBe(true);
+      useGameStore.getState().setClaimPending(false);
+      expect(useGameStore.getState().claimPending).toBe(false);
+    });
+
+    it('setRevealedHand stores the revealed hand', () => {
+      useGameStore.getState().setRevealedHand({ playerId: 'b', cards: [4, 12, 20] });
+      expect(useGameStore.getState().revealedHand).toEqual({ playerId: 'b', cards: [4, 12, 20] });
+    });
+
+    it('resetGame clears claim offer, pending flag, and revealed hand', () => {
+      const specialCards = { check_triple_seven: false, check_sum_value_under_21: true, check_a_square: false };
+      useGameStore.getState().setClaimOffered({ playerId: 'a', specialCards });
+      useGameStore.getState().setClaimPending(true);
+      useGameStore.getState().setRevealedHand({ playerId: 'a', cards: [0, 8, 16] });
+
+      useGameStore.getState().resetGame();
+
+      const state = useGameStore.getState();
+      expect(state.claimOffered).toBeNull();
+      expect(state.claimPending).toBe(false);
+      expect(state.revealedHand).toBeNull();
     });
   });
 

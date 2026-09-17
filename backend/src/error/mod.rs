@@ -128,6 +128,7 @@ fn game_error_status_code(e: &GameError) -> StatusCode {
         | GameError::InvalidCard
         | GameError::NotCreator
         | GameError::NotInvited => StatusCode::FORBIDDEN,
+        GameError::SpecialClaimNotAllowed => StatusCode::FORBIDDEN,
         GameError::AccountFrozen { .. } => StatusCode::FORBIDDEN,
         GameError::GameFinished
         | GameError::GameNotPending
@@ -135,6 +136,7 @@ fn game_error_status_code(e: &GameError) -> StatusCode {
         | GameError::GameFull
         | GameError::CreatorCannotJoin
         | GameError::GameNotReady => StatusCode::CONFLICT,
+        GameError::ClaimPending => StatusCode::CONFLICT,
         // GameError::RoundNotComplete | GameError::InviteExpired | GameError::StepByStepOnly | GameError::NotABot => StatusCode::BAD_REQUEST,
         GameError::RoundNotComplete | GameError::StepByStepOnly | GameError::NotABot => {
             StatusCode::BAD_REQUEST

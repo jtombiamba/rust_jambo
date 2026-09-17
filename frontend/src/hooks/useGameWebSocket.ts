@@ -16,6 +16,9 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
     setGameOver,
     setPendingGameOver,
     updatePlayerCards,
+    setClaimOffered,
+    setClaimPending,
+    setRevealedHand,
     players,
     bet,
     addPendingEvent,
@@ -215,6 +218,37 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
           }
           break;
         }
+        case 'claim_pending': {
+          setClaimPending(true);
+          break;
+        }
+        case 'claim_offered': {
+          const humanPlayer = players.find((p) => p.type === 'human');
+          if (humanPlayer && event.player_id === humanPlayer.id) {
+            setClaimOffered({
+              playerId: event.player_id,
+              specialCards: event.special_cards,
+            });
+          }
+          break;
+        }
+        case 'claim_resolved': {
+          setClaimPending(false);
+          setClaimOffered(null);
+          break;
+        }
+        case 'special_claim': {
+          const winnerPlayer = players.find((p) => p.id === event.player_id);
+          setRevealedHand({ playerId: event.player_id, cards: event.cards });
+          setClaimOffered(null);
+          setClaimPending(false);
+          setRoundWinner({
+            playerId: event.player_id,
+            position: winnerPlayer?.display_position ?? event.winner_position,
+            winType: 'normal',
+          });
+          break;
+        }
         case 'game_state_snapshot': {
           cancelBotReplay();
           const store = useGameStore.getState();
@@ -277,6 +311,16 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
             store.setGameMode(event.game_mode as 'solo' | 'multiplayer');
           }
           clearRoundWinner();
+
+          // Restore the special-card claim state from the snapshot (e.g. after a
+          // reconnect). `claim_offered_to_me` is true only for the askee, and the
+          // snapshot's `special_cards` carries their own private flags.
+          if (event.claim_pending) {
+            setClaimPending(true);
+          }
+          if (event.claim_offered_to_me && event.special_cards && human) {
+            setClaimOffered({ playerId: human.id, specialCards: event.special_cards });
+          }
 
           if (shouldReplaySnapshot) {
             if (isConnectedRef.current) {

@@ -186,6 +186,10 @@ impl WebSocketManager {
                 self.send_to_player(game_id, *player_id, &event.to_json())
                     .await;
             }
+            GameEvent::ClaimOffered { player_id, .. } => {
+                self.send_to_player(game_id, *player_id, &event.to_json())
+                    .await;
+            }
             GameEvent::GameStarted { .. } => {
                 self.send_game_started_per_player(game_id, &event).await;
             }
@@ -202,6 +206,27 @@ impl WebSocketManager {
             }
             _ => {
                 self.broadcast_to_game(game_id, &event.to_json()).await;
+            }
+        }
+    }
+
+    /// Send a message to connections of a game that have not yet registered a
+    /// player identity. Used as a fallback so lobby members who joined before
+    /// their player id arrived still receive game-scoped broadcasts.
+    pub async fn send_to_unidentified(&self, game_id: Uuid, message: &str) {
+        let inner = self.inner.read().await;
+        if let Some(connections) = inner.connections.get(&game_id) {
+            for connection in connections {
+                if connection.player_id.is_none() {
+                    crate::observability::metrics::WS_MESSAGES_SENT_TOTAL.inc();
+                    if let Err(e) = connection.sender.send(message.to_string()) {
+                        tracing::debug!(
+                            "Failed to send message to unidentified connection {}: {}",
+                            connection.id.uuid(),
+                            e
+                        );
+                    }
+                }
             }
         }
     }
@@ -253,6 +278,13 @@ impl WebSocketManager {
             self.send_to_player(game_id, player.id, &personalized.to_json())
                 .await;
         }
+
+        // Fallback: connections that have not yet registered their player
+        // identity (e.g. a lobby member whose join_game identity arrived late)
+        // still need to learn the game started so they can leave the lobby. They
+        // receive the non-rotated event; the personalized game_state_snapshot
+        // corrects seat positions once they re-join with identity.
+        self.send_to_unidentified(game_id, &event.to_json()).await;
 
         // Spectators get the public (non-rotated) game_started.
         self.send_to_spectators(game_id, &event.to_json()).await;

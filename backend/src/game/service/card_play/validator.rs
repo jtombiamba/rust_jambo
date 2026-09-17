@@ -18,6 +18,9 @@ pub(crate) async fn fetch_and_validate_game(
     ) {
         return Err(GameError::GameFinished);
     }
+    if game.pending_claim_player_id.is_some() {
+        return Err(GameError::ClaimPending);
+    }
     Ok(game)
 }
 

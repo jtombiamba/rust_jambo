@@ -6,8 +6,9 @@ use uuid::Uuid;
 use crate::error::GameError;
 use crate::game::service::types::{
     AcceptInviteOutcome, AdvanceBotOutcome, BenchmarkCleanupCounts, BenchmarkGameOutcome,
-    BenchmarkService, EvaluateRoundOutcome, GameLifecycleService, GamePlayService,
-    GameServiceTrait, InviteService, MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome,
+    BenchmarkService, ClaimSpecialOutcome, EvaluateRoundOutcome, GameLifecycleService,
+    GamePlayService, GameServiceTrait, InviteService, MultiplayerCreationOutcome, PlayCardOutcome,
+    QuickGameOutcome,
 };
 use crate::observability::CorrelationId;
 
@@ -126,6 +127,27 @@ impl GamePlayService for MockGameService {
         _game_id: Uuid,
         _player_id: Uuid,
         _user_id: Uuid,
+    ) -> Result<bool, GameError> {
+        Ok(true)
+    }
+
+    async fn claim_special_victory(
+        &self,
+        _game_id: Uuid,
+        _player_id: Uuid,
+        _idempotency_key: Option<String>,
+    ) -> Result<ClaimSpecialOutcome, GameError> {
+        Ok(ClaimSpecialOutcome {
+            success: true,
+            winner_id: Uuid::new_v4(),
+            winner_position: 0,
+        })
+    }
+
+    async fn decline_special_claim(
+        &self,
+        _game_id: Uuid,
+        _player_id: Uuid,
     ) -> Result<bool, GameError> {
         Ok(true)
     }

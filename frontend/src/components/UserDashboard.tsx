@@ -167,12 +167,10 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     Promise.all([
       axios.get<ProfileData>('/api/me/profile'),
       axios.get<GameHistoryData>('/api/me/games', { params }),
-      axios.get<{ invitations: InvitationItem[] }>('/api/me/invitations'),
     ])
-      .then(([profileRes, historyRes, invRes]) => {
+      .then(([profileRes, historyRes]) => {
         setProfile(profileRes.data)
         setHistory(historyRes.data)
-        useInvitationStore.getState().setInvitations(invRes.data.invitations)
         if (profileRes.data.frozen_until) {
           const frozenUntil = new Date(profileRes.data.frozen_until).getTime()
           const now = Date.now()
@@ -192,6 +190,20 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Seed invitations once from the server, then let the user WebSocket
+  // (useUserWebSocket) own subsequent add/remove. The seed is a union merge so
+  // a stale server response can never drop an invite pushed over the socket.
+  useEffect(() => {
+    axios
+      .get<{ invitations: InvitationItem[] }>('/api/me/invitations')
+      .then((res) => {
+        useInvitationStore.getState().seedInvitations(res.data.invitations)
+      })
+      .catch((err) => {
+        console.error('Failed to load invitations', err)
+      })
+  }, [])
 
   useEffect(() => {
     setPage(1)

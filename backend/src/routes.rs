@@ -4,7 +4,7 @@ use utoipa::OpenApi;
 
 use crate::api::anonymous::get_anonymous_stats;
 use crate::api::fallback;
-use crate::api::game::{advance_bot, evaluate_round, play_card};
+use crate::api::game::{advance_bot, claim_special, decline_special, evaluate_round, play_card};
 use crate::api::middleware::rate_limiter::RateLimiterMiddleware;
 use crate::api::quickie::create_quick_game;
 use crate::api::room;
@@ -75,6 +75,8 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                 .service(play_card)
                 .service(web::resource("/game/{id}/advance-bot").to(advance_bot))
                 .service(web::resource("/game/{id}/evaluate-round").to(evaluate_round))
+                .service(web::resource("/game/{id}/claim-special").to(claim_special))
+                .service(web::resource("/game/{id}/decline-special").to(decline_special))
                 .route(
                     "/lang",
                     web::post().to(crate::i18n::lang_endpoint::set_language),

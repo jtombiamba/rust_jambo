@@ -46,6 +46,7 @@ impl GameRepository {
             game_run_id: ActiveValue::NotSet,
             step_by_step: Set(step_by_step),
             kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
         };
         let insert_result = game::Entity::insert(game_active)
             .exec(&self.connection)
@@ -91,6 +92,7 @@ impl GameRepository {
             game_run_id: ActiveValue::NotSet,
             step_by_step: Set(false),
             kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
         };
         let insert_result = game::Entity::insert(game_active)
             .exec(&self.connection)
@@ -137,6 +139,7 @@ impl GameRepository {
             game_run_id: ActiveValue::NotSet,
             step_by_step: Set(false),
             kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
         };
         let insert_result = game::Entity::insert(game_active)
             .exec(&self.connection)
@@ -278,6 +281,7 @@ impl GameRepository {
             game_run_id: Set(Some(run_id)),
             step_by_step: Set(false),
             kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
         })
         .exec(txn)
         .await?;
@@ -319,10 +323,83 @@ impl GameRepository {
             game_run_id: ActiveValue::NotSet,
             step_by_step: Set(false),
             kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
         })
         .exec_without_returning(txn)
         .await?;
         Ok(())
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn find_by_id_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        id: Uuid,
+    ) -> Result<Option<Game>, DbErr> {
+        game::Entity::find_by_id(id).one(txn).await
+    }
+
+    /// Atomically finish a game as the result of a special-card claim. The
+    /// compare-and-set on `status = active` is the concurrency guard: only one
+    /// claim can win, a concurrent finish affects 0 rows.
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn finish_by_claim_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        winner_id: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, DbErr> {
+        let result = game::Entity::update_many()
+            .col_expr(
+                game::Column::Status,
+                Expr::cust_with_values(
+                    "$1::game_status",
+                    [Value::String(Some(GameStatus::Finished.to_string()))],
+                ),
+            )
+            .col_expr(
+                game::Column::WinnerId,
+                Expr::value(Value::Uuid(Some(winner_id))),
+            )
+            .col_expr(
+                game::Column::FinishedAt,
+                Expr::value(Value::ChronoDateTimeUtc(Some(now))),
+            )
+            .col_expr(
+                game::Column::UpdatedAt,
+                Expr::value(Value::ChronoDateTimeUtc(Some(now))),
+            )
+            .col_expr(
+                game::Column::PendingClaimPlayerId,
+                Expr::value(Value::Uuid(None)),
+            )
+            .filter(game::Column::Id.eq(game_id))
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .exec(txn)
+            .await?;
+        Ok(result.rows_affected)
+    }
+
+    /// Clear the pending special-card claim for `player_id`. Returns the number
+    /// of affected rows (0 when the claim was already resolved by someone else).
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn clear_pending_claim_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        player_id: Uuid,
+    ) -> Result<u64, DbErr> {
+        let result = game::Entity::update_many()
+            .col_expr(
+                game::Column::PendingClaimPlayerId,
+                Expr::value(Value::Uuid(None)),
+            )
+            .filter(game::Column::Id.eq(game_id))
+            .filter(game::Column::PendingClaimPlayerId.eq(player_id))
+            .exec(txn)
+            .await?;
+        Ok(result.rows_affected)
     }
 }
 

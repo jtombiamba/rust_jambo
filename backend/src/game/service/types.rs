@@ -162,6 +162,13 @@ pub struct PlayCardOutcome {
     pub current_round: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct ClaimSpecialOutcome {
+    pub success: bool,
+    pub winner_id: Uuid,
+    pub winner_position: i32,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EvaluateRoundOutcome {
     pub round_number: i32,
@@ -234,6 +241,19 @@ pub trait GamePlayService: Send + Sync {
         game_id: Uuid,
         player_id: Uuid,
         user_id: Uuid,
+    ) -> Result<bool, crate::error::GameError>;
+
+    async fn claim_special_victory(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        idempotency_key: Option<String>,
+    ) -> Result<ClaimSpecialOutcome, crate::error::GameError>;
+
+    async fn decline_special_claim(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
     ) -> Result<bool, crate::error::GameError>;
 }
 

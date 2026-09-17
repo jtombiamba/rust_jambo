@@ -14,6 +14,7 @@ export interface InvitationItem {
 interface InvitationState {
   invitations: InvitationItem[]
   setInvitations: (invitations: InvitationItem[]) => void
+  seedInvitations: (invitations: InvitationItem[]) => void
   addInvitation: (invitation: InvitationItem) => void
   removeInvitation: (gameId: string) => void
   clear: () => void
@@ -22,6 +23,15 @@ interface InvitationState {
 export const useInvitationStore = create<InvitationState>((set) => ({
   invitations: [],
   setInvitations: (invitations) => set({ invitations }),
+  seedInvitations: (invitations) =>
+    set((state) => {
+      const existingIds = new Set(state.invitations.map((inv) => inv.invite_id))
+      const additions = invitations.filter((inv) => !existingIds.has(inv.invite_id))
+      if (additions.length === 0) {
+        return state
+      }
+      return { invitations: [...state.invitations, ...additions] }
+    }),
   addInvitation: (invitation) =>
     set((state) => {
       if (state.invitations.some((inv) => inv.invite_id === invitation.invite_id)) {
