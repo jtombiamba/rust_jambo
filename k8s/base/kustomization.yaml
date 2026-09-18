@@ -19,6 +19,9 @@ resources:
   - promtail.yaml
   - tempo.yaml
   - grafana.yaml
+  - prometheus-rbac.yaml
+  - node-exporter.yaml
+  - kube-state-metrics.yaml
   - prometheus.yaml
   - monitoring-nginx.yaml
   - hpa.yaml
