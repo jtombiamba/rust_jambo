@@ -303,6 +303,26 @@ Frontend          Backend API        Orchestrator        GameService         Red
 | `round_evaluation.rs` | `evaluate_round()` — determines round winner, detects KORA |
 | `payment.rs` | `calculate_payment()` — computes bets, KORA multipliers, holds |
 
+#### Randomness & Card Dealing
+
+All randomness in the game engine is delegated to the [`rand`](https://crates.io/crates/rand) crate
+(v0.10) rather than hand‑rolled seeding. There is **no `srand()`/seed parameter** — this is deliberate:
+
+- **Source**: `rand::rng()` returns the thread‑local CSPRNG (ChaCha12), which is automatically
+  seeded from the OS entropy source (`getrandom`, i.e. `/dev/urandom` / `RDRAND` / syscalls).
+  No explicit seed is supplied anywhere in the codebase.
+- **Card dealing**: `distribution.rs` builds the 32 card indices, then applies a Fisher–Yates
+  shuffle via `cards.shuffle(&mut rng)` (`SliceRandom`). This is unbiased and guarantees a uniform
+  random permutation, from which each of the 4 players is dealt 5 cards.
+- **Turn selection**: `quick_game.rs` picks the opening player with
+  `rand::rng().random_range(0..4)`.
+- **Bot strategy selection**: `strategy.rs::StrategyChoice::random_high()` uses
+  `choices.choose(&mut rng)` (`IndexedRandom`) to pick among `LongUp`/`LongDown`/`MidUp`/`MidDown`.
+
+Using OS entropy (rather than a hand‑picked "big seed number") is *stronger*: the seed is
+cryptographically random per call, is not stored in code or config, and each invocation of
+`rand::rng()` draws fresh entropy without introducing predictable global state.
+
 ### 3.3 `src/websocket/` — Real‑Time Communication
 
 | Module | Role |

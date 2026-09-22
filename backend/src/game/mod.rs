@@ -8,6 +8,7 @@ pub mod payment;
 pub mod round_evaluation;
 pub mod service;
 pub mod special_cards;
+pub mod start_log;
 pub mod strategy;
 pub mod turn_order;
 pub mod worker_core;

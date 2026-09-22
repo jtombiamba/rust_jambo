@@ -32,7 +32,7 @@
       "id": 1,
       "options": {"legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "active_games", "legendFormat": "Active Games", "refId": "A"}
+        {"expr": "active_games{instance=\"backend:5000\"}", "legendFormat": "Active Games", "refId": "A"}
       ],
       "title": "Active Games",
       "type": "timeseries"
@@ -53,7 +53,7 @@
       "id": 2,
       "options": {"legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "rate(games_finished_total[5m])", "legendFormat": "{{status}}", "refId": "A"}
+        {"expr": "rate(games_finished_total{instance=\"backend:5000\"}[5m])", "legendFormat": "{{status}}", "refId": "A"}
       ],
       "title": "Games Finished / Min",
       "type": "timeseries"
@@ -74,7 +74,7 @@
       "id": 3,
       "options": {"legend": {"calcs": ["mean", "last"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "rate(games_stalled_total[5m])", "legendFormat": "Stalled Games", "refId": "A"}
+        {"expr": "rate(games_stalled_total{instance=\"backend:5000\"}[5m])", "legendFormat": "Stalled Games", "refId": "A"}
       ],
       "title": "Games Stalled / Min",
       "type": "timeseries"
@@ -401,9 +401,9 @@
       "id": 405,
       "options": {"legend": {"calcs": ["mean", "p95", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket[5m]))", "legendFormat": "p50 {{method}} {{path}}", "refId": "A"},
-        {"expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))", "legendFormat": "p95 {{method}} {{path}}", "refId": "B"},
-        {"expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))", "legendFormat": "p99 {{method}} {{path}}", "refId": "C"}
+        {"expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{instance=\"backend:5000\"}[5m]))", "legendFormat": "p50 {{method}} {{path}}", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{instance=\"backend:5000\"}[5m]))", "legendFormat": "p95 {{method}} {{path}}", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{instance=\"backend:5000\"}[5m]))", "legendFormat": "p99 {{method}} {{path}}", "refId": "C"}
       ],
       "title": "HTTP Request Duration",
       "type": "timeseries"
