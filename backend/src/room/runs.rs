@@ -97,6 +97,10 @@ impl RoomService {
                 }
             }
 
+            if profile.cashout_locked {
+                return Err(RoomServiceError::CashoutLocked);
+            }
+
             if profile.credit < required_credit {
                 return Err(RoomServiceError::InsufficientCredits {
                     required: required_credit,
@@ -237,6 +241,10 @@ impl RoomService {
             if frozen_until > chrono::Utc::now() {
                 return Err(RoomServiceError::AccountFrozen);
             }
+        }
+
+        if profile.cashout_locked {
+            return Err(RoomServiceError::CashoutLocked);
         }
 
         if profile.credit < required_credit {

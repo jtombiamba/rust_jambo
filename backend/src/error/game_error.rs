@@ -53,6 +53,8 @@ pub enum GameError {
     GameNotReady,
     #[error("Account is frozen until {until}")]
     AccountFrozen { until: String },
+    #[error("Account is locked pending a cashout request")]
+    CashoutLocked,
     #[error("Optimistic lock conflict: game state was modified concurrently")]
     VersionConflict,
     #[error("{0}")]
@@ -106,6 +108,7 @@ impl GameError {
             GameError::CreatorCannotJoin => "game:creator_cannot_join",
             GameError::GameNotReady => "game:game_not_ready",
             GameError::AccountFrozen { .. } => "game:account_frozen",
+            GameError::CashoutLocked => "game:cashout_locked",
             GameError::VersionConflict => "game:version_conflict",
             GameError::Internal(_) => "game:internal",
             GameError::ProfileNotFound => "game:profile_not_found",

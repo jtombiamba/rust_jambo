@@ -521,6 +521,7 @@ mod tests {
             country_code: None,
             city: None,
             frozen_until: None,
+            cashout_locked: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

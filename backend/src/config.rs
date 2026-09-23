@@ -50,8 +50,8 @@ pub struct Config {
     pub paypal_sandbox_url: String,
     pub paypal_live_url: String,
     pub paypal_donate_url: String,
-    pub topup_credit_threshold: i32,
     pub topup_credit_amount: i32,
+    pub topup_monthly_limit_eur_cents: i32,
     pub benchmark_api_token: String,
     pub rate_limit_default_max_requests: u64,
     pub rate_limit_default_window_seconds: u64,
@@ -79,6 +79,12 @@ pub struct Config {
     pub scheduler_task_max_restarts: u32,
     pub run_completion_max_retries: u32,
     pub redis_subscriber_retry_max_delay_secs: u64,
+    pub cashout_enabled: bool,
+    pub cashout_credits_per_eur: i32,
+    pub cashout_min_credits: i32,
+    pub cashout_max_eur_cents: i32,
+    pub cashout_admin_email: String,
+    pub cashout_auto_reject_after_secs: u64,
 }
 
 impl std::fmt::Debug for Config {
@@ -174,8 +180,11 @@ impl std::fmt::Debug for Config {
             .field("paypal_topup_amount_eur", &self.paypal_topup_amount_eur)
             .field("paypal_sandbox_url", &self.paypal_sandbox_url)
             .field("paypal_live_url", &self.paypal_live_url)
-            .field("topup_credit_threshold", &self.topup_credit_threshold)
             .field("topup_credit_amount", &self.topup_credit_amount)
+            .field(
+                "topup_monthly_limit_eur_cents",
+                &self.topup_monthly_limit_eur_cents,
+            )
             .field("benchmark_api_token", &"***")
             .field(
                 "rate_limit_default_max_requests",
@@ -269,6 +278,15 @@ impl std::fmt::Debug for Config {
                 "redis_subscriber_retry_max_delay_secs",
                 &self.redis_subscriber_retry_max_delay_secs,
             )
+            .field("cashout_enabled", &self.cashout_enabled)
+            .field("cashout_credits_per_eur", &self.cashout_credits_per_eur)
+            .field("cashout_min_credits", &self.cashout_min_credits)
+            .field("cashout_max_eur_cents", &self.cashout_max_eur_cents)
+            .field("cashout_admin_email", &self.cashout_admin_email)
+            .field(
+                "cashout_auto_reject_after_secs",
+                &self.cashout_auto_reject_after_secs,
+            )
             .finish()
     }
 }
@@ -312,9 +330,9 @@ impl Config {
             .set_default("benchmark_bot_delay_ms", "100")?
             .set_default("benchmark_skip_credit_check", "true")?
             .set_default("freeze_duration_secs", "86400")?
-            .set_default("default_credit", "500")?
-            .set_default("unfreeze_credit_no_payment", "250")?
-            .set_default("unfreeze_credit_with_payment", "500")?
+            .set_default("default_credit", "100")?
+            .set_default("unfreeze_credit_no_payment", "50")?
+            .set_default("unfreeze_credit_with_payment", "250")?
             .set_default("paypal_client_id", "")?
             .set_default("paypal_client_secret", "")?
             .set_default("paypal_mode", "sandbox")?
@@ -323,8 +341,8 @@ impl Config {
             .set_default("paypal_sandbox_url", "https://api-m.sandbox.paypal.com")?
             .set_default("paypal_live_url", "https://api-m.paypal.com")?
             .set_default("paypal_donate_url", "https://www.paypal.me/jtombi")?
-            .set_default("topup_credit_threshold", "50")?
-            .set_default("topup_credit_amount", "500")?
+            .set_default("topup_credit_amount", "250")?
+            .set_default("topup_monthly_limit_eur_cents", "10000")?
             .set_default("benchmark_api_token", "")?
             .set_default("cors_allowed_origins", "http://localhost:5173")?
             .set_default("cors_max_age", "3600")?
@@ -356,6 +374,12 @@ impl Config {
             .set_default("scheduler_task_max_restarts", "3")?
             .set_default("run_completion_max_retries", "3")?
             .set_default("redis_subscriber_retry_max_delay_secs", "30")?
+            .set_default("cashout_enabled", "false")?
+            .set_default("cashout_credits_per_eur", "250")?
+            .set_default("cashout_min_credits", "250")?
+            .set_default("cashout_max_eur_cents", "2000")?
+            .set_default("cashout_admin_email", "")?
+            .set_default("cashout_auto_reject_after_secs", "86400")?
             .add_source(Environment::default())
             .build()?;
 
@@ -503,17 +527,17 @@ impl Config {
                 .parse()
                 .unwrap_or(86400),
             default_credit: env::var("DEFAULT_CREDIT")
-                .unwrap_or_else(|_| "500".to_string())
+                .unwrap_or_else(|_| "100".to_string())
                 .parse()
-                .unwrap_or(500),
+                .unwrap_or(100),
             unfreeze_credit_no_payment: env::var("UNFREEZE_CREDIT_NO_PAYMENT")
+                .unwrap_or_else(|_| "50".to_string())
+                .parse()
+                .unwrap_or(50),
+            unfreeze_credit_with_payment: env::var("UNFREEZE_CREDIT_WITH_PAYMENT")
                 .unwrap_or_else(|_| "250".to_string())
                 .parse()
                 .unwrap_or(250),
-            unfreeze_credit_with_payment: env::var("UNFREEZE_CREDIT_WITH_PAYMENT")
-                .unwrap_or_else(|_| "500".to_string())
-                .parse()
-                .unwrap_or(500),
             paypal_client_id: env::var("PAYPAL_CLIENT_ID").unwrap_or_default(),
             paypal_client_secret: env::var("PAYPAL_CLIENT_SECRET").unwrap_or_default(),
             paypal_mode: env::var("PAYPAL_MODE").unwrap_or_else(|_| "sandbox".to_string()),
@@ -527,14 +551,14 @@ impl Config {
                 .unwrap_or_else(|_| "https://api-m.paypal.com".to_string()),
             paypal_donate_url: env::var("PAYPAL_DONATE_URL")
                 .unwrap_or_else(|_| "https://www.paypal.me/jtombi".to_string()),
-            topup_credit_threshold: env::var("TOPUP_CREDIT_THRESHOLD")
-                .unwrap_or_else(|_| "50".to_string())
-                .parse()
-                .unwrap_or(50),
             topup_credit_amount: env::var("TOPUP_CREDIT_AMOUNT")
-                .unwrap_or_else(|_| "500".to_string())
+                .unwrap_or_else(|_| "250".to_string())
                 .parse()
-                .unwrap_or(500),
+                .unwrap_or(250),
+            topup_monthly_limit_eur_cents: env::var("TOPUP_MONTHLY_LIMIT_EUR_CENTS")
+                .unwrap_or_else(|_| "10000".to_string())
+                .parse()
+                .unwrap_or(10000),
             benchmark_api_token: env::var("BENCHMARK_API_TOKEN").unwrap_or_default(),
             cors_allowed_origins: env::var("CORS_ALLOWED_ORIGINS")
                 .unwrap_or_else(|_| "http://localhost:5173".to_string()),
@@ -658,6 +682,27 @@ impl Config {
             .unwrap_or_else(|_| "30".to_string())
             .parse()
             .unwrap_or(30),
+            cashout_enabled: env::var("CASHOUT_ENABLED")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            cashout_credits_per_eur: env::var("CASHOUT_CREDITS_PER_EUR")
+                .unwrap_or_else(|_| "250".to_string())
+                .parse()
+                .unwrap_or(250),
+            cashout_min_credits: env::var("CASHOUT_MIN_CREDITS")
+                .unwrap_or_else(|_| "250".to_string())
+                .parse()
+                .unwrap_or(250),
+            cashout_max_eur_cents: env::var("CASHOUT_MAX_EUR_CENTS")
+                .unwrap_or_else(|_| "2000".to_string())
+                .parse()
+                .unwrap_or(2000),
+            cashout_admin_email: env::var("CASHOUT_ADMIN_EMAIL").unwrap_or_default(),
+            cashout_auto_reject_after_secs: env::var("CASHOUT_AUTO_REJECT_AFTER_SECS")
+                .unwrap_or_else(|_| "86400".to_string())
+                .parse()
+                .unwrap_or(86400),
         }
     }
 }

@@ -5,9 +5,12 @@ use uuid::Uuid;
 
 use crate::api::dto::requests::CaptureOrderRequest;
 use crate::api::dto::responses::{ApiErrorResponse, TopupCaptureResponse, TopupOrderResponse};
+use crate::api::payment_limits::{current_month_start, monthly_limit_exceeded, parse_eur_to_cents};
 use crate::api::unfreeze::close_window_html;
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
+use crate::database::models::TopupTransactionKind;
+use crate::database::repositories::TopupTransactionRepository;
 use crate::error::AppError;
 use crate::messaging::RedisClient;
 use crate::observability::metrics::{PAYMENT_TOPUP_DURATION_SECONDS, PAYMENT_TOPUP_TOTAL};
@@ -56,14 +59,26 @@ pub async fn create_topup_order(
         }
     }
 
-    if profile.credit >= config.topup_credit_threshold {
-        return AppError::BadRequest("Credit is already sufficient, top up not needed".into())
-            .error_response();
-    }
-
     if profile.credit <= 0 {
         return AppError::BadRequest("Credit depleted, use unfreeze instead".into())
             .error_response();
+    }
+
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    let spent_cents = match topup_repo
+        .sum_amount_eur_cents_since(auth_user.user_id, current_month_start(chrono::Utc::now()))
+        .await
+    {
+        Ok(cents) => cents,
+        Err(e) => return AppError::Database(e).error_response(),
+    };
+    let upcoming_cents = parse_eur_to_cents(&config.paypal_topup_amount_eur);
+    if monthly_limit_exceeded(
+        spent_cents,
+        upcoming_cents,
+        config.topup_monthly_limit_eur_cents,
+    ) {
+        return AppError::BadRequest("Monthly top-up limit reached".into()).error_response();
     }
 
     let return_url = format!(
@@ -170,6 +185,7 @@ pub async fn capture_topup_order(
                     redis_opt.as_mut(),
                     &redis_key,
                     config.topup_credit_amount,
+                    parse_eur_to_cents(&config.paypal_topup_amount_eur),
                 )
                 .await;
             }
@@ -217,6 +233,7 @@ pub async fn capture_topup_order(
         redis_opt.as_mut(),
         &redis_key,
         config.topup_credit_amount,
+        parse_eur_to_cents(&config.paypal_topup_amount_eur),
     )
     .await
 }
@@ -315,6 +332,24 @@ pub async fn paypal_return_topup(
         _ => return close_window_html("Payment Error — profile not found"),
     };
 
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    if let Err(e) = topup_repo
+        .create(
+            user_id,
+            TopupTransactionKind::Topup,
+            parse_eur_to_cents(&config.paypal_topup_amount_eur),
+            config.topup_credit_amount,
+        )
+        .await
+    {
+        tracing::error!(
+            "Failed to record top-up transaction for user {} on return: {}",
+            user_id,
+            e
+        );
+        return close_window_html("Payment Complete — top up in progress (retry if needed)");
+    }
+
     let new_credit = profile.credit + config.topup_credit_amount;
 
     match profile_repo
@@ -351,6 +386,7 @@ async fn topup_user_and_finalize(
     redis_client: Option<&mut RedisClient>,
     redis_key: &str,
     credit_add: i32,
+    amount_eur_cents: i32,
 ) -> HttpResponse {
     let profile_repo =
         crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
@@ -361,6 +397,24 @@ async fn topup_user_and_finalize(
         }
         Err(e) => return AppError::Database(e).error_response(),
     };
+
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    if let Err(e) = topup_repo
+        .create(
+            user_id,
+            TopupTransactionKind::Topup,
+            amount_eur_cents,
+            credit_add,
+        )
+        .await
+    {
+        tracing::error!(
+            "Failed to record top-up transaction for user {}: {}",
+            user_id,
+            e
+        );
+        return AppError::Database(e).error_response();
+    }
 
     let new_credit = profile.credit + credit_add;
     match profile_repo

@@ -130,6 +130,7 @@ fn game_error_status_code(e: &GameError) -> StatusCode {
         | GameError::NotInvited => StatusCode::FORBIDDEN,
         GameError::SpecialClaimNotAllowed => StatusCode::FORBIDDEN,
         GameError::AccountFrozen { .. } => StatusCode::FORBIDDEN,
+        GameError::CashoutLocked => StatusCode::FORBIDDEN,
         GameError::GameFinished
         | GameError::GameNotPending
         | GameError::AlreadyJoined

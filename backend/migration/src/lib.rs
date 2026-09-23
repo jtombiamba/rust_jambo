@@ -14,6 +14,9 @@ mod m20260528_000001_fix_unique_index;
 mod m20260528_000002_run_stall_tracking;
 mod m20260707_000001_step_by_step;
 mod m20260916_000001_special_claim;
+mod m20260921_000001_admin_keys;
+mod m20260922_000001_cashout;
+mod m20260923_000001_topup_transactions;
 
 pub struct Migrator;
 
@@ -35,6 +38,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260528_000002_run_stall_tracking::Migration),
             Box::new(m20260707_000001_step_by_step::Migration),
             Box::new(m20260916_000001_special_claim::Migration),
+            Box::new(m20260921_000001_admin_keys::Migration),
+            Box::new(m20260922_000001_cashout::Migration),
+            Box::new(m20260923_000001_topup_transactions::Migration),
         ]
     }
 }

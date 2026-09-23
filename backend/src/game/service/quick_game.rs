@@ -50,6 +50,11 @@ impl GameService {
             }
         }
 
+        if profile.cashout_locked {
+            txn.rollback().await.ok();
+            return Err(GameError::CashoutLocked);
+        }
+
         if profile.credit < SOLO_BET {
             txn.rollback().await.ok();
             return Err(GameError::InsufficientCredits {

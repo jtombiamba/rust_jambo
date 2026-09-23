@@ -116,6 +116,12 @@ pub struct CaptureOrderRequest {
     pub order_id: String,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CashoutRequest {
+    pub credits: i32,
+    pub paypal_email: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

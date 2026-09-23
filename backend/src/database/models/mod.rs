@@ -289,6 +289,7 @@ pub mod player_profile {
         pub country_code: Option<String>,
         pub city: Option<String>,
         pub frozen_until: Option<DateTime<Utc>>,
+        pub cashout_locked: bool,
         pub created_at: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
     }
@@ -555,7 +556,15 @@ pub mod game_run_event {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+mod cashout;
+pub use cashout::{admin_key, cashout_request, CashoutStatus};
+
+mod topup;
+pub use topup::{topup_transaction, TopupTransactionKind};
+
 // Re-export the Model types as the original names for convenience
+pub use cashout::admin_key::Model as AdminKey;
+pub use cashout::cashout_request::Model as CashoutRequest;
 pub use game::Model as Game;
 pub use game_card::Model as GameCard;
 pub use game_run::Model as GameRun;
@@ -566,6 +575,7 @@ pub use player::Model as Player;
 pub use player_profile::Model as PlayerProfile;
 pub use room::Model as Room;
 pub use room_member::Model as RoomMember;
+pub use topup::topup_transaction::Model as TopupTransaction;
 pub use user::Model as User;
 
 #[cfg(test)]

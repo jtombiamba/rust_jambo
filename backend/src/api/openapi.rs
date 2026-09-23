@@ -77,6 +77,8 @@ impl Modify for SecurityAddon {
         crate::api::topup::capture_topup_order,
         crate::api::topup::paypal_return_topup,
         crate::api::topup::paypal_cancel_topup,
+        crate::api::cashout::request_cashout,
+        crate::api::cashout::list_cashouts,
         crate::api::benchmark::create_benchmark_game,
         crate::api::benchmark::cleanup_benchmark_data,
     ),

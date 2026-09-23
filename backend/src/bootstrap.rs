@@ -5,6 +5,7 @@ use actix_web::web;
 use tracing::info;
 
 use crate::api::auth::AuthServiceType;
+use crate::api::cashout::CashoutServiceType;
 use crate::api::dashboard::DashboardServiceType;
 use crate::api::middleware::rate_limiter::RateLimitConfigs;
 use crate::auth::config::AuthConfig;
@@ -12,7 +13,7 @@ use crate::auth::middleware::AuthMiddleware;
 use crate::cache::UserCache;
 use crate::config::Config;
 use crate::database::repositories::{
-    DashboardRepository, GameCardRepository, GameRepository, UserRepository,
+    CashoutRepository, DashboardRepository, GameCardRepository, GameRepository, UserRepository,
 };
 use crate::database::traits::{GameCardRepoTrait, GameRepoTrait};
 use crate::game::bot_scheduler::BotScheduler;
@@ -39,6 +40,7 @@ pub struct AppState {
     pub mailer: web::Data<Arc<dyn Mailer>>,
     pub payment_service: web::Data<Arc<PaymentService>>,
     pub room_service: web::Data<Arc<RoomService>>,
+    pub cashout_service: web::Data<Arc<CashoutServiceType>>,
     pub config: web::Data<Config>,
     pub auth_middleware: AuthMiddleware,
     pub rate_limit_configs: RateLimitConfigs,
@@ -201,6 +203,11 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     ));
     room_service.start_email_consumer().await;
 
+    let cashout_repo = Arc::new(CashoutRepository::new(db_connection.clone()));
+    let cashout_service: Arc<CashoutServiceType> = Arc::new(
+        crate::api::services::cashout_service::CashoutService::new(cashout_repo, config.clone()),
+    );
+
     let db_data = web::Data::new(db_connection.clone());
     let redis_data = web::Data::new(redis_client);
     let rabbitmq_data = web::Data::new(rabbitmq_client);
@@ -213,6 +220,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let mailer_data = web::Data::new(mailer);
     let payment_service_data = web::Data::new(payment_service);
     let room_service_data = web::Data::new(room_service);
+    let cashout_service_data = web::Data::new(cashout_service);
     let config_data = web::Data::new(config.clone());
     let translator_data = web::Data::new(translator);
 
@@ -231,6 +239,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         mailer: mailer_data,
         payment_service: payment_service_data,
         room_service: room_service_data,
+        cashout_service: cashout_service_data,
         config: config_data,
         auth_middleware,
         rate_limit_configs,

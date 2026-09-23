@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/useAuthStore'
 import { useLanguageStore } from '../stores/useLanguageStore'
 import { useInvitationStore, InvitationItem } from '../stores/useInvitationStore'
 import { extractApiError } from '../utils/errors'
+import { getCachedConfig } from '../utils/configCache'
 import GameRules from './GameRules'
 import LeaderboardPanel from './LeaderboardPanel'
 import LanguageSwitcher from './LanguageSwitcher'
@@ -23,6 +24,31 @@ interface ProfileData {
   wins: number
   kora_wins: number
   frozen_until: string | null
+  cashout_locked: boolean
+}
+
+interface CashoutConfig {
+  enabled: boolean
+  minCredits: number
+  creditsPerEur: number
+  maxEurCents: number
+}
+
+interface CashoutHistoryItem {
+  id: string
+  credits: number
+  amount_eur_cents: number
+  status: string
+  paypal_email: string
+  created_at: string
+  processed_at: string | null
+}
+
+interface CashoutHistoryData {
+  items: CashoutHistoryItem[]
+  total: number
+  page: number
+  per_page: number
 }
 
 interface GameItem {
@@ -109,6 +135,16 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [toppingUp, setToppingUp] = useState(false)
   const freezeTimerRef = useRef<ReturnType<typeof setInterval>>()
 
+  const [cashoutConfig, setCashoutConfig] = useState<CashoutConfig | null>(null)
+  const [cashoutOpen, setCashoutOpen] = useState(false)
+  const [cashoutCredits, setCashoutCredits] = useState('')
+  const [cashoutPaypalEmail, setCashoutPaypalEmail] = useState('')
+  const [cashoutSubmitting, setCashoutSubmitting] = useState(false)
+  const [cashoutError, setCashoutError] = useState<string | null>(null)
+  const [showCashoutHistory, setShowCashoutHistory] = useState(false)
+  const [cashoutHistory, setCashoutHistory] = useState<CashoutHistoryData | null>(null)
+  const [cashoutHistoryLoading, setCashoutHistoryLoading] = useState(false)
+
   const [statusFilter, setStatusFilter] = useState('')
   const [sortField, setSortField] = useState<SortField>(null)
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -190,6 +226,32 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  useEffect(() => {
+    const cached = getCachedConfig()
+    if (cached) {
+      setCashoutConfig({
+        enabled: cached.cashout_enabled,
+        minCredits: cached.cashout_min_credits,
+        creditsPerEur: cached.cashout_credits_per_eur,
+        maxEurCents: cached.cashout_max_eur_cents,
+      })
+      return
+    }
+    axios
+      .get('/api/config')
+      .then((res) => {
+        setCashoutConfig({
+          enabled: res.data.cashout_enabled,
+          minCredits: res.data.cashout_min_credits,
+          creditsPerEur: res.data.cashout_credits_per_eur,
+          maxEurCents: res.data.cashout_max_eur_cents,
+        })
+      })
+      .catch(() => {
+        // leave cashoutConfig null -> button hidden
+      })
+  }, [])
 
   // Seed invitations once from the server, then let the user WebSocket
   // (useUserWebSocket) own subsequent add/remove. The seed is a union merge so
@@ -316,6 +378,76 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       showToast(extractApiError(err).message || 'Unfreeze failed')
     } finally {
       setUnfreezing(false)
+    }
+  }
+
+  const openCashoutModal = () => {
+    setCashoutCredits('')
+    setCashoutPaypalEmail('')
+    setCashoutError(null)
+    setCashoutOpen(true)
+  }
+
+  const handleCashoutSubmit = async () => {
+    if (!cashoutConfig) return
+    setCashoutError(null)
+
+    const credits = parseInt(cashoutCredits, 10)
+    if (!Number.isFinite(credits) || credits <= 0) {
+      setCashoutError(t('dashboard.cashoutMin', { credits: cashoutConfig.minCredits, eur: (cashoutConfig.minCredits / cashoutConfig.creditsPerEur).toFixed(2) }))
+      return
+    }
+    if (credits < cashoutConfig.minCredits) {
+      setCashoutError(t('dashboard.cashoutMin', { credits: cashoutConfig.minCredits, eur: (cashoutConfig.minCredits / cashoutConfig.creditsPerEur).toFixed(2) }))
+      return
+    }
+    if (credits % cashoutConfig.creditsPerEur !== 0) {
+      setCashoutError(t('dashboard.cashoutMultiple', { credits: cashoutConfig.creditsPerEur }))
+      return
+    }
+    if ((credits / cashoutConfig.creditsPerEur) * 100 > cashoutConfig.maxEurCents) {
+      setCashoutError(t('dashboard.cashoutMax', { eur: (cashoutConfig.maxEurCents / 100).toFixed(2) }))
+      return
+    }
+    const email = cashoutPaypalEmail.trim()
+    if (!email.includes('@') || !email.includes('.')) {
+      setCashoutError(t('dashboard.cashoutInvalidEmail'))
+      return
+    }
+
+    setCashoutSubmitting(true)
+    try {
+      await axios.post('/api/me/cashout', { credits, paypal_email: email })
+      setCashoutOpen(false)
+      showToast(t('dashboard.cashoutSuccess'))
+      await fetchData()
+      if (showCashoutHistory) {
+        fetchCashoutHistory()
+      }
+    } catch (err: unknown) {
+      setCashoutError(extractApiError(err).message || t('dashboard.cashoutSubmit'))
+    } finally {
+      setCashoutSubmitting(false)
+    }
+  }
+
+  const fetchCashoutHistory = async () => {
+    setCashoutHistoryLoading(true)
+    try {
+      const res = await axios.get<CashoutHistoryData>('/api/me/cashout', { params: { page: 1, per_page: 100 } })
+      setCashoutHistory(res.data)
+    } catch (err: unknown) {
+      console.error('Failed to load cashout history', err)
+    } finally {
+      setCashoutHistoryLoading(false)
+    }
+  }
+
+  const toggleCashoutHistory = () => {
+    const next = !showCashoutHistory
+    setShowCashoutHistory(next)
+    if (next && !cashoutHistory) {
+      fetchCashoutHistory()
     }
   }
 
@@ -523,6 +655,12 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
           </div>
         </div>
 
+        {profile?.cashout_locked && (
+          <div className="mb-6 sm:mb-8 bg-yellow-50 border border-yellow-300 rounded-lg p-4">
+            <p className="text-yellow-800 font-semibold">{t('dashboard.cashoutLockedNotice')}</p>
+          </div>
+        )}
+
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-wrap gap-2 sm:gap-3">
             {freezeRemainingSec > 0 ? (
@@ -581,23 +719,29 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 >
                   {t('dashboard.multiplayerGame')}
                 </button>
-                {(profile?.credit ?? 0) > 0 && (profile?.credit ?? 0) < 50 && (
+                <button
+                  className="px-4 sm:px-6 py-2 sm:py-3 bg-[#0070ba] hover:bg-[#005ea6] text-white text-sm sm:text-base font-semibold rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+                  disabled={toppingUp}
+                  onClick={handleTopUp}
+                >
+                  {toppingUp ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                      </svg>
+                      {t('dashboard.processing')}
+                    </>
+                  ) : (
+                    t('dashboard.topUp')
+                  )}
+                </button>
+                {cashoutConfig?.enabled && !profile?.cashout_locked && (
                   <button
-                    className="px-4 sm:px-6 py-2 sm:py-3 bg-[#0070ba] hover:bg-[#005ea6] text-white text-sm sm:text-base font-semibold rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
-                    disabled={toppingUp}
-                    onClick={handleTopUp}
+                    className="px-4 sm:px-6 py-2 sm:py-3 bg-green-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50"
+                    onClick={openCashoutModal}
                   >
-                    {toppingUp ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                        </svg>
-                        {t('dashboard.processing')}
-                      </>
-                    ) : (
-                      t('dashboard.topUp')
-                    )}
+                    {t('dashboard.requestCashout')}
                   </button>
                 )}
               </>
@@ -613,6 +757,12 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
               onClick={() => setShowLeaderboard(!showLeaderboard)}
             >
               {showLeaderboard ? t('dashboard.hideLeaderboard') : t('dashboard.leaderboard')}
+            </button>
+            <button
+              className="px-4 sm:px-6 py-2 sm:py-3 bg-emerald-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-emerald-700"
+              onClick={toggleCashoutHistory}
+            >
+              {showCashoutHistory ? t('dashboard.cashoutHideHistory') : t('dashboard.cashoutHistory')}
             </button>
           </div>
           {error && (
@@ -829,6 +979,64 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
         )}
 
         {showLeaderboard && <LeaderboardPanel />}
+
+        {showCashoutHistory && (
+          <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
+            <h2 className="text-lg sm:text-xl font-semibold mb-4">
+              {t('dashboard.cashoutHistory')}
+              {cashoutHistory && (
+                <span className="text-gray-500 text-sm ml-2">({cashoutHistory.total} total)</span>
+              )}
+            </h2>
+            {cashoutHistoryLoading && !cashoutHistory ? (
+              <p className="text-gray-500">{t('dashboard.loadingDashboard')}</p>
+            ) : cashoutHistory && cashoutHistory.items.length === 0 ? (
+              <p className="text-gray-500">{t('dashboard.cashoutNoHistory')}</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="py-2 pr-4">{t('dashboard.date')}</th>
+                      <th className="py-2 pr-4">{t('dashboard.cashoutAmount')}</th>
+                      <th className="py-2 pr-4">{t('dashboard.status')}</th>
+                      <th className="py-2">{t('dashboard.cashoutEmail')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cashoutHistory?.items.map((item) => (
+                      <tr key={item.id} className="border-b">
+                        <td className="py-2 pr-4 text-gray-500 text-xs">
+                          {new Date(item.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="py-2 pr-4 font-semibold">
+                          {(item.amount_eur_cents / 100).toFixed(2)} EUR
+                          <span className="text-gray-400 text-xs ml-1">({item.credits} {t('dashboard.credit').toLowerCase()})</span>
+                        </td>
+                        <td className="py-2 pr-4">
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                              item.status === 'requested'
+                                ? 'bg-yellow-100 text-yellow-700'
+                                : item.status === 'approved'
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : item.status === 'paid'
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-red-100 text-red-700'
+                            }`}
+                          >
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="py-2 text-gray-500 text-xs">{item.paypal_email}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {multiplayerOpen && (
@@ -956,6 +1164,85 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {cashoutOpen && cashoutConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">{t('dashboard.requestCashout')}</h2>
+              <button
+                onClick={() => { setCashoutOpen(false); setCashoutError(null) }}
+                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <p className="text-sm text-gray-500 mb-4">
+              {t('dashboard.cashoutRate', {
+                credits: cashoutConfig.creditsPerEur,
+                eur: '1.00',
+              })}{' '}
+              {t('dashboard.cashoutMin', {
+                credits: cashoutConfig.minCredits,
+                eur: (cashoutConfig.minCredits / cashoutConfig.creditsPerEur).toFixed(2),
+              })}{' '}
+              {t('dashboard.cashoutMax', { eur: (cashoutConfig.maxEurCents / 100).toFixed(2) })}
+            </p>
+
+            <div className="mb-4">
+              <label htmlFor="cashout-credits" className="block text-sm font-medium text-gray-700 mb-1">
+                {t('dashboard.cashoutCredits')}
+              </label>
+              <input
+                id="cashout-credits"
+                type="number"
+                min={cashoutConfig.minCredits}
+                step={cashoutConfig.creditsPerEur}
+                value={cashoutCredits}
+                onChange={(e) => setCashoutCredits(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+              />
+            </div>
+
+            <div className="mb-4">
+              <label htmlFor="cashout-paypal-email" className="block text-sm font-medium text-gray-700 mb-1">
+                {t('dashboard.cashoutPaypalEmail')}
+              </label>
+              <input
+                id="cashout-paypal-email"
+                type="email"
+                value={cashoutPaypalEmail}
+                onChange={(e) => setCashoutPaypalEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+              />
+            </div>
+
+            {cashoutError && (
+              <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">
+                {cashoutError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setCashoutOpen(false); setCashoutError(null) }}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={handleCashoutSubmit}
+                disabled={cashoutSubmitting}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {cashoutSubmitting ? t('dashboard.cashoutSubmitting') : t('dashboard.cashoutSubmit')}
+              </button>
+            </div>
           </div>
         </div>
       )}

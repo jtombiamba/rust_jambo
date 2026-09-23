@@ -7,8 +7,11 @@ use crate::api::dto::requests::CaptureOrderRequest;
 use crate::api::dto::responses::{
     ApiErrorResponse, UnfreezeCaptureResponse, UnfreezeOrderResponse,
 };
+use crate::api::payment_limits::{current_month_start, monthly_limit_exceeded, parse_eur_to_cents};
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
+use crate::database::models::TopupTransactionKind;
+use crate::database::repositories::TopupTransactionRepository;
 use crate::error::AppError;
 use crate::messaging::RedisClient;
 use crate::observability::metrics::{PAYMENT_UNFREEZE_DURATION_SECONDS, PAYMENT_UNFREEZE_TOTAL};
@@ -46,9 +49,27 @@ pub async fn create_unfreeze_order(
     payment_service: web::Data<Arc<crate::payment::PaymentService>>,
     config: web::Data<Config>,
     redis: web::Data<Option<RedisClient>>,
+    db: web::Data<sea_orm::DatabaseConnection>,
 ) -> HttpResponse {
     if !payment_service.is_configured() {
         return AppError::Internal("Payment service is not configured".into()).error_response();
+    }
+
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    let spent_cents = match topup_repo
+        .sum_amount_eur_cents_since(auth_user.user_id, current_month_start(chrono::Utc::now()))
+        .await
+    {
+        Ok(cents) => cents,
+        Err(e) => return AppError::Database(e).error_response(),
+    };
+    let upcoming_cents = parse_eur_to_cents(&config.paypal_unfreeze_amount_eur);
+    if monthly_limit_exceeded(
+        spent_cents,
+        upcoming_cents,
+        config.topup_monthly_limit_eur_cents,
+    ) {
+        return AppError::BadRequest("Monthly top-up limit reached".into()).error_response();
     }
 
     let return_url = format!(
@@ -145,6 +166,7 @@ pub async fn capture_unfreeze_order(
                     redis_opt.as_mut(),
                     &redis_key,
                     config.unfreeze_credit_with_payment,
+                    parse_eur_to_cents(&config.paypal_unfreeze_amount_eur),
                 )
                 .await;
             }
@@ -192,6 +214,7 @@ pub async fn capture_unfreeze_order(
         redis_opt.as_mut(),
         &redis_key,
         config.unfreeze_credit_with_payment,
+        parse_eur_to_cents(&config.paypal_unfreeze_amount_eur),
     )
     .await
 }
@@ -283,6 +306,24 @@ pub async fn paypal_return(
         return close_window_html("Payment Error — capture failed");
     }
 
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    if let Err(e) = topup_repo
+        .create(
+            user_id,
+            TopupTransactionKind::Unfreeze,
+            parse_eur_to_cents(&config.paypal_unfreeze_amount_eur),
+            config.unfreeze_credit_with_payment,
+        )
+        .await
+    {
+        tracing::error!(
+            "Failed to record unfreeze transaction for user {} on return: {}",
+            user_id,
+            e
+        );
+        return close_window_html("Payment Complete — unfreeze in progress (retry if needed)");
+    }
+
     let profile_repo =
         crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
     match profile_repo
@@ -325,7 +366,26 @@ async fn unfreeze_user_and_finalize(
     redis_client: Option<&mut RedisClient>,
     redis_key: &str,
     credit: i32,
+    amount_eur_cents: i32,
 ) -> HttpResponse {
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    if let Err(e) = topup_repo
+        .create(
+            user_id,
+            TopupTransactionKind::Unfreeze,
+            amount_eur_cents,
+            credit,
+        )
+        .await
+    {
+        tracing::error!(
+            "Failed to record unfreeze transaction for user {}: {}",
+            user_id,
+            e
+        );
+        return AppError::Database(e).error_response();
+    }
+
     let profile_repo =
         crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
     match profile_repo

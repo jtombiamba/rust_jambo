@@ -7,6 +7,10 @@ const validConfig: ClientConfig = {
   paypal_donate_url: 'https://www.paypal.com/donate',
   bot_thinking_delay_ms: 1500,
   round_pause_delay_ms: 2500,
+  cashout_enabled: true,
+  cashout_min_credits: 250,
+  cashout_credits_per_eur: 250,
+  cashout_max_eur_cents: 2000,
 }
 
 describe('configCache', () => {

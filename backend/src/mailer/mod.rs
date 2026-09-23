@@ -137,6 +137,33 @@ pub struct RoomInvitationEmail {
     pub app_name: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CashoutRequestedEmail {
+    pub credits: i32,
+    pub amount_eur: String,
+    pub paypal_email: String,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[allow(dead_code)]
+pub struct CashoutRejectedEmail {
+    pub credits: i32,
+    pub amount_eur: String,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CashoutAdminAlertEmail {
+    pub pseudo: String,
+    pub email: String,
+    pub credits: i32,
+    pub amount_eur: String,
+    pub paypal_email: String,
+}
+
 #[async_trait]
 pub trait Mailer: Send + Sync {
     async fn send_password_reset(
@@ -195,6 +222,78 @@ pub trait Mailer: Send + Sync {
         invitation_code: &str,
         lang: Lang,
     ) -> Result<(), String>;
+
+    async fn send_cashout_requested(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    #[allow(dead_code)]
+    async fn send_cashout_rejected(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_cashout_admin_alert(
+        &self,
+        to_email: &str,
+        pseudo: &str,
+        email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+    ) -> Result<(), String>;
+}
+
+/// Register the cashout email templates shared by both mailer backends.
+pub fn register_cashout_templates(hb: &mut handlebars::Handlebars<'static>) -> Result<(), String> {
+    hb.register_template_string(
+        "en_cashout_requested",
+        include_str!("../../templates/en/cashout_requested.hbs"),
+    )
+    .map_err(|e| format!("Failed to register en/cashout_requested template: {e}"))?;
+    hb.register_template_string(
+        "fr_cashout_requested",
+        include_str!("../../templates/fr/cashout_requested.hbs"),
+    )
+    .map_err(|e| format!("Failed to register fr/cashout_requested template: {e}"))?;
+    hb.register_template_string(
+        "en_cashout_rejected",
+        include_str!("../../templates/en/cashout_rejected.hbs"),
+    )
+    .map_err(|e| format!("Failed to register en/cashout_rejected template: {e}"))?;
+    hb.register_template_string(
+        "fr_cashout_rejected",
+        include_str!("../../templates/fr/cashout_rejected.hbs"),
+    )
+    .map_err(|e| format!("Failed to register fr/cashout_rejected template: {e}"))?;
+    hb.register_template_string(
+        "en_cashout_admin_alert",
+        include_str!("../../templates/en/cashout_admin_alert.hbs"),
+    )
+    .map_err(|e| format!("Failed to register en/cashout_admin_alert template: {e}"))?;
+    Ok(())
+}
+
+pub fn format_cents(amount_eur_cents: i32) -> String {
+    format!("{:.2}", amount_eur_cents as f64 / 100.0)
+}
+
+pub fn cashout_subject(kind: &str, lang: Lang) -> String {
+    match (kind, lang) {
+        ("cashout_requested", Lang::Fr) => "Demande de retrait reçue".to_string(),
+        ("cashout_rejected", Lang::Fr) => "Retrait rejeté".to_string(),
+        ("cashout_requested", _) => "Cashout request received".to_string(),
+        ("cashout_rejected", _) => "Cashout rejected".to_string(),
+        _ => "Cashout update".to_string(),
+    }
 }
 
 pub fn create_mailer(config: MailerConfig) -> Result<Arc<dyn Mailer>, String> {

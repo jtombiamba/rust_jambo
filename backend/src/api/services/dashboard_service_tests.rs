@@ -246,6 +246,7 @@ async fn test_get_profile_with_frozen_until() {
         country_code: None,
         city: None,
         frozen_until: Some(frozen_time),
+        cashout_locked: false,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

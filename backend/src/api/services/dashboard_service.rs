@@ -97,6 +97,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 wins: p.wins,
                 kora_wins: p.kora_wins,
                 frozen_until: p.frozen_until.map(|t| t.to_rfc3339()),
+                cashout_locked: p.cashout_locked,
             },
             None => PlayerProfileResponse {
                 credit: self.default_credit,
@@ -104,6 +105,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 wins: 0,
                 kora_wins: 0,
                 frozen_until: None,
+                cashout_locked: false,
             },
         };
 

@@ -45,7 +45,7 @@ A real‑time, multiplayer card game (Jambo / FapFap Game) with:
 | I18n | Backend: `Translator` + JSON; Frontend: `i18next` |
 | Metrics | Prometheus (`/metrics` endpoint, 42+ families) |
 | Tracing | `tracing` + CorrelationId (HTTP → Redis → RabbitMQ → WS) |
-| Payments | PayPal REST API (unfreeze + topup) |
+| Payments | PayPal REST API (unfreeze + topup + cashout payouts) |
 
 ### Game Rules Summary
 
@@ -56,6 +56,15 @@ A real‑time, multiplayer card game (Jambo / FapFap Game) with:
   - `Kora` (1× multiplier): round starter is NOT the winner
   - `DoubleKora` (2× multiplier): round starter IS the winner
   - KORA events end the game immediately with amplified payouts
+- **Special cards** (evaluated per 5‑card hand at game start): `triple_seven`
+  (3+ sevens), `sum_under_21` (sum of ranks < 21), `a_square` (four of a kind).
+  Strength: `a_square` > `sum_under_21` > `triple_seven`. The unique top holder
+  is offered a claim (immediate win) or may decline; an unclaimed combo held by
+  the winner upgrades the result to `Kora`.
+- **Cashout**: player requests a payout (multiple of `CASHOUT_CREDITS_PER_EUR`,
+  min `CASHOUT_MIN_CREDITS`, cap `CASHOUT_MAX_EUR_CENTS`) to a PayPal account.
+  Credits are reserved and the profile locked until an admin approves/rejects
+  (1‑day auto‑reject fallback); payout via PayPal Payouts.
 
 **Card index → suit/rank mapping:**
 
@@ -618,6 +627,12 @@ cryptographically random per call, is not stored in code or config, and each inv
 2. `POST /api/me/topup` creates PayPal order.
 3. PayPal checkout → redirect to `/api/paypal/topup/return`.
 4. Backend captures, adds credits.
+
+> **Monthly spending cap**: topup and unfreeze payments are recorded in the
+> `topup_transactions` table and share a combined monthly limit
+> (`TOPUP_MONTHLY_LIMIT_EUR_CENTS`, default 100 €). The cap is checked before a
+> PayPal order is created; completed payments are persisted so the limit
+> survives restarts and Redis loss.
 
 ### UC12: Staleness Detection & Recovery
 1. Scheduler task `detect_stalled_games` runs periodically.
