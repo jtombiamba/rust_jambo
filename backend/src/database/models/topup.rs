@@ -35,6 +35,7 @@ pub mod topup_transaction {
         pub kind: super::TopupTransactionKind,
         pub amount_eur_cents: i32,
         pub credits: i32,
+        pub order_id: Option<String>,
         pub created_at: DateTime<Utc>,
     }
 

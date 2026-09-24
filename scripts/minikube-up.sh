@@ -69,6 +69,7 @@ fi
 #    To provide real values, copy k8s/base/secret.yaml.example to .env and fill
 #    them in before running this script.
 if [ -f .env ]; then
+  echo "Loading secrets from .env"
   set -a; . .env; set +a
 fi
 

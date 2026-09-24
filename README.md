@@ -38,6 +38,31 @@ This project is a complete rewrite of the original Python/Django **FapFap** impl
 - `Kora` (1× multiplier) — round starter is NOT the winner
 - `DoubleKora` (2× multiplier) — round starter IS the winner
 
+**Special cards** (checked on each 5-card hand at game start):
+
+| Combination | Condition | Strength |
+|---|---|---|
+| Triple Seven | three or more 7s | 3rd |
+| Sum under 21 | the 5 ranks sum to less than 21 | 2nd |
+| A Square | four cards of the same rank | 1st |
+
+The unique holder of the strongest combination is offered a **claim** (ties mean
+nobody is offered). Claiming wins the game immediately; declining lets the game
+continue. A winner holding an unclaimed combination ends the game as a Kora.
+
+---
+
+## Cashout
+
+- Request a cashout from your profile and choose how many credits to withdraw.
+- 250 credits = 1 EUR; amounts must be a whole multiple of 250 (min 250 credits).
+- Starting cap: €20 per payout.
+- You provide a PayPal email to receive the money.
+- While a request is pending, the credits are reserved and your account is
+  locked from playing until an admin approves or rejects it (auto-rejected and
+  refunded after 1 day with no decision).
+- Your cashout history (with status) is visible in your profile.
+
 ---
 
 ## Architecture
@@ -406,7 +431,7 @@ The backend accepts **68 environment variables** (see `backend/src/config.rs`). 
 | Redis | `REDIS_URL` (optional) |
 | Auth | `JWT_SECRET`, `JWT_EXPIRY_HOURS` |
 | Game | `GAME_STALENESS_THRESHOLD_SECS`, staleness alert/kick timers |
-| Credits | `DEFAULT_CREDIT`, `FREEZE_DURATION_SECS`, unfreeze/topup amounts |
+| Credits | `DEFAULT_CREDIT`, `FREEZE_DURATION_SECS`, unfreeze/topup amounts (`TOPUP_CREDIT_AMOUNT`, `TOPUP_MONTHLY_LIMIT_EUR_CENTS`) |
 | PayPal | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MODE` |
 | Rate Limits | 12 parameters for auth/contact endpoints |
 | CORS | `CORS_ALLOWED_ORIGINS` |

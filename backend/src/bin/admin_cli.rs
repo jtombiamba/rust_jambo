@@ -147,6 +147,7 @@ async fn run(cli: Cli) -> Result<(), String> {
 }
 
 fn get_keypass() -> Result<String, String> {
+    println!("getting keypass");
     if let Ok(env_key) = std::env::var("ADMIN_CLI_KEYPASS") {
         if !env_key.is_empty() {
             return Ok(env_key);
@@ -158,11 +159,13 @@ fn get_keypass() -> Result<String, String> {
 /// Returns the matched admin label.
 async fn authenticate(repo: &AdminKeyRepository) -> Result<String, String> {
     let keypass = get_keypass()?;
+    println!("authenticating");
     let label = repo
         .verify(&keypass)
         .await
         .map_err(|e| format!("db: {e}"))?
         .ok_or_else(|| "invalid admin keypass".to_string())?;
+    println!("authenticated as {label}");
     Ok(label)
 }
 
@@ -421,6 +424,7 @@ async fn cashout_list(
     status: Option<String>,
     user: Option<String>,
 ) -> Result<(), String> {
+    println!("listing cashout requests");
     let repo = CashoutRepository::new(db.clone());
     let user_id = match user {
         Some(u) => {

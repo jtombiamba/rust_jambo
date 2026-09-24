@@ -10,7 +10,8 @@ COPY migration ./migration
 RUN cargo build --release \
     --bin jambo-backend \
     --bin ai-worker \
-    --bin scheduler-worker
+    --bin scheduler-worker \
+    --bin admin-cli
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -36,6 +37,7 @@ WORKDIR /app
 COPY --from=builder /usr/src/app/target/release/jambo-backend /usr/local/bin/jambo-backend
 COPY --from=builder /usr/src/app/target/release/ai-worker /usr/local/bin/ai-worker
 COPY --from=builder /usr/src/app/target/release/scheduler-worker /usr/local/bin/scheduler-worker
+COPY --from=builder /usr/src/app/target/release/admin-cli /usr/local/bin/admin-cli
 COPY --from=builder --chown=jambo:jambo /usr/src/app/migration ./migration
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

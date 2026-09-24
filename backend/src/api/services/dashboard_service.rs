@@ -81,6 +81,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             .get_cached::<PlayerProfileResponse>(&format!("dashboard:profile:{user_id}"))
             .await
         {
+            tracing::info!("Cache hit for profile of user_id: {}", user_id);
             return Ok(cached);
         }
 

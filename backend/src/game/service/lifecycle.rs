@@ -497,7 +497,7 @@ impl GameService {
 
         let start_details = crate::game::start_log::build_start_details(&players, &special_hands);
         let start_details_json = serde_json::to_string(&start_details).unwrap_or_default();
-        info!(
+        tracing::info!(
             game_id = %game_id,
             game_mode = %game_mode,
             bet = game_model.bet,

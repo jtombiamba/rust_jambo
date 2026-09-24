@@ -68,16 +68,32 @@ impl GameService {
 
         for &user_id in user_ids {
             let profile_key = format!("dashboard:profile:{user_id}");
-            if let Err(e) = redis.del(&profile_key).await {
-                error!("Failed to invalidate profile cache for {}: {}", user_id, e);
-                GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
-            }
+            match redis.del(&profile_key).await {
+                Ok(()) => {
+                    tracing::info!(
+                        "Successfully invalidated profile cache for user_id: {}",
+                        user_id
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to invalidate profile cache for {}: {}", user_id, e);
+                    GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
+                }
+            };
 
             let games_pattern = format!("dashboard:games:{user_id}:*");
-            if let Err(e) = redis.del_pattern(&games_pattern).await {
-                error!("Failed to invalidate games cache for {}: {}", user_id, e);
-                GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
-            }
+            match redis.del_pattern(&games_pattern).await {
+                Ok(_deleted) => {
+                    tracing::info!(
+                        "Successfully invalidated games cache for user_id: {}",
+                        user_id
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to invalidate games cache for {}: {}", user_id, e);
+                    GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
+                }
+            };
         }
     }
 
