@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use actix_web::{FromRequest, HttpRequest};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 pub mod lang_endpoint;
@@ -103,6 +104,15 @@ impl Translator {
     pub fn t_replace(&self, key: &str, lang: Lang, placeholder: &str, replacement: &str) -> String {
         self.t(key, lang).replace(placeholder, replacement)
     }
+
+    pub fn t_params(&self, key: &str, lang: Lang, params: &[(&str, &str)]) -> String {
+        let template = self.t(key, lang);
+        let mut out = template;
+        for (placeholder, value) in params {
+            out = out.replace(placeholder, value);
+        }
+        out
+    }
 }
 
 impl Default for Translator {
@@ -110,6 +120,17 @@ impl Default for Translator {
         Self::new()
     }
 }
+
+tokio::task_local! {
+    /// Language of the current request, scoped by `I18nMiddleware`.
+    /// Mirrors `CORRELATION_ID` so that `ResponseError::error_response` can
+    /// translate messages without holding a reference to the request.
+    pub static CURRENT_LANG: Lang;
+}
+
+/// Process-wide translator shared by error rendering and the `I18n` extractor.
+/// The catalog is immutable and loaded once at first access.
+pub static TRANSLATOR: Lazy<Translator> = Lazy::new(Translator::new);
 
 pub fn get_lang_from_cookie(req: &HttpRequest) -> Option<Lang> {
     req.cookie("lang").and_then(|c| Lang::parse(c.value()))
@@ -143,6 +164,7 @@ impl I18n {
         self.translator.t(key, self.lang)
     }
 
+    #[allow(dead_code)]
     pub fn t_replace(&self, key: &str, placeholder: &str, replacement: &str) -> String {
         self.translator
             .t_replace(key, self.lang, placeholder, replacement)
@@ -283,6 +305,25 @@ mod tests {
             translator.t_replace("password.forgot", Lang::En, "{email}", "test@example.com");
         assert!(result.contains("test@example.com"));
         assert!(!result.contains("{email}"));
+    }
+
+    #[test]
+    fn test_translator_t_params_named() {
+        let translator = Translator::new();
+        let result = translator.t_params(
+            "game.insufficient_credits",
+            Lang::En,
+            &[("{required}", "10"), ("{current}", "5")],
+        );
+        assert_eq!(result, "Insufficient credits: need 10 but have 5");
+    }
+
+    #[test]
+    fn test_translator_t_params_positional() {
+        let translator = Translator::new();
+        let result =
+            translator.t_params("validation.missing_field", Lang::En, &[("{0}", "pseudo")]);
+        assert_eq!(result, "Missing required field: pseudo");
     }
 
     #[test]

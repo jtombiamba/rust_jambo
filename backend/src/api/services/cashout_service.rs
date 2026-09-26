@@ -25,15 +25,13 @@ impl<R: CashoutRepoTrait> CashoutService<R> {
         paypal_email: &str,
     ) -> Result<CashoutRequestResponse, AppError> {
         if !self.config.cashout_enabled {
-            return Err(AppError::Forbidden(
-                "Cashout is currently unavailable".into(),
-            ));
+            return Err(AppError::Forbidden("cashout.unavailable"));
         }
 
         validate_cashout_credits(credits, &self.config)?;
 
         if !is_valid_email(paypal_email) {
-            return Err(AppError::BadRequest("Invalid PayPal email".into()));
+            return Err(AppError::BadRequest("cashout.invalid_email"));
         }
 
         let amount_eur_cents = credits / self.config.cashout_credits_per_eur * 100;
@@ -87,15 +85,11 @@ impl<R: CashoutRepoTrait> CashoutService<R> {
 
 fn map_request_error(e: CashoutRequestError) -> AppError {
     match e {
-        CashoutRequestError::Locked => {
-            AppError::Conflict("Account is locked pending a cashout request".into())
-        }
+        CashoutRequestError::Locked => AppError::Conflict("cashout.locked"),
         CashoutRequestError::InsufficientCredits => {
-            AppError::Conflict("Insufficient credits for cashout".into())
+            AppError::Conflict("cashout.insufficient_credits")
         }
-        CashoutRequestError::ProfileNotFound => {
-            AppError::NotFound("Player profile not found".into())
-        }
+        CashoutRequestError::ProfileNotFound => AppError::NotFound("payment.profile_not_found"),
         CashoutRequestError::Db(e) => AppError::Database(e),
     }
 }
@@ -116,23 +110,23 @@ pub fn validate_credits(
     max_eur_cents: i32,
 ) -> Result<(), AppError> {
     if credits < min_credits {
-        return Err(AppError::BadRequest(format!(
-            "Cashout must be at least {} credits",
-            min_credits
-        )));
+        return Err(AppError::BadRequestParams {
+            key: "cashout.minimum",
+            params: vec![("{credits}", min_credits.to_string())],
+        });
     }
     if credits % credits_per_eur != 0 {
-        return Err(AppError::BadRequest(format!(
-            "Cashout must be a multiple of {} credits",
-            credits_per_eur
-        )));
+        return Err(AppError::BadRequestParams {
+            key: "cashout.multiple",
+            params: vec![("{credits}", credits_per_eur.to_string())],
+        });
     }
     let amount_eur_cents = credits / credits_per_eur * 100;
     if amount_eur_cents > max_eur_cents {
-        return Err(AppError::BadRequest(format!(
-            "Cashout exceeds the maximum of {} euros",
-            max_eur_cents / 100
-        )));
+        return Err(AppError::BadRequestParams {
+            key: "cashout.maximum",
+            params: vec![("{euros}", (max_eur_cents / 100).to_string())],
+        });
     }
     Ok(())
 }

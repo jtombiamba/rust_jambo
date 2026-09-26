@@ -51,20 +51,19 @@ pub async fn create_topup_order(
     let profile = match profile_repo.find_by_user_id(auth_user.user_id).await {
         Ok(Some(p)) => p,
         Ok(None) => {
-            return AppError::NotFound("Player profile not found".into()).error_response();
+            return AppError::NotFound("payment.profile_not_found").error_response();
         }
         Err(e) => return AppError::Database(e).error_response(),
     };
 
     if let Some(frozen_until) = profile.frozen_until {
         if frozen_until > chrono::Utc::now() {
-            return AppError::Forbidden("Account is frozen, cannot top up".into()).error_response();
+            return AppError::Forbidden("payment.account_frozen_no_topup").error_response();
         }
     }
 
     if profile.credit <= 0 {
-        return AppError::BadRequest("Credit depleted, use unfreeze instead".into())
-            .error_response();
+        return AppError::BadRequest("payment.credit_depleted").error_response();
     }
 
     let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
@@ -81,7 +80,7 @@ pub async fn create_topup_order(
         upcoming_cents,
         config.topup_monthly_limit_eur_cents,
     ) {
-        return AppError::BadRequest("Monthly top-up limit reached".into()).error_response();
+        return AppError::BadRequest("payment.monthly_limit_reached").error_response();
     }
 
     let return_url = format!(
@@ -437,7 +436,7 @@ async fn finalize_topup(
                     order_id = %order_id,
                     "player profile not found during topup; transaction will roll back"
                 );
-                return Err(AppError::NotFound("Player profile not found".into()));
+                return Err(AppError::NotFound("payment.profile_not_found"));
             }
 
             if let Err(e) = profile_repo
@@ -512,115 +511,5 @@ async fn finalize_topup(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::database::models::{PlayerProfile, PlayerType};
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
-
-    fn make_profile(user_id: Uuid, credit: i32) -> PlayerProfile {
-        PlayerProfile {
-            id: Uuid::now_v7(),
-            user_id,
-            player_type: PlayerType::Human,
-            credit,
-            game_played: 0,
-            wins: 0,
-            kora_wins: 0,
-            winning_streak: 0,
-            latitude: None,
-            longitude: None,
-            country_code: None,
-            city: None,
-            frozen_until: None,
-            cashout_locked: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }
-    }
-
-    #[tokio::test]
-    async fn finalize_topup_records_transaction_and_credits() {
-        let user_id = Uuid::now_v7();
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results(vec![
-                MockExecResult {
-                    last_insert_id: 0,
-                    rows_affected: 1,
-                },
-                MockExecResult {
-                    last_insert_id: 0,
-                    rows_affected: 1,
-                },
-            ])
-            .append_query_results(vec![
-                vec![make_profile(user_id, 100)],
-                vec![make_profile(user_id, 350)],
-            ])
-            .into_connection();
-
-        let credit = finalize_topup(
-            &web::Data::new(db),
-            None,
-            "topup_capture:key",
-            user_id,
-            "ORDER_1",
-            250,
-            100,
-        )
-        .await
-        .expect("finalize should succeed");
-
-        assert_eq!(credit, 350);
-    }
-
-    #[tokio::test]
-    async fn finalize_topup_skips_credit_when_order_already_recorded() {
-        let user_id = Uuid::now_v7();
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results(vec![MockExecResult {
-                last_insert_id: 0,
-                rows_affected: 0,
-            }])
-            .append_query_results(vec![vec![make_profile(user_id, 100)]])
-            .into_connection();
-
-        let credit = finalize_topup(
-            &web::Data::new(db),
-            None,
-            "topup_capture:key",
-            user_id,
-            "ORDER_1",
-            250,
-            100,
-        )
-        .await
-        .expect("finalize should succeed");
-
-        assert_eq!(credit, 100);
-    }
-
-    #[tokio::test]
-    async fn finalize_topup_returns_not_found_when_profile_missing() {
-        let user_id = Uuid::now_v7();
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results(vec![MockExecResult {
-                last_insert_id: 0,
-                rows_affected: 1,
-            }])
-            .append_query_results(vec![Vec::<PlayerProfile>::new()])
-            .into_connection();
-
-        let result = finalize_topup(
-            &web::Data::new(db),
-            None,
-            "topup_capture:key",
-            user_id,
-            "ORDER_1",
-            250,
-            100,
-        )
-        .await;
-
-        assert!(matches!(result, Err(AppError::NotFound(_))));
-    }
-}
+#[path = "topup_tests.rs"]
+mod tests;

@@ -31,6 +31,12 @@ struct Amount {
 }
 
 #[derive(Debug, Serialize)]
+struct AmountV1 {
+    currency: String,
+    value: String,
+}
+
+#[derive(Debug, Serialize)]
 struct ApplicationContext {
     return_url: String,
     cancel_url: String,
@@ -73,7 +79,7 @@ pub struct CaptureResult {
 #[allow(dead_code)]
 struct PayoutItem {
     recipient_type: String,
-    amount: Amount,
+    amount: AmountV1,
     note: String,
     receiver: String,
 }
@@ -330,8 +336,8 @@ impl PaymentService {
             },
             items: vec![PayoutItem {
                 recipient_type: "EMAIL".to_string(),
-                amount: Amount {
-                    currency_code: "EUR".to_string(),
+                amount: AmountV1 {
+                    currency: "EUR".to_string(),
                     value,
                 },
                 note: "Jambo cashout".to_string(),

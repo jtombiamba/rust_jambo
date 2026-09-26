@@ -69,7 +69,7 @@ pub async fn create_unfreeze_order(
         upcoming_cents,
         config.topup_monthly_limit_eur_cents,
     ) {
-        return AppError::BadRequest("Monthly top-up limit reached".into()).error_response();
+        return AppError::BadRequest("payment.monthly_limit_reached").error_response();
     }
 
     let return_url = format!(

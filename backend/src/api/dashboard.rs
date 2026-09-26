@@ -233,16 +233,15 @@ pub async fn send_invites(
     };
 
     if !duplicates.is_empty() {
-        return AppError::BadRequest(i18n.t_replace(
-            "game.duplicate_players",
-            "{duplicates}",
-            &duplicates.join(", "),
-        ))
+        return AppError::BadRequestParams {
+            key: "game.duplicate_players",
+            params: vec![("{duplicates}", duplicates.join(", "))],
+        }
         .error_response();
     }
 
     if seen_uuid.contains(&auth_user.user_id) {
-        return AppError::BadRequest(i18n.t("game.cannot_invite_self")).error_response();
+        return AppError::BadRequest("game.cannot_invite_self").error_response();
     }
 
     let existing_ids = match service.check_existing_players(game_id).await {
@@ -256,7 +255,7 @@ pub async fn send_invites(
         .map(|id| id.to_string())
         .collect();
     if !already_in.is_empty() {
-        return AppError::Conflict(i18n.t("game.already_players")).error_response();
+        return AppError::Conflict("game.already_players").error_response();
     }
 
     if invited_user_ids.is_empty() {
@@ -429,7 +428,6 @@ pub async fn play_game(
     payload: web::Json<PlayCardRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::service::GamePlayService>>,
     service: web::Data<Arc<DashboardServiceType>>,
-    i18n: I18n,
 ) -> HttpResponse {
     let game_id = path.into_inner();
     let correlation_id = req.extensions().get::<CorrelationId>().copied();
@@ -446,7 +444,7 @@ pub async fn play_game(
     let player = match game.players.iter().find(|p| p.is_current_user) {
         Some(p) => p,
         None => {
-            return AppError::Forbidden(i18n.t("game.not_player")).error_response();
+            return AppError::Forbidden("game.not_player").error_response();
         }
     };
 
@@ -530,8 +528,7 @@ pub async fn mint_spectate_token(
         Err(e) => return e.error_response(),
     };
     if !participants.contains(&auth_user.user_id) {
-        return AppError::Forbidden("You are not a participant of this game".to_string())
-            .error_response();
+        return AppError::Forbidden("game.not_participant").error_response();
     }
 
     match jwt::generate_spectate_token(game_id, &auth_config, SPECTATE_TOKEN_TTL_SECS) {

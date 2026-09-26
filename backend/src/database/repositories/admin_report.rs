@@ -101,6 +101,15 @@ pub struct RefundReport {
     pub unplayed_run_credits: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TopupReportRow {
+    pub kind: String,
+    pub total_amount: i32,
+    pub credits: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub order_id: Option<String>,
+}
+
 #[allow(dead_code)]
 pub struct AdminReportRepository {
     connection: DatabaseConnection,
@@ -213,6 +222,44 @@ impl AdminReportRepository {
             }
         }
         Ok(report)
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn player_topup_report(
+        &self,
+        user_id: Uuid,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        to: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<Vec<TopupReportRow>, DbErr> {
+        let mut query = crate::database::models::topup_transaction::Entity::find()
+            .filter(crate::database::models::topup_transaction::Column::UserId.eq(user_id));
+
+        if let Some(from) = from {
+            query = query
+                .filter(crate::database::models::topup_transaction::Column::CreatedAt.gte(from));
+        }
+        if let Some(to) = to {
+            query =
+                query.filter(crate::database::models::topup_transaction::Column::CreatedAt.lte(to));
+        }
+
+        let topups = query
+            .order_by_desc(crate::database::models::topup_transaction::Column::CreatedAt)
+            .all(&self.connection)
+            .await?;
+
+        let report_rows: Vec<TopupReportRow> = topups
+            .into_iter()
+            .map(|t| TopupReportRow {
+                kind: t.kind.to_string(),
+                total_amount: t.amount_eur_cents,
+                credits: t.credits,
+                created_at: t.created_at,
+                order_id: t.order_id,
+            })
+            .collect();
+
+        Ok(report_rows)
     }
 
     /// Escrowed credits still provisioned for the user's active runs.

@@ -88,6 +88,48 @@ impl GameError {
         GameError::Internal(Box::new(std::io::Error::other(msg.into())))
     }
 
+    pub fn message_key(&self) -> &'static str {
+        match self {
+            GameError::Database(_) => "game.database_error",
+            GameError::GameNotFound => "game.not_found",
+            GameError::PlayerNotFound => "game.player_not_found",
+            GameError::CardNotFound => "game.card_not_found",
+            GameError::NotYourTurn => "game.not_your_turn",
+            GameError::InvalidCard => "game.invalid_card",
+            GameError::RoundNotComplete => "game.round_not_complete",
+            GameError::GameFinished => "game.game_finished",
+            GameError::InsufficientCredits { .. } => "game.insufficient_credits",
+            GameError::GameNotPending => "game.not_pending",
+            GameError::NotCreator => "game.not_creator",
+            GameError::NotInvited => "game.not_invited",
+            GameError::AlreadyJoined => "game.already_joined",
+            GameError::GameFull => "game.game_full",
+            GameError::CreatorCannotJoin => "game.creator_cannot_join",
+            GameError::GameNotReady => "game.not_ready",
+            GameError::AccountFrozen { .. } => "game.account_frozen",
+            GameError::CashoutLocked => "game.cashout_locked",
+            GameError::VersionConflict => "game.concurrent_modification",
+            GameError::Internal(_) => "server.internal_error",
+            GameError::ProfileNotFound => "game.profile_not_found",
+            GameError::StepByStepOnly => "game.step_by_step_only",
+            GameError::NotABot => "game.not_a_bot",
+            GameError::IdempotencyConflict => "game.idempotency_in_progress",
+            GameError::SpecialClaimNotAllowed => "game.special_claim_not_allowed",
+            GameError::ClaimPending => "game.claim_pending",
+        }
+    }
+
+    pub fn params(&self) -> Vec<(&'static str, String)> {
+        match self {
+            GameError::InsufficientCredits { required, current } => vec![
+                ("{required}", required.to_string()),
+                ("{current}", current.to_string()),
+            ],
+            GameError::AccountFrozen { until } => vec![("{until}", until.clone())],
+            _ => Vec::new(),
+        }
+    }
+
     pub fn source(&self) -> &'static str {
         match self {
             GameError::Database(_) => "game:database",

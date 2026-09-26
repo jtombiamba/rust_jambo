@@ -64,6 +64,7 @@ tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
 http = "1"
 utoipa = { version = "5", features = ["actix_extras", "uuid", "chrono", "macros"] }
 utoipa-swagger-ui = { version = "8", features = ["actix-web"] }
+dialoguer = "0.12.0"
 
 [[bin]]
 name = "ai-worker"
@@ -75,7 +76,7 @@ path = "src/bin/scheduler_worker.rs"
 
 [[bin]]
 name = "admin-cli"
-path = "src/bin/admin_cli.rs"
+path = "src/bin/admin_cli/main.rs"
 
 [[bin]]
 name = "load-test"

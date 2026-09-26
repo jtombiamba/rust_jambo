@@ -1,6 +1,6 @@
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -321,7 +321,12 @@ impl CashoutRepository {
         cashout_request::Entity::update_many()
             .col_expr(
                 cashout_request::Column::Status,
-                sea_orm::sea_query::Expr::value(CashoutStatus::Paid),
+                Expr::cust_with_values(
+                    "$1::cashout_status",
+                    [sea_orm::Value::String(Some(
+                        CashoutStatus::Paid.to_string(),
+                    ))],
+                ),
             )
             .col_expr(
                 cashout_request::Column::PaypalPayoutBatchId,
@@ -357,7 +362,10 @@ impl CashoutRepository {
         cashout_request::Entity::update_many()
             .col_expr(
                 cashout_request::Column::Status,
-                sea_orm::sea_query::Expr::value(status),
+                Expr::cust_with_values(
+                    "$1::cashout_status",
+                    [sea_orm::Value::String(Some(status.to_string()))],
+                ),
             )
             .col_expr(
                 cashout_request::Column::AdminNote,
