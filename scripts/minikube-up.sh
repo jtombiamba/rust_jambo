@@ -28,7 +28,7 @@ if [ "$MODE" != "local" ] && [ "$MODE" != "ghcr" ]; then
 fi
 
 # 1. Start minikube with the ingress addon
-minikube start --addons=ingress --cpus=4 --memory=8192
+minikube start --addons=ingress --addons=metrics-server --cpus=4 --memory=8192
 
 # 2. Build images directly into minikube's cache (local) or prep GHCR (ghcr)
 if [ "$MODE" = "local" ]; then
