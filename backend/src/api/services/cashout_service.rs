@@ -109,6 +109,9 @@ pub fn validate_credits(
     credits_per_eur: i32,
     max_eur_cents: i32,
 ) -> Result<(), AppError> {
+    if credits_per_eur <= 0 {
+        return Err(AppError::Internal("Invalid cashout configuration".into()));
+    }
     if credits < min_credits {
         return Err(AppError::BadRequestParams {
             key: "cashout.minimum",
@@ -133,7 +136,20 @@ pub fn validate_credits(
 
 fn is_valid_email(email: &str) -> bool {
     let trimmed = email.trim();
-    trimmed.contains('@') && trimmed.contains('.') && trimmed.len() <= 254
+    if trimmed.len() < 3 || trimmed.len() > 254 {
+        return false;
+    }
+    let parts: Vec<&str> = trimmed.splitn(2, '@').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    let local = parts[0];
+    let domain = parts[1];
+    !local.is_empty()
+        && !domain.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
 }
 
 #[cfg(test)]
@@ -167,9 +183,33 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_zero_credits_per_eur() {
+        assert!(matches!(
+            validate_credits(250, 250, 0, 2000),
+            Err(AppError::Internal(_))
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_negative_credits_per_eur() {
+        assert!(matches!(
+            validate_credits(250, 250, -250, 2000),
+            Err(AppError::Internal(_))
+        ));
+    }
+
+    #[test]
     fn email_validation() {
         assert!(is_valid_email("a@b.co"));
+        assert!(is_valid_email("user.name+tag@example.com"));
         assert!(!is_valid_email("not-an-email"));
+        assert!(!is_valid_email("@."));
+        assert!(!is_valid_email("@"));
+        assert!(!is_valid_email("a@"));
+        assert!(!is_valid_email("@b.co"));
+        assert!(!is_valid_email("a@b"));
+        assert!(!is_valid_email("a@.co"));
+        assert!(!is_valid_email("a@b."));
     }
 }
 

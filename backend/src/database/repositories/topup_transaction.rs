@@ -20,6 +20,7 @@ impl TopupTransactionRepository {
     }
 
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    #[allow(dead_code)]
     pub async fn create(
         &self,
         user_id: Uuid,
@@ -54,6 +55,38 @@ impl TopupTransactionRepository {
             .one(&self.connection)
             .await?;
         Ok(row.is_some())
+    }
+
+    /// Insert a top-up transaction without an `order_id` inside an existing
+    /// transaction.
+    ///
+    /// Used by the unfreeze flow, which is not keyed by a PayPal `order_id`
+    /// (the return endpoint is unauthenticated and resolves the user via
+    /// Redis). The insert participates in the caller's transaction so the
+    /// ledger row and the credit mutation commit or roll back atomically.
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn insert_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        user_id: Uuid,
+        kind: TopupTransactionKind,
+        amount_eur_cents: i32,
+        credits: i32,
+    ) -> Result<(), DbErr> {
+        let id = Uuid::now_v7();
+        let now = chrono::Utc::now();
+        topup_transaction::Entity::insert(topup_transaction::ActiveModel {
+            id: Set(id),
+            user_id: Set(user_id),
+            kind: Set(kind),
+            amount_eur_cents: Set(amount_eur_cents),
+            credits: Set(credits),
+            order_id: Set(None),
+            created_at: Set(now),
+        })
+        .exec_without_returning(txn)
+        .await?;
+        Ok(())
     }
 
     /// Insert a top-up transaction keyed by its PayPal `order_id`, skipping the
@@ -239,6 +272,23 @@ mod tests {
             .unwrap();
 
         assert!(inserted.is_some());
+    }
+
+    #[tokio::test]
+    async fn insert_in_txn_inserts_without_order_id() {
+        let user_id = Uuid::now_v7();
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+        let repo = TopupTransactionRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        repo.insert_in_txn(&txn, user_id, TopupTransactionKind::Unfreeze, 100, 250)
+            .await
+            .expect("insert should succeed");
     }
 
     #[tokio::test]

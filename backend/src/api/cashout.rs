@@ -46,33 +46,69 @@ pub async fn request_cashout(
     };
 
     let user_repo = UserRepository::new(db.get_ref().clone(), config.default_credit);
-    if let Ok(Some(user)) = user_repo.find_by_id(auth_user.user_id).await {
-        let lang = Lang::parse(&user.language).unwrap_or_default();
-        let mailer = mailer.clone();
-        let credits = response.credits;
-        let amount_eur_cents = response.amount_eur_cents;
-        let paypal_email = body.paypal_email.clone();
-        let user_email = user.email.clone();
-        let user_pseudo = user.pseudo.clone();
-        let admin_email = config.cashout_admin_email.clone();
-        tokio::spawn(async move {
-            let _ = mailer
-                .send_cashout_requested(&user_email, credits, amount_eur_cents, &paypal_email, lang)
-                .await;
-
-            if !admin_email.is_empty() {
-                let _ = mailer
-                    .send_cashout_admin_alert(
-                        &admin_email,
-                        &user_pseudo,
+    match user_repo.find_by_id(auth_user.user_id).await {
+        Ok(Some(user)) => {
+            let lang = Lang::parse(&user.language).unwrap_or_default();
+            let mailer = mailer.clone();
+            let credits = response.credits;
+            let amount_eur_cents = response.amount_eur_cents;
+            let paypal_email = body.paypal_email.clone();
+            let user_email = user.email.clone();
+            let user_pseudo = user.pseudo.clone();
+            let admin_email = config.cashout_admin_email.clone();
+            tokio::spawn(async move {
+                if let Err(e) = mailer
+                    .send_cashout_requested(
                         &user_email,
                         credits,
                         amount_eur_cents,
                         &paypal_email,
+                        lang,
                     )
-                    .await;
-            }
-        });
+                    .await
+                {
+                    tracing::warn!(
+                        user_email = %user_email,
+                        error = %e,
+                        "failed to send cashout request confirmation email to user"
+                    );
+                }
+
+                if !admin_email.is_empty() {
+                    if let Err(e) = mailer
+                        .send_cashout_admin_alert(
+                            &admin_email,
+                            &user_pseudo,
+                            &user_email,
+                            credits,
+                            amount_eur_cents,
+                            &paypal_email,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            admin_email = %admin_email,
+                            user_email = %user_email,
+                            error = %e,
+                            "failed to send cashout admin alert"
+                        );
+                    }
+                }
+            });
+        }
+        Ok(None) => {
+            tracing::warn!(
+                user_id = %auth_user.user_id,
+                "cashout request created but user not found; notification emails skipped"
+            );
+        }
+        Err(e) => {
+            tracing::error!(
+                user_id = %auth_user.user_id,
+                error = %e,
+                "cashout request created but failed to load user for notification emails"
+            );
+        }
     }
 
     HttpResponse::Ok().json(response)

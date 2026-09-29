@@ -76,23 +76,33 @@ impl PlayerProfileRepository {
         active.update(&self.connection).await
     }
 
-    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
-    pub async fn update_credit_and_frozen_until(
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn set_credit_and_unfreeze_in_txn(
         &self,
+        txn: &DatabaseTransaction,
         user_id: Uuid,
         credit: i32,
-        frozen_until: Option<chrono::DateTime<chrono::Utc>>,
-    ) -> Result<PlayerProfile, DbErr> {
-        let profile = player_profile::Entity::find()
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DbErr> {
+        use sea_orm::sea_query::{Expr, Value};
+
+        player_profile::Entity::update_many()
+            .col_expr(
+                player_profile::Column::Credit,
+                Expr::value(Value::Int(Some(credit))),
+            )
+            .col_expr(
+                player_profile::Column::FrozenUntil,
+                Expr::value(Value::ChronoDateTimeUtc(None)),
+            )
+            .col_expr(
+                player_profile::Column::UpdatedAt,
+                Expr::value(Value::ChronoDateTimeUtc(Some(now))),
+            )
             .filter(player_profile::Column::UserId.eq(user_id))
-            .one(&self.connection)
-            .await?
-            .ok_or_else(|| DbErr::Custom("PlayerProfile not found".to_string()))?;
-        let mut active: player_profile::ActiveModel = profile.into();
-        active.credit = Set(credit);
-        active.frozen_until = Set(frozen_until);
-        active.updated_at = Set(chrono::Utc::now());
-        active.update(&self.connection).await
+            .exec(txn)
+            .await?;
+        Ok(())
     }
 
     #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
@@ -302,10 +312,27 @@ fn settle_frozen_until(
 
 #[cfg(test)]
 mod tests {
-    use super::settle_frozen_until;
+    use super::*;
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, TransactionTrait};
 
     fn now() -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn set_credit_and_unfreeze_in_txn_updates_credit_and_clears_freeze() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+        let repo = PlayerProfileRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        repo.set_credit_and_unfreeze_in_txn(&txn, Uuid::now_v7(), 250, now())
+            .await
+            .expect("update should succeed");
     }
 
     #[test]

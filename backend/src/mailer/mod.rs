@@ -374,11 +374,13 @@ mod tests {
     #[test]
     #[serial]
     fn test_mailer_config_from_env_defaults() {
-        std::env::remove_var("MAILER_MODE");
+        std::env::set_var("MAILER_MODE", "console");
+        std::env::set_var("SMTP_HOST", "mailhog");
+        std::env::set_var("SMTP_PORT", "1025");
         let config = MailerConfig::from_env();
         assert_eq!(config.mailer_mode, "console");
-        assert_eq!(config.smtp_host, "smtp.gmail.com");
-        assert_eq!(config.smtp_port, 587);
+        assert_eq!(config.smtp_host, "mailhog");
+        assert_eq!(config.smtp_port, 1025);
     }
 
     #[test]
@@ -398,10 +400,11 @@ mod tests {
 
     #[test]
     fn test_create_mailer_console_mode() {
+        std::env::set_var("TOKIO_WORKER_THREADS", "1");
         let config = MailerConfig {
             mailer_mode: "console".to_string(),
-            smtp_host: "".to_string(),
-            smtp_port: 0,
+            smtp_host: "mailhog".to_string(),
+            smtp_port: 587,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
             smtp_tls: true,

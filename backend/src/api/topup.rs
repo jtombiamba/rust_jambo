@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::api::dto::requests::CaptureOrderRequest;
 use crate::api::dto::responses::{ApiErrorResponse, TopupCaptureResponse, TopupOrderResponse};
 use crate::api::payment_limits::{current_month_start, monthly_limit_exceeded, parse_eur_to_cents};
-use crate::api::unfreeze::close_window_html;
+use crate::api::unfreeze::{close_window_error_html, close_window_html};
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
 use crate::database::models::TopupTransactionKind;
@@ -362,7 +362,16 @@ pub async fn paypal_return_topup(
             PAYMENT_TOPUP_TOTAL.with_label_values(&["captured"]).inc();
             close_window_html("Payment Complete — Credits Added")
         }
-        Err(_) => close_window_html("Payment Complete — top up in progress (retry if needed)"),
+        Err(e) => {
+            tracing::error!(
+                user_id = %user_id,
+                order_id = %order_id,
+                error = %e,
+                "failed to finalize topup after payment on return"
+            );
+            PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]).inc();
+            close_window_error_html("Payment Error — could not finalize top up (contact support)")
+        }
     }
 }
 
