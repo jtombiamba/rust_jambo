@@ -1,3 +1,11 @@
+use futures_util::StreamExt;
+use uuid::Uuid;
+
+use super::WebSocketManager;
+use crate::game::service::compute_display_position;
+use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent, UserEvent};
+use crate::websocket::routing::{parse_channel, shard_for_id, Channel};
+
 impl WebSocketManager {
     /// Start a background task that subscribes to Redis channels and forwards messages.
     /// Uses N sharded subscriber tasks (N = min(num_cpus, 8)) to distribute load.
@@ -180,7 +188,15 @@ impl WebSocketManager {
     }
 
     /// Route a parsed game event to the appropriate delivery method.
-    async fn route_event(&self, game_id: Uuid, event: GameEvent) {
+    pub(super) async fn route_event(&self, game_id: Uuid, event: GameEvent) {
+        // Log the concrete event variant so we can detect duplicate
+        // deliveries of the same event (the logs showed the same game event
+        // processed twice within ~0.3ms).
+        tracing::info!(
+            "[WS-DIAG] route_event: game {} -> variant={}",
+            game_id,
+            event.variant_name()
+        );
         match &event {
             GameEvent::CardsDealt { player_id, .. } => {
                 self.send_to_player(game_id, *player_id, &event.to_json())
@@ -201,7 +217,8 @@ impl WebSocketManager {
                     inner.db.clone()
                 };
                 if let Some(db) = db {
-                    super::game_state::send_snapshots_to_all_players(self, &db, game_id).await;
+                    crate::websocket::game_state::send_snapshots_to_all_players(self, &db, game_id)
+                        .await;
                 }
             }
             _ => {
@@ -237,7 +254,7 @@ impl WebSocketManager {
     /// Send a personalized GameStarted event to each player with `display_position`
     /// rotated so that the receiving player is always at position 0 (south).
     /// Spectators receive the original (non-rotated) event.
-    async fn send_game_started_per_player(&self, game_id: Uuid, event: &GameEvent) {
+    pub(super) async fn send_game_started_per_player(&self, game_id: Uuid, event: &GameEvent) {
         let (players, current_turn, game_mode, correlation_id) = match event {
             GameEvent::GameStarted {
                 players,
@@ -294,12 +311,12 @@ impl WebSocketManager {
     }
 
     /// Route a parsed room event to broadcast to room connections.
-    async fn route_room_event(&self, room_id: Uuid, event: RoomEvent) {
+    pub(super) async fn route_room_event(&self, room_id: Uuid, event: RoomEvent) {
         self.broadcast_to_room(room_id, &event.to_json()).await;
     }
 
     /// Route a parsed user event to the target user's connections.
-    async fn route_user_event(&self, user_id: Uuid, event: UserEvent) {
+    pub(super) async fn route_user_event(&self, user_id: Uuid, event: UserEvent) {
         self.broadcast_to_user(user_id, &event.to_json()).await;
     }
 }

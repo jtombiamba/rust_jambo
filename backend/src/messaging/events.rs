@@ -248,6 +248,32 @@ impl GameEvent {
         serde_json::to_string(self).expect("Failed to serialize GameEvent")
     }
 
+    /// Returns the snake_case variant name of this event (matching the `type`
+    /// tag used in its JSON representation). Useful for diagnostics/logging.
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            GameEvent::CardPlayed { .. } => "card_played",
+            GameEvent::RoundCompleted { .. } => "round_completed",
+            GameEvent::GameFinished { .. } => "game_finished",
+            GameEvent::TurnChanged { .. } => "turn_changed",
+            GameEvent::PlayerJoined { .. } => "player_joined",
+            GameEvent::GameCancelled { .. } => "game_cancelled",
+            GameEvent::GameReady { .. } => "game_ready",
+            GameEvent::CardsDealt { .. } => "cards_dealt",
+            GameEvent::GameStarted { .. } => "game_started",
+            GameEvent::PlayerDisconnected { .. } => "player_disconnected",
+            GameEvent::PlayerReconnected { .. } => "player_reconnected",
+            GameEvent::StalenessWarning { .. } => "staleness_warning",
+            GameEvent::PlayerKicked { .. } => "player_kicked",
+            GameEvent::GameReshuffled { .. } => "game_reshuffled",
+            GameEvent::PlayerForfeitWin { .. } => "player_forfeit_win",
+            GameEvent::ClaimPending { .. } => "claim_pending",
+            GameEvent::ClaimOffered { .. } => "claim_offered",
+            GameEvent::ClaimResolved { .. } => "claim_resolved",
+            GameEvent::SpecialClaim { .. } => "special_claim",
+        }
+    }
+
     /// Deserialize from JSON string.
     #[allow(dead_code)]
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {

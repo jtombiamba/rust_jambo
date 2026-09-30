@@ -1,55 +1,14 @@
-use crate::game::service::compute_display_position;
-use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent, UserEvent};
-use crate::messaging::RedisClient;
-use crate::observability::metrics;
-use crate::observability::CorrelationId;
 use chrono::Utc;
-use futures_util::StreamExt;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
-use tokio::time;
+use std::time::Instant;
 use uuid::Uuid;
 
-use super::connection::{ConnectionId, TrackedConnection, WsSender};
-use super::routing::{parse_channel, shard_for_id, Channel};
-
-/// Inner shared state for the WebSocket manager.
-struct Inner {
-    /// Map from game ID to list of active tracked connections.
-    connections: HashMap<Uuid, Vec<TrackedConnection>>,
-    /// Map from room ID to list of active tracked connections.
-    room_connections: HashMap<Uuid, Vec<TrackedConnection>>,
-    /// Map from user ID to list of active tracked connections (user-scoped,
-    /// e.g. for real-time invitation push).
-    user_connections: HashMap<Uuid, Vec<TrackedConnection>>,
-    /// Redis client for publishing/subscribing to game events.
-    redis_client: Option<RedisClient>,
-    /// Database connection for querying game state snapshots.
-    db: Option<sea_orm::DatabaseConnection>,
-}
-
-/// The WebSocket manager that coordinates connections and broadcasts.
-#[derive(Clone)]
-pub struct WebSocketManager {
-    inner: Arc<RwLock<Inner>>,
-}
+use super::WebSocketManager;
+use crate::messaging::events::GameEvent;
+use crate::observability::metrics;
+use crate::observability::CorrelationId;
+use crate::websocket::connection::{ConnectionId, TrackedConnection, WsSender};
 
 impl WebSocketManager {
-    /// Create a new WebSocket manager with an optional Redis client and database connection.
-    pub fn new(redis_client: Option<RedisClient>, db: Option<sea_orm::DatabaseConnection>) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(Inner {
-                connections: HashMap::new(),
-                room_connections: HashMap::new(),
-                user_connections: HashMap::new(),
-                redis_client,
-                db,
-            })),
-        }
-    }
-
     /// Add a new WebSocket connection for a given game.
     /// Returns a connection ID that can be used to remove the connection later.
     pub async fn add_connection(
@@ -89,6 +48,17 @@ impl WebSocketManager {
             conn_uuid,
             game_id,
             cid_display
+        );
+        // Confirm the game is now present in the map and how many
+        // connections it holds, so we can correlate registration timing with
+        // any subsequent "No connections" broadcast warnings.
+        let known_games: Vec<String> = inner.connections.keys().map(|g| g.to_string()).collect();
+        tracing::info!(
+            "[WS-DIAG] add_connection: game {} now has {} connection(s); known_games={:?} (count={})",
+            game_id,
+            inner.connections.get(&game_id).map(|c| c.len()).unwrap_or(0),
+            known_games,
+            known_games.len()
         );
         metrics::WS_CONNECTIONS_ACTIVE.inc();
         connection_id
@@ -234,6 +204,18 @@ impl WebSocketManager {
                     inner.connections.remove(&game_id);
                     tracing::info!("No more connections for game {}, removed from map", game_id);
                 }
+                // Record the post-removal map state so we can tell
+                // whether a later "No connections" broadcast raced with this
+                // removal (i.e. the game was present before, gone after).
+                let known_games: Vec<String> =
+                    inner.connections.keys().map(|g| g.to_string()).collect();
+                tracing::info!(
+                    "[WS-DIAG] remove_connection: game {} now has {} connection(s); known_games={:?} (count={})",
+                    game_id,
+                    inner.connections.get(&game_id).map(|c| c.len()).unwrap_or(0),
+                    known_games,
+                    known_games.len()
+                );
                 conn_info.unwrap_or((None, None, true))
             } else {
                 tracing::warn!(
@@ -343,7 +325,19 @@ impl WebSocketManager {
                 }
             }
         } else {
-            tracing::warn!("No connections for game {}, message not broadcast", game_id);
+            // Record the set of game IDs currently known to this
+            // manager so we can tell whether the game was never registered or
+            // was already removed when the broadcast arrived.
+            let known_games: Vec<String> =
+                inner.connections.keys().map(|g| g.to_string()).collect();
+            tracing::warn!(
+                "[WS-DIAG] No connections for game {}, message not broadcast. \
+                 known_games={:?} (count={}), message_len={}",
+                game_id,
+                known_games,
+                known_games.len(),
+                message.len()
+            );
         }
     }
 
@@ -474,96 +468,4 @@ impl WebSocketManager {
         let inner = self.inner.read().await;
         inner.connections.values().map(|c| c.len()).sum()
     }
-
-    /// Get the Redis client for publishing events.
-    pub async fn redis_client(&self) -> Option<RedisClient> {
-        let inner = self.inner.read().await;
-        inner.redis_client.clone()
-    }
-
-    /// Add a new WebSocket connection for a given room.
-    pub async fn add_room_connection(
-        &self,
-        room_id: Uuid,
-        sender: WsSender,
-        correlation_id: CorrelationId,
-    ) -> ConnectionId {
-        let mut inner = self.inner.write().await;
-        let connection_id = ConnectionId::new();
-
-        inner
-            .room_connections
-            .entry(room_id)
-            .or_default()
-            .push(TrackedConnection {
-                sender,
-                id: connection_id,
-                correlation_id,
-                last_activity: Instant::now(),
-                player_id: None,
-                player_position: None,
-                disconnected: false,
-                last_pong: Instant::now(),
-                spectator: false,
-            });
-
-        metrics::WS_CONNECTIONS_ACTIVE.inc();
-        tracing::info!(
-            "Added room connection {} (correlation_id={}) for room {}",
-            connection_id.uuid(),
-            correlation_id,
-            room_id
-        );
-        connection_id
-    }
-
-    /// Remove a WebSocket connection for a room.
-    pub async fn remove_room_connection(&self, room_id: Uuid, connection_id: ConnectionId) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.room_connections.get_mut(&room_id) {
-            connections.retain(|c| c.id != connection_id);
-            if connections.is_empty() {
-                inner.room_connections.remove(&room_id);
-            }
-            metrics::WS_CONNECTIONS_ACTIVE.dec();
-            metrics::WS_DISCONNECTS_TOTAL.inc();
-            tracing::info!(
-                "Removed room connection {} for room {}",
-                connection_id.uuid(),
-                room_id
-            );
-        }
-    }
-
-    /// Broadcast a message to all connections of a specific room.
-    pub async fn broadcast_to_room(&self, room_id: Uuid, message: &str) {
-        let inner = self.inner.read().await;
-        if let Some(connections) = inner.room_connections.get(&room_id) {
-            for connection in connections {
-                match connection.sender.send(message.to_string()) {
-                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
-                    Err(e) => {
-                        metrics::WS_SEND_FAILED_TOTAL.inc();
-                        tracing::warn!(
-                            "Failed to send message to room connection {}: {}",
-                            connection.id.uuid(),
-                            e
-                        );
-                    }
-                }
-            }
-        }
-    }
 }
-
-include!("manager_user.rs");
-
-include!("manager_spectators.rs");
-
-include!("manager_redis.rs");
-
-include!("manager_cleanup.rs");
-
-#[cfg(test)]
-#[path = "manager_tests.rs"]
-mod tests;

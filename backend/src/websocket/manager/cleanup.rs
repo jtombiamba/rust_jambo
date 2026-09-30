@@ -1,3 +1,10 @@
+use std::time::{Duration, Instant};
+use tokio::time;
+use uuid::Uuid;
+
+use super::WebSocketManager;
+use crate::observability::metrics;
+
 impl WebSocketManager {
     /// Clean up stale connections that haven't had activity for more than `max_idle_duration`
     /// or haven't responded to pings within `heartbeat_timeout`.
