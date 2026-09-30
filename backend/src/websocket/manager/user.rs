@@ -1,3 +1,11 @@
+use std::time::Instant;
+use uuid::Uuid;
+
+use super::WebSocketManager;
+use crate::observability::metrics;
+use crate::observability::CorrelationId;
+use crate::websocket::connection::{ConnectionId, TrackedConnection, WsSender};
+
 impl WebSocketManager {
     /// Add a new WebSocket connection for a specific user.
     pub async fn add_user_connection(

@@ -146,6 +146,8 @@ impl SmtpMailer {
             )
             .map_err(|e| format!("Failed to register fr/room_invitation template: {e}"))?;
 
+        super::register_cashout_templates(&mut handlebars)?;
+
         let translator = Arc::new(Translator::new());
 
         Ok(Self {
@@ -485,6 +487,112 @@ impl Mailer for SmtpMailer {
             .map_err(|e| format!("Failed to send email: {e}"))?;
 
         tracing::info!("Room invitation email sent to {to_email} for room {room_name}");
+        Ok(())
+    }
+
+    async fn send_cashout_requested(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::CashoutRequestedEmail {
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            paypal_email: paypal_email.to_string(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_requested", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        let subject = super::cashout_subject("cashout_requested", lang);
+        self.send_html(to, subject, html).await
+    }
+
+    async fn send_cashout_rejected(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::CashoutRejectedEmail {
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_rejected", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        let subject = super::cashout_subject("cashout_rejected", lang);
+        self.send_html(to, subject, html).await
+    }
+
+    async fn send_cashout_admin_alert(
+        &self,
+        to_email: &str,
+        pseudo: &str,
+        email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+    ) -> Result<(), String> {
+        let data = super::CashoutAdminAlertEmail {
+            pseudo: pseudo.to_string(),
+            email: email.to_string(),
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            paypal_email: paypal_email.to_string(),
+        };
+
+        let html = self
+            .handlebars
+            .render("en_cashout_admin_alert", &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        self.send_html(to, "New cashout request".to_string(), html)
+            .await
+    }
+}
+
+impl SmtpMailer {
+    async fn send_html(&self, to: Mailbox, subject: String, html: String) -> Result<(), String> {
+        let email = Message::builder()
+            .from(self.from.clone())
+            .to(to)
+            .subject(subject)
+            .header(lettre::message::header::ContentType::TEXT_HTML)
+            .body(html)
+            .map_err(|e| format!("Failed to build email: {e}"))?;
+
+        // `send` is lettre's AsyncSmtpTransport::send, which runs on the Tokio
+        // runtime and yields; it does not block the worker thread.
+        self.mailer
+            .send(email)
+            .await
+            .map_err(|e| format!("Failed to send email: {e}"))?;
         Ok(())
     }
 }

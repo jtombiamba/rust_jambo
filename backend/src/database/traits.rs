@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::database::models::game_invite;
 use crate::database::models::{
-    Game, GameCard, GameRun, GameRunEvent, GameRunGame, GameRunPlayer, GameStatus, Player,
-    PlayerProfile, PlayerType, RunStatus, User,
+    CashoutRequest, Game, GameCard, GameRun, GameRunEvent, GameRunGame, GameRunPlayer, GameStatus,
+    Player, PlayerProfile, PlayerType, RunStatus, User,
 };
 
 use crate::api::dto::dashboard::GameFilter;
@@ -268,4 +268,43 @@ pub trait GameRunEventRepoTrait: Send + Sync {
         event_type: &str,
         data: Option<&str>,
     ) -> Result<GameRunEvent, DbErr>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CashoutRequestError {
+    #[error("Account is locked pending a cashout request")]
+    Locked,
+    #[error("Insufficient credits")]
+    InsufficientCredits,
+    #[error("Player profile not found")]
+    ProfileNotFound,
+    #[error(transparent)]
+    Db(#[from] DbErr),
+}
+
+impl From<sea_orm::TransactionError<DbErr>> for CashoutRequestError {
+    fn from(e: sea_orm::TransactionError<DbErr>) -> Self {
+        match e {
+            sea_orm::TransactionError::Connection(e) => CashoutRequestError::Db(e),
+            sea_orm::TransactionError::Transaction(e) => CashoutRequestError::Db(e),
+        }
+    }
+}
+
+#[async_trait]
+#[allow(dead_code)]
+pub trait CashoutRepoTrait: Send + Sync {
+    async fn list_paginated(
+        &self,
+        user_id: Uuid,
+        page: u64,
+        per_page: u64,
+    ) -> Result<(Vec<CashoutRequest>, u64), DbErr>;
+    async fn request(
+        &self,
+        user_id: Uuid,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+    ) -> Result<CashoutRequest, CashoutRequestError>;
 }

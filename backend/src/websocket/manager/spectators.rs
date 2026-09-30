@@ -1,3 +1,8 @@
+use uuid::Uuid;
+
+use super::WebSocketManager;
+use crate::observability::metrics;
+
 impl WebSocketManager {
     /// Mark the most recently added connection for a game as a spectator, then
     /// refresh the per-game spectator gauge.
@@ -54,7 +59,7 @@ impl WebSocketManager {
     /// all) to bound label cardinality.
     ///
     /// Takes the read lock internally, so callers must not hold the write lock.
-    async fn refresh_spectator_gauge(&self, game_id: Uuid) {
+    pub(super) async fn refresh_spectator_gauge(&self, game_id: Uuid) {
         let count = {
             let inner = self.inner.read().await;
             inner

@@ -45,7 +45,7 @@ A real‑time, multiplayer card game (Jambo / FapFap Game) with:
 | I18n | Backend: `Translator` + JSON; Frontend: `i18next` |
 | Metrics | Prometheus (`/metrics` endpoint, 42+ families) |
 | Tracing | `tracing` + CorrelationId (HTTP → Redis → RabbitMQ → WS) |
-| Payments | PayPal REST API (unfreeze + topup) |
+| Payments | PayPal REST API (unfreeze + topup + cashout payouts) |
 
 ### Game Rules Summary
 
@@ -56,6 +56,15 @@ A real‑time, multiplayer card game (Jambo / FapFap Game) with:
   - `Kora` (1× multiplier): round starter is NOT the winner
   - `DoubleKora` (2× multiplier): round starter IS the winner
   - KORA events end the game immediately with amplified payouts
+- **Special cards** (evaluated per 5‑card hand at game start): `triple_seven`
+  (3+ sevens), `sum_under_21` (sum of ranks < 21), `a_square` (four of a kind).
+  Strength: `a_square` > `sum_under_21` > `triple_seven`. The unique top holder
+  is offered a claim (immediate win) or may decline; an unclaimed combo held by
+  the winner upgrades the result to `Kora`.
+- **Cashout**: player requests a payout (multiple of `CASHOUT_CREDITS_PER_EUR`,
+  min `CASHOUT_MIN_CREDITS`, cap `CASHOUT_MAX_EUR_CENTS`) to a PayPal account.
+  Credits are reserved and the profile locked until an admin approves/rejects
+  (1‑day auto‑reject fallback); payout via PayPal Payouts.
 
 **Card index → suit/rank mapping:**
 
@@ -302,6 +311,26 @@ Frontend          Backend API        Orchestrator        GameService         Red
 | `turn_order.rs` | `next_player()` — cyclic turn advancement |
 | `round_evaluation.rs` | `evaluate_round()` — determines round winner, detects KORA |
 | `payment.rs` | `calculate_payment()` — computes bets, KORA multipliers, holds |
+
+#### Randomness & Card Dealing
+
+All randomness in the game engine is delegated to the [`rand`](https://crates.io/crates/rand) crate
+(v0.10) rather than hand‑rolled seeding. There is **no `srand()`/seed parameter** — this is deliberate:
+
+- **Source**: `rand::rng()` returns the thread‑local CSPRNG (ChaCha12), which is automatically
+  seeded from the OS entropy source (`getrandom`, i.e. `/dev/urandom` / `RDRAND` / syscalls).
+  No explicit seed is supplied anywhere in the codebase.
+- **Card dealing**: `distribution.rs` builds the 32 card indices, then applies a Fisher–Yates
+  shuffle via `cards.shuffle(&mut rng)` (`SliceRandom`). This is unbiased and guarantees a uniform
+  random permutation, from which each of the 4 players is dealt 5 cards.
+- **Turn selection**: `quick_game.rs` picks the opening player with
+  `rand::rng().random_range(0..4)`.
+- **Bot strategy selection**: `strategy.rs::StrategyChoice::random_high()` uses
+  `choices.choose(&mut rng)` (`IndexedRandom`) to pick among `LongUp`/`LongDown`/`MidUp`/`MidDown`.
+
+Using OS entropy (rather than a hand‑picked "big seed number") is *stronger*: the seed is
+cryptographically random per call, is not stored in code or config, and each invocation of
+`rand::rng()` draws fresh entropy without introducing predictable global state.
 
 ### 3.3 `src/websocket/` — Real‑Time Communication
 
@@ -598,6 +627,12 @@ Frontend          Backend API        Orchestrator        GameService         Red
 2. `POST /api/me/topup` creates PayPal order.
 3. PayPal checkout → redirect to `/api/paypal/topup/return`.
 4. Backend captures, adds credits.
+
+> **Monthly spending cap**: topup and unfreeze payments are recorded in the
+> `topup_transactions` table and share a combined monthly limit
+> (`TOPUP_MONTHLY_LIMIT_EUR_CENTS`, default 100 €). The cap is checked before a
+> PayPal order is created; completed payments are persisted so the limit
+> survives restarts and Redis loss.
 
 ### UC12: Staleness Detection & Recovery
 1. Scheduler task `detect_stalled_games` runs periodically.

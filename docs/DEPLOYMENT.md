@@ -383,3 +383,59 @@ the env vars read by [`backend/src/config.rs`](../backend/src/config.rs) and
   GHCR-built images), so it does not need the `ghcr-pull` pull secret.
 - The backup script needs `S3_*` credentials; if they are missing the job fails
   fast with a clear error rather than uploading an empty dump.
+
+---
+
+## Admin CLI & cashout
+
+The backend ships an `admin-cli` binary (built alongside the other binaries in
+`backend/`). It connects directly to the database, so it must only be run by
+trusted operators (never exposed over the network).
+
+### Bootstrap the first admin key
+
+The first key can be created while the `admin_keys` table is empty (no keypass
+required); subsequent operations require a valid keypass.
+
+```bash
+cd backend
+cargo run --bin admin-cli -- keys add --label ops
+# prints a one-time keypass — store it safely
+```
+
+For non-interactive use, set `ADMIN_CLI_KEYPASS`:
+
+```bash
+ADMIN_CLI_KEYPASS=... cargo run --bin admin-cli -- keys list
+```
+
+### Cashout workflow
+
+1. Enable cashouts and configure the limits (see the `CASHOUT_*` env vars in
+   `.env.example`). PayPal **Payouts** must be enabled on the PayPal account for
+   payouts to succeed.
+2. Players request a cashout from their profile (`POST /api/me/cashout`),
+   providing a PayPal email. Credits are reserved and the account is locked.
+3. Review and action requests from the CLI:
+
+```bash
+admin-cli cashout list --status requested
+admin-cli cashout show <id>                 # fraud cross-check (refund report)
+admin-cli cashout approve <id> --note "KYC ok"
+admin-cli cashout pay <id>                  # triggers the PayPal payout
+admin-cli cashout reject <id> --note "failed KYC"
+```
+
+- `reject` refunds the reserved credits and unlocks the account.
+- `approve` unlocks the account; `pay` then issues the PayPal payout.
+- Requests left `requested` for more than `CASHOUT_AUTO_REJECT_AFTER_SECS`
+  (default 1 day) are auto-rejected and refunded by the scheduler.
+
+### Player refund report
+
+Cross-check a player's cashout against their actual games:
+
+```bash
+admin-cli report player-refund --user <UUID|pseudo> \
+  --types solo,multiplayer,run --format table
+```

@@ -16,4 +16,18 @@ impl ValidationError {
             ValidationError::CardIndexOutOfRange(_) => "validation:card_index_out_of_range",
         }
     }
+
+    pub fn message_key(&self) -> &'static str {
+        match self {
+            ValidationError::MissingField(_) => "validation.missing_field",
+            ValidationError::CardIndexOutOfRange(_) => "validation.card_index_range",
+        }
+    }
+
+    pub fn params(&self) -> Vec<(&'static str, String)> {
+        match self {
+            ValidationError::MissingField(field) => vec![("{0}", field.clone())],
+            ValidationError::CardIndexOutOfRange(index) => vec![("{0}", index.to_string())],
+        }
+    }
 }

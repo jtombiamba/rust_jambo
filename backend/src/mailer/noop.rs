@@ -119,6 +119,8 @@ impl NoopMailer {
             )
             .map_err(|e| format!("Failed to register fr/room_invitation template: {e}"))?;
 
+        super::register_cashout_templates(&mut handlebars)?;
+
         let translator = Arc::new(Translator::new());
 
         Ok(Self {
@@ -324,6 +326,86 @@ impl Mailer for NoopMailer {
 
         tracing::info!(
             "[MAILER] Room invitation for {to_email} from {inviter_name} to join \"{room_name}\" (code: {invitation_code})\nLink: {join_link}\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_cashout_requested(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::CashoutRequestedEmail {
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            paypal_email: paypal_email.to_string(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_requested", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Cashout requested email for {to_email} (credits={credits}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_cashout_rejected(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::CashoutRejectedEmail {
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_rejected", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Cashout rejected email for {to_email} (credits={credits}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_cashout_admin_alert(
+        &self,
+        to_email: &str,
+        pseudo: &str,
+        email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+    ) -> Result<(), String> {
+        let data = super::CashoutAdminAlertEmail {
+            pseudo: pseudo.to_string(),
+            email: email.to_string(),
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            paypal_email: paypal_email.to_string(),
+        };
+
+        let html = self
+            .handlebars
+            .render("en_cashout_admin_alert", &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Cashout admin alert to {to_email} (player {pseudo}, credits={credits}):\nHTML:\n{html}"
         );
         Ok(())
     }

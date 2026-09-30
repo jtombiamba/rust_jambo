@@ -27,6 +27,8 @@ pub enum RoomServiceError {
     Internal(String),
     #[error("Account frozen")]
     AccountFrozen,
+    #[error("Account is locked pending a cashout request")]
+    CashoutLocked,
     #[error("Game not found")]
     GameNotFound,
     #[error("Not enough players to start")]
@@ -68,6 +70,7 @@ impl RoomServiceError {
             RoomServiceError::Database(_) => "room:database",
             RoomServiceError::Internal(_) => "room:internal",
             RoomServiceError::AccountFrozen => "room:account_frozen",
+            RoomServiceError::CashoutLocked => "room:cashout_locked",
             RoomServiceError::GameNotFound => "room:game_not_found",
             RoomServiceError::NotEnoughPlayers => "room:not_enough_players",
             RoomServiceError::RunCompleted => "room:run_completed",
@@ -104,6 +107,7 @@ impl actix_web::ResponseError for RoomServiceError {
             | RoomServiceError::NotEnoughPlayers
             | RoomServiceError::TooManyPlayers { .. } => StatusCode::BAD_REQUEST,
             RoomServiceError::AccountFrozen => StatusCode::FORBIDDEN,
+            RoomServiceError::CashoutLocked => StatusCode::FORBIDDEN,
             RoomServiceError::RunCompleted | RoomServiceError::RunNotActive { .. } => {
                 StatusCode::BAD_REQUEST
             }

@@ -100,7 +100,7 @@ impl GameService {
             redis_client: None,
             accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
             freeze_duration_secs: 86400,
-            unfreeze_credit_no_payment: 250,
+            unfreeze_credit_no_payment: 50,
             mailer: None,
             bot_scheduler: None,
         }
@@ -115,7 +115,7 @@ impl GameService {
             redis_client,
             accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
             freeze_duration_secs: 86400,
-            unfreeze_credit_no_payment: 250,
+            unfreeze_credit_no_payment: 50,
             mailer: None,
             bot_scheduler: None,
         }

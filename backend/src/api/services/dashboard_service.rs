@@ -81,6 +81,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             .get_cached::<PlayerProfileResponse>(&format!("dashboard:profile:{user_id}"))
             .await
         {
+            tracing::info!("Cache hit for profile of user_id: {}", user_id);
             return Ok(cached);
         }
 
@@ -97,6 +98,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 wins: p.wins,
                 kora_wins: p.kora_wins,
                 frozen_until: p.frozen_until.map(|t| t.to_rfc3339()),
+                cashout_locked: p.cashout_locked,
             },
             None => PlayerProfileResponse {
                 credit: self.default_credit,
@@ -104,6 +106,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
                 wins: 0,
                 kora_wins: 0,
                 frozen_until: None,
+                cashout_locked: false,
             },
         };
 
@@ -231,24 +234,19 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             .find_player_by_game_and_user(game_id, user_id)
             .await
             .map_err(AppError::Database)?
-            .ok_or_else(|| {
-                AppError::NotFound("Game not found or you are not a participant".into())
-            })?;
+            .ok_or_else(|| AppError::NotFound("game.not_participant"))?;
 
         let game = self
             .repo
             .find_game_by_id(game_id)
             .await
             .map_err(AppError::Database)?
-            .ok_or_else(|| AppError::NotFound("Game not found".into()))?;
+            .ok_or_else(|| AppError::NotFound("game.not_found"))?;
 
         match game.status {
             GameStatus::Active | GameStatus::Pending | GameStatus::Ready => {}
             _ => {
-                return Err(AppError::Conflict(format!(
-                    "Game already finished: {:?}",
-                    game.status
-                )));
+                return Err(AppError::Conflict("game.game_finished"));
             }
         }
 
@@ -263,7 +261,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             .map_err(AppError::Database)?;
 
         if players.is_empty() {
-            return Err(AppError::NotFound("No active game found".into()));
+            return Err(AppError::NotFound("game.no_active_game"));
         }
 
         for p in &players {
@@ -285,7 +283,7 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
             }
         }
 
-        Err(AppError::NotFound("No active game found".into()))
+        Err(AppError::NotFound("game.no_active_game"))
     }
 
     pub async fn resolve_invite_user_ids(

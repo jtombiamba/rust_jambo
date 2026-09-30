@@ -1,3 +1,6 @@
+pub mod admin_key;
+pub mod admin_report;
+pub mod cashout;
 pub mod dashboard;
 pub mod game;
 pub mod game_card;
@@ -10,6 +13,7 @@ pub mod game_run_player;
 pub mod player;
 pub mod player_profile;
 pub mod room;
+pub mod topup_transaction;
 pub mod user;
 
 pub use dashboard::DashboardRepository;
@@ -23,4 +27,11 @@ pub use game_run_player::GameRunPlayerRepository;
 pub use player::{PlayerRepository, QuickGamePlayerRow};
 pub use player_profile::PlayerProfileRepository;
 pub use room::{RoomMemberRepository, RoomRepository};
+pub use topup_transaction::TopupTransactionRepository;
 pub use user::UserRepository;
+
+#[allow(unused_imports)]
+pub use admin_key::AdminKeyRepository;
+#[allow(unused_imports)]
+pub use admin_report::AdminReportRepository;
+pub use cashout::CashoutRepository;

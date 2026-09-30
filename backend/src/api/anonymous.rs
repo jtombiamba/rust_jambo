@@ -14,7 +14,7 @@ pub async fn get_anonymous_stats() -> impl Responder {
         games_allowed: 10,
         games_played: 0,
         total_wins: 0,
-        credits: 500,
+        credits: 100,
     };
     let json_str = serde_json::to_string(&stats).unwrap_or_default();
     // tracing::debug!("[DEBUG] AnonymousStatsResponse JSON: {}", json_str);
@@ -37,6 +37,6 @@ mod tests {
         assert_eq!(body["games_allowed"], 10);
         assert_eq!(body["games_played"], 0);
         assert_eq!(body["total_wins"], 0);
-        assert_eq!(body["credits"], 500);
+        assert_eq!(body["credits"], 100);
     }
 }

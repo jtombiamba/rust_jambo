@@ -113,6 +113,7 @@ impl UserRepository {
                         country_code: ActiveValue::NotSet,
                         city: ActiveValue::NotSet,
                         frozen_until: ActiveValue::NotSet,
+                        cashout_locked: ActiveValue::NotSet,
                         created_at: Set(now),
                         updated_at: Set(now),
                     };

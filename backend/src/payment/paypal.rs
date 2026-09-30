@@ -31,6 +31,12 @@ struct Amount {
 }
 
 #[derive(Debug, Serialize)]
+struct AmountV1 {
+    currency: String,
+    value: String,
+}
+
+#[derive(Debug, Serialize)]
 struct ApplicationContext {
     return_url: String,
     cancel_url: String,
@@ -67,6 +73,42 @@ pub struct OrderCreated {
 pub struct CaptureResult {
     pub success: bool,
     pub order_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct PayoutItem {
+    recipient_type: String,
+    amount: AmountV1,
+    note: String,
+    receiver: String,
+}
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct PayoutSenderBatchHeader {
+    sender_batch_id: String,
+    email_subject: String,
+    email_message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[allow(dead_code)]
+struct CreatePayoutRequest {
+    sender_batch_header: PayoutSenderBatchHeader,
+    items: Vec<PayoutItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CreatePayoutResponse {
+    batch_header: PayoutBatchHeader,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct PayoutBatchHeader {
+    payout_batch_id: String,
 }
 
 impl PaymentService {
@@ -271,6 +313,62 @@ impl PaymentService {
             success: true,
             order_id: order_id.to_string(),
         })
+    }
+
+    /// Create a single PayPal Payout to a recipient email. `item_id` is used as
+    /// the idempotent `sender_batch_id`, so retrying the same request does not
+    /// create a duplicate payout.
+    #[allow(dead_code)]
+    pub async fn create_payout(
+        &self,
+        paypal_email: &str,
+        amount_eur_cents: i32,
+        item_id: &str,
+    ) -> Result<String, String> {
+        let access_token = self.get_access_token().await?;
+
+        let value = format!("{:.2}", amount_eur_cents as f64 / 100.0);
+        let request = CreatePayoutRequest {
+            sender_batch_header: PayoutSenderBatchHeader {
+                sender_batch_id: item_id.to_string(),
+                email_subject: "Your Jambo cashout".to_string(),
+                email_message: "Your Jambo cashout has been paid.".to_string(),
+            },
+            items: vec![PayoutItem {
+                recipient_type: "EMAIL".to_string(),
+                amount: AmountV1 {
+                    currency: "EUR".to_string(),
+                    value,
+                },
+                note: "Jambo cashout".to_string(),
+                receiver: paypal_email.to_string(),
+            }],
+        };
+
+        let response = self
+            .client
+            .post(format!("{}/v1/payments/payouts", self.base_url))
+            .bearer_auth(&access_token)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| format!("PayPal create payout request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "PayPal create payout failed ({}): {}",
+                status, body
+            ));
+        }
+
+        let payout: CreatePayoutResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse PayPal payout response: {}", e))?;
+
+        Ok(payout.batch_header.payout_batch_id)
     }
 }
 

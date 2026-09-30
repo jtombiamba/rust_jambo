@@ -267,7 +267,7 @@ const GameTable: React.FC<GameTableProps> = ({
       )}
 
       <div className="hidden md:flex items-center justify-between mb-4 sm:mb-6">
-        <h2 className="text-xl sm:text-2xl font-bold">{t('game.gameTable')}</h2>
+        <h2 className="text-xl sm:text-2xl font-bold font-pixel">{t('game.gameTable')}</h2>
         {!spectatorMode && (
           <button
             onClick={() => setRulesOpen(true)}
@@ -279,7 +279,7 @@ const GameTable: React.FC<GameTableProps> = ({
       </div>
 
       <div
-        className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px] rounded-xl overflow-hidden"
+        className="relative min-h-[400px] sm:min-h-[500px] md:min-h-[600px] rounded-xl overflow-hidden font-pixel"
         style={tableBackgroundStyle}
       >
         <div className="absolute inset-0 bg-black/20 pointer-events-none"></div>

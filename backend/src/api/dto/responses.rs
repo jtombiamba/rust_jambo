@@ -279,6 +279,34 @@ pub struct ApiErrorResponse {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CashoutRequestResponse {
+    pub id: Uuid,
+    pub credits: i32,
+    pub amount_eur_cents: i32,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CashoutHistoryItem {
+    pub id: Uuid,
+    pub credits: i32,
+    pub amount_eur_cents: i32,
+    pub status: String,
+    pub paypal_email: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CashoutHistoryResponse {
+    pub items: Vec<CashoutHistoryItem>,
+    pub total: u64,
+    pub page: u64,
+    pub per_page: u64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AdvanceBotResponse {
     pub success: bool,
     pub card_played: i32,

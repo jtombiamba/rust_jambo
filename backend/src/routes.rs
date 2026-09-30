@@ -63,6 +63,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         .app_data(state.mailer.clone())
         .app_data(state.payment_service.clone())
         .app_data(state.room_service.clone())
+        .app_data(state.cashout_service.clone())
         .app_data(state.config.clone())
         .app_data(state.translator.clone())
         .service(health_check)
@@ -163,6 +164,14 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         .route(
                             "/topup/capture",
                             web::post().to(crate::api::topup::capture_topup_order),
+                        )
+                        .route(
+                            "/cashout",
+                            web::post().to(crate::api::cashout::request_cashout),
+                        )
+                        .route(
+                            "/cashout",
+                            web::get().to(crate::api::cashout::list_cashouts),
                         )
                         .route("/rooms", web::post().to(room::create_room))
                         .route("/rooms", web::get().to(room::list_rooms))

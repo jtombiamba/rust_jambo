@@ -1,6 +1,8 @@
-use super::*;
-use crate::messaging::events::GameStartedPlayer;
+use super::WebSocketManager;
+use crate::messaging::events::{GameEvent, GameStartedPlayer, UserEvent};
+use crate::observability::CorrelationId;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 fn make_manager() -> WebSocketManager {
     WebSocketManager::new(None, None)

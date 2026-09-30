@@ -6,6 +6,9 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        pixel: ['"Press Start 2P"', 'monospace'],
+      },
       animation: {
         'fade-in-out': 'fadeInOut 3s ease-in-out forwards',
       },

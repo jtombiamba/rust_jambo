@@ -15,21 +15,23 @@ use crate::mailer::Mailer;
 #[derive(Debug)]
 pub enum AuthError {
     Validation {
-        error: String,
+        key: &'static str,
         field: Option<String>,
     },
     Conflict {
-        error: String,
+        key: &'static str,
         field: Option<String>,
     },
     Unauthorized {
-        error: String,
+        key: &'static str,
     },
+    /// Internal error. The payload is kept for logging only; the client always
+    /// receives the generic localized `server.internal_error` message.
     Internal {
-        error: String,
+        detail: String,
     },
     NotFound {
-        error: String,
+        key: &'static str,
     },
 }
 
@@ -43,16 +45,42 @@ impl AuthError {
             AuthError::NotFound { .. } => "auth:not_found",
         }
     }
+
+    fn message_key(&self) -> &'static str {
+        match self {
+            AuthError::Validation { key, .. }
+            | AuthError::Conflict { key, .. }
+            | AuthError::Unauthorized { key }
+            | AuthError::NotFound { key } => key,
+            AuthError::Internal { .. } => "server.internal_error",
+        }
+    }
 }
 
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AuthError::Validation { error, .. } => write!(f, "Validation error: {}", error),
-            AuthError::Conflict { error, .. } => write!(f, "Conflict: {}", error),
-            AuthError::Unauthorized { error } => write!(f, "Unauthorized: {}", error),
-            AuthError::Internal { error } => write!(f, "Internal error: {}", error),
-            AuthError::NotFound { error } => write!(f, "Not found: {}", error),
+            AuthError::Validation { key, .. } => {
+                write!(
+                    f,
+                    "Validation error: {}",
+                    crate::i18n::TRANSLATOR.t(key, Lang::En)
+                )
+            }
+            AuthError::Conflict { key, .. } => {
+                write!(f, "Conflict: {}", crate::i18n::TRANSLATOR.t(key, Lang::En))
+            }
+            AuthError::Unauthorized { key } => {
+                write!(
+                    f,
+                    "Unauthorized: {}",
+                    crate::i18n::TRANSLATOR.t(key, Lang::En)
+                )
+            }
+            AuthError::Internal { detail } => write!(f, "Internal error: {detail}"),
+            AuthError::NotFound { key } => {
+                write!(f, "Not found: {}", crate::i18n::TRANSLATOR.t(key, Lang::En))
+            }
         }
     }
 }
@@ -63,16 +91,19 @@ impl actix_web::ResponseError for AuthError {
         let request_id = crate::observability::CORRELATION_ID
             .try_with(|id| id.to_string())
             .ok();
-        let (error_msg, field) = match self {
-            AuthError::Validation { error, field } => (error.clone(), field.clone()),
-            AuthError::Conflict { error, field } => (error.clone(), field.clone()),
-            AuthError::Unauthorized { error } => (error.clone(), None),
-            AuthError::Internal { error } => {
-                tracing::error!(error = %error, request_id = ?request_id, "Auth internal error");
-                ("Internal server error".to_string(), None)
+        let lang = crate::i18n::CURRENT_LANG
+            .try_with(|l| *l)
+            .unwrap_or(Lang::En);
+        let error_msg = crate::i18n::TRANSLATOR.t(self.message_key(), lang);
+        let field = match self {
+            AuthError::Validation { field, .. } | AuthError::Conflict { field, .. } => {
+                field.clone()
             }
-            AuthError::NotFound { error } => (error.clone(), None),
+            _ => None,
         };
+        if let AuthError::Internal { detail } = self {
+            tracing::error!(error = %detail, request_id = ?request_id, "Auth internal error");
+        }
         actix_web::HttpResponse::build(status).json(ApiErrorResponse {
             success: false,
             error: error_msg,
@@ -136,7 +167,7 @@ impl<R: UserRepoTrait> AuthService<R> {
 
         if body.pseudo.trim().is_empty() {
             return Err(AuthError::Validation {
-                error: t("auth.pseudo_required"),
+                key: "auth.pseudo_required",
                 field: Some("pseudo".into()),
             });
         }
@@ -144,21 +175,21 @@ impl<R: UserRepoTrait> AuthService<R> {
         let email = body.email.trim().to_lowercase();
         if email.is_empty() || !email.contains('@') {
             return Err(AuthError::Validation {
-                error: t("auth.email_invalid"),
+                key: "auth.email_invalid",
                 field: Some("email".into()),
             });
         }
 
         if body.password.len() < 8 {
             return Err(AuthError::Validation {
-                error: t("auth.password_too_short"),
+                key: "auth.password_too_short",
                 field: Some("password".into()),
             });
         }
 
         if body.password != body.password_confirm {
             return Err(AuthError::Validation {
-                error: t("auth.passwords_not_match"),
+                key: "auth.passwords_not_match",
                 field: Some("password_confirm".into()),
             });
         }
@@ -166,13 +197,13 @@ impl<R: UserRepoTrait> AuthService<R> {
         let existing_email = self.repo.find_by_email(&email).await.map_err(|e| {
             tracing::error!("Database error checking email: {}", e);
             AuthError::Internal {
-                error: t("server.internal_error"),
+                detail: "database error checking email".into(),
             }
         })?;
 
         if existing_email.is_some() {
             return Err(AuthError::Conflict {
-                error: t("auth.email_in_use"),
+                key: "auth.email_in_use",
                 field: Some("email".into()),
             });
         }
@@ -184,13 +215,13 @@ impl<R: UserRepoTrait> AuthService<R> {
             .map_err(|e| {
                 tracing::error!("Database error checking pseudo: {}", e);
                 AuthError::Internal {
-                    error: t("server.internal_error"),
+                    detail: "database error checking pseudo".into(),
                 }
             })?;
 
         if existing_pseudo.is_some() {
             return Err(AuthError::Conflict {
-                error: t("auth.pseudo_taken"),
+                key: "auth.pseudo_taken",
                 field: Some("pseudo".into()),
             });
         }
@@ -198,7 +229,7 @@ impl<R: UserRepoTrait> AuthService<R> {
         let password_hash = password::hash_password(&body.password).map_err(|e| {
             tracing::error!("Password hashing failed: {}", e);
             AuthError::Internal {
-                error: t("server.internal_error"),
+                detail: "password hashing failed".into(),
             }
         })?;
 
@@ -214,14 +245,14 @@ impl<R: UserRepoTrait> AuthService<R> {
             .map_err(|e| {
                 tracing::error!("Failed to create user: {}", e);
                 AuthError::Internal {
-                    error: t("server.internal_error"),
+                    detail: "failed to create user".into(),
                 }
             })?;
 
         let token = jwt::generate_token(user.id, &user.pseudo, &self.config).map_err(|e| {
             tracing::error!("JWT generation failed: {}", e);
             AuthError::Internal {
-                error: t("server.internal_error"),
+                detail: "jwt generation failed".into(),
             }
         })?;
 
@@ -252,7 +283,7 @@ impl<R: UserRepoTrait> AuthService<R> {
         let user = self.repo.find_by_email(&email).await.map_err(|e| {
             tracing::error!("Database error during login: {}", e);
             AuthError::Internal {
-                error: t("server.internal_error"),
+                detail: "database error during login".into(),
             }
         })?;
 
@@ -260,7 +291,7 @@ impl<R: UserRepoTrait> AuthService<R> {
             Some(u) => u,
             None => {
                 return Err(AuthError::Unauthorized {
-                    error: t("auth.invalid_credentials"),
+                    key: "auth.invalid_credentials",
                 });
             }
         };
@@ -269,13 +300,13 @@ impl<R: UserRepoTrait> AuthService<R> {
             password::verify_password(&body.password, &user.password_hash).map_err(|e| {
                 tracing::error!("Password verification error: {}", e);
                 AuthError::Internal {
-                    error: t("server.internal_error"),
+                    detail: "password verification error".into(),
                 }
             })?;
 
         if !valid {
             return Err(AuthError::Unauthorized {
-                error: t("auth.invalid_credentials"),
+                key: "auth.invalid_credentials",
             });
         }
 
@@ -288,7 +319,7 @@ impl<R: UserRepoTrait> AuthService<R> {
         let token = jwt::generate_token(user.id, &user.pseudo, &self.config).map_err(|e| {
             tracing::error!("JWT generation failed: {}", e);
             AuthError::Internal {
-                error: t("server.internal_error"),
+                detail: "jwt generation failed".into(),
             }
         })?;
 
@@ -351,14 +382,14 @@ impl<R: UserRepoTrait> AuthService<R> {
 
         if body.password.len() < 8 {
             return Err(AuthError::Validation {
-                error: t("auth.password_too_short"),
+                key: "auth.password_too_short",
                 field: Some("password".into()),
             });
         }
 
         if body.password != body.password_confirm {
             return Err(AuthError::Validation {
-                error: t("auth.passwords_not_match"),
+                key: "auth.passwords_not_match",
                 field: Some("password_confirm".into()),
             });
         }
@@ -366,7 +397,7 @@ impl<R: UserRepoTrait> AuthService<R> {
         let reset_claims = jwt::validate_reset_token(&body.token, &self.config).map_err(|e| {
             tracing::info!("Invalid reset token: {}", e);
             AuthError::Unauthorized {
-                error: t("password.reset_link_expired"),
+                key: "password.reset_link_expired",
             }
         })?;
 
@@ -377,18 +408,18 @@ impl<R: UserRepoTrait> AuthService<R> {
             .map_err(|e| {
                 tracing::error!("Database error during password reset: {}", e);
                 AuthError::Internal {
-                    error: t("server.internal_error"),
+                    detail: "database error during password reset".into(),
                 }
             })?;
 
-        let user = user.ok_or_else(|| AuthError::Unauthorized {
-            error: t("password.reset_link_expired"),
+        let user = user.ok_or(AuthError::Unauthorized {
+            key: "password.reset_link_expired",
         })?;
 
         let password_hash = password::hash_password(&body.password).map_err(|e| {
             tracing::error!("Password hashing failed: {}", e);
             AuthError::Internal {
-                error: t("server.internal_error"),
+                detail: "password hashing failed".into(),
             }
         })?;
 
@@ -398,7 +429,7 @@ impl<R: UserRepoTrait> AuthService<R> {
             .map_err(|e| {
                 tracing::error!("Failed to update password: {}", e);
                 AuthError::Internal {
-                    error: t("server.internal_error"),
+                    detail: "failed to update password".into(),
                 }
             })?;
 
@@ -408,13 +439,11 @@ impl<R: UserRepoTrait> AuthService<R> {
         })
     }
 
-    pub async fn me(&self, user_id: Uuid, lang: Lang) -> Result<UserInfo, AuthError> {
-        let t = |key: &str| self.translator.t(key, lang);
-
+    pub async fn me(&self, user_id: Uuid) -> Result<UserInfo, AuthError> {
         let user = self.repo.find_by_id(user_id).await.map_err(|e| {
             tracing::error!("Database error fetching user: {}", e);
             AuthError::Internal {
-                error: t("server.internal_error"),
+                detail: "database error fetching user".into(),
             }
         })?;
 
@@ -426,7 +455,7 @@ impl<R: UserRepoTrait> AuthService<R> {
                 language: u.language,
             }),
             None => Err(AuthError::NotFound {
-                error: t("auth.user_not_found"),
+                key: "auth.user_not_found",
             }),
         }
     }

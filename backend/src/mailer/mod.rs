@@ -137,6 +137,33 @@ pub struct RoomInvitationEmail {
     pub app_name: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CashoutRequestedEmail {
+    pub credits: i32,
+    pub amount_eur: String,
+    pub paypal_email: String,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[allow(dead_code)]
+pub struct CashoutRejectedEmail {
+    pub credits: i32,
+    pub amount_eur: String,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CashoutAdminAlertEmail {
+    pub pseudo: String,
+    pub email: String,
+    pub credits: i32,
+    pub amount_eur: String,
+    pub paypal_email: String,
+}
+
 #[async_trait]
 pub trait Mailer: Send + Sync {
     async fn send_password_reset(
@@ -195,6 +222,78 @@ pub trait Mailer: Send + Sync {
         invitation_code: &str,
         lang: Lang,
     ) -> Result<(), String>;
+
+    async fn send_cashout_requested(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    #[allow(dead_code)]
+    async fn send_cashout_rejected(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_cashout_admin_alert(
+        &self,
+        to_email: &str,
+        pseudo: &str,
+        email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+    ) -> Result<(), String>;
+}
+
+/// Register the cashout email templates shared by both mailer backends.
+pub fn register_cashout_templates(hb: &mut handlebars::Handlebars<'static>) -> Result<(), String> {
+    hb.register_template_string(
+        "en_cashout_requested",
+        include_str!("../../templates/en/cashout_requested.hbs"),
+    )
+    .map_err(|e| format!("Failed to register en/cashout_requested template: {e}"))?;
+    hb.register_template_string(
+        "fr_cashout_requested",
+        include_str!("../../templates/fr/cashout_requested.hbs"),
+    )
+    .map_err(|e| format!("Failed to register fr/cashout_requested template: {e}"))?;
+    hb.register_template_string(
+        "en_cashout_rejected",
+        include_str!("../../templates/en/cashout_rejected.hbs"),
+    )
+    .map_err(|e| format!("Failed to register en/cashout_rejected template: {e}"))?;
+    hb.register_template_string(
+        "fr_cashout_rejected",
+        include_str!("../../templates/fr/cashout_rejected.hbs"),
+    )
+    .map_err(|e| format!("Failed to register fr/cashout_rejected template: {e}"))?;
+    hb.register_template_string(
+        "en_cashout_admin_alert",
+        include_str!("../../templates/en/cashout_admin_alert.hbs"),
+    )
+    .map_err(|e| format!("Failed to register en/cashout_admin_alert template: {e}"))?;
+    Ok(())
+}
+
+pub fn format_cents(amount_eur_cents: i32) -> String {
+    format!("{:.2}", amount_eur_cents as f64 / 100.0)
+}
+
+pub fn cashout_subject(kind: &str, lang: Lang) -> String {
+    match (kind, lang) {
+        ("cashout_requested", Lang::Fr) => "Demande de retrait reçue".to_string(),
+        ("cashout_rejected", Lang::Fr) => "Retrait rejeté".to_string(),
+        ("cashout_requested", _) => "Cashout request received".to_string(),
+        ("cashout_rejected", _) => "Cashout rejected".to_string(),
+        _ => "Cashout update".to_string(),
+    }
 }
 
 pub fn create_mailer(config: MailerConfig) -> Result<Arc<dyn Mailer>, String> {
@@ -275,11 +374,13 @@ mod tests {
     #[test]
     #[serial]
     fn test_mailer_config_from_env_defaults() {
-        std::env::remove_var("MAILER_MODE");
+        std::env::set_var("MAILER_MODE", "console");
+        std::env::set_var("SMTP_HOST", "mailhog");
+        std::env::set_var("SMTP_PORT", "1025");
         let config = MailerConfig::from_env();
         assert_eq!(config.mailer_mode, "console");
-        assert_eq!(config.smtp_host, "smtp.gmail.com");
-        assert_eq!(config.smtp_port, 587);
+        assert_eq!(config.smtp_host, "mailhog");
+        assert_eq!(config.smtp_port, 1025);
     }
 
     #[test]
@@ -299,10 +400,11 @@ mod tests {
 
     #[test]
     fn test_create_mailer_console_mode() {
+        std::env::set_var("TOKIO_WORKER_THREADS", "1");
         let config = MailerConfig {
             mailer_mode: "console".to_string(),
-            smtp_host: "".to_string(),
-            smtp_port: 0,
+            smtp_host: "mailhog".to_string(),
+            smtp_port: 587,
             smtp_username: "".to_string(),
             smtp_password: "".to_string(),
             smtp_tls: true,

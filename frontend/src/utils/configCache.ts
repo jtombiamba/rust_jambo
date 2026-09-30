@@ -5,6 +5,10 @@ export interface ClientConfig {
   paypal_donate_url: string
   bot_thinking_delay_ms: number
   round_pause_delay_ms: number
+  cashout_enabled: boolean
+  cashout_min_credits: number
+  cashout_credits_per_eur: number
+  cashout_max_eur_cents: number
 }
 
 interface CacheEntry {
@@ -18,7 +22,11 @@ function isValidConfig(obj: unknown): obj is ClientConfig {
   return (
     typeof c.paypal_donate_url === 'string' &&
     typeof c.bot_thinking_delay_ms === 'number' &&
-    typeof c.round_pause_delay_ms === 'number'
+    typeof c.round_pause_delay_ms === 'number' &&
+    typeof c.cashout_enabled === 'boolean' &&
+    typeof c.cashout_min_credits === 'number' &&
+    typeof c.cashout_credits_per_eur === 'number' &&
+    typeof c.cashout_max_eur_cents === 'number'
   )
 }
 

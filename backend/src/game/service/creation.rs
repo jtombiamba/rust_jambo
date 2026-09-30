@@ -154,6 +154,7 @@ mod tests {
             country_code: None,
             city: None,
             frozen_until,
+            cashout_locked: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

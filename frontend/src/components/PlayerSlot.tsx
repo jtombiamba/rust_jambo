@@ -73,7 +73,7 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
 
   const renderCards = () => {
     if (displayCards.length === 0) {
-      return <div className="text-gray-500 italic text-sm">No cards</div>;
+      return <div className="text-white italic text-sm">No cards</div>;
     }
 
     if (overlapCards) {

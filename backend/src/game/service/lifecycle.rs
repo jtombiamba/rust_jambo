@@ -495,9 +495,17 @@ impl GameService {
 
         txn.commit().await?;
 
-        info!(
-            "Game started: game_id={}, players={}, first_turn={}",
-            game_id, num_players, first_player_id
+        let start_details = crate::game::start_log::build_start_details(&players, &special_hands);
+        let start_details_json = serde_json::to_string(&start_details).unwrap_or_default();
+        tracing::info!(
+            game_id = %game_id,
+            game_mode = %game_mode,
+            bet = game_model.bet,
+            players = num_players,
+            first_turn = %first_player_id,
+            askee = ?askee,
+            details = %start_details_json,
+            "Game started"
         );
 
         let askee_specials = askee.and_then(|id| {

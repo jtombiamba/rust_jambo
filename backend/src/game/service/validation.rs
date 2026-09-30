@@ -22,6 +22,9 @@ pub(crate) async fn load_and_validate_profile<C: ConnectionTrait>(
             });
         }
     }
+    if profile.cashout_locked {
+        return Err(GameError::CashoutLocked);
+    }
     Ok(profile)
 }
 
@@ -59,6 +62,7 @@ mod tests {
             country_code: None,
             city: None,
             frozen_until: None,
+            cashout_locked: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

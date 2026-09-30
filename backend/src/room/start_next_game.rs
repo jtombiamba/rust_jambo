@@ -11,12 +11,15 @@ use crate::database::traits::{
     GameRunPlayerRepoTrait, GameRunRepoTrait, PlayerProfileRepoTrait, PlayerRepoTrait,
     UserRepoTrait,
 };
+use crate::game::constants::CARDS_PER_PLAYER;
+use crate::game::special_cards::{compute_special_cards, SpecialCards};
 use crate::messaging::events::RoomEvent;
 use crate::observability::metrics;
 use crate::room::error::RoomServiceError;
 use crate::room::event_publisher::RoomEventPublisher;
 use crate::room::start_game_lock::StartGameLock;
 use crate::room::transaction_runner::TransactionRunner;
+use tracing::info;
 
 /// Immutable inputs computed during the planning phase, consumed by the
 /// transactional write phase.
@@ -121,12 +124,33 @@ impl StartNextGameService {
         let players = self
             .create_game_and_players_in_txn(&txn, run_id, user_id, &plan)
             .await?;
-        self.deal_cards_in_txn(&txn, plan.game_id, &players).await?;
+        let cards = self.deal_cards_in_txn(&txn, plan.game_id, &players).await?;
         let new_index = self
             .finalize_run_in_txn(&txn, run_id, plan.game_id, game_index)
             .await?;
         self.txn_runner.clone().commit(txn).await?;
         metrics::ACTIVE_GAMES.inc();
+
+        let special_hands: Vec<(Uuid, SpecialCards)> = players
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let offset = i * CARDS_PER_PLAYER;
+                let hand = &cards[offset..offset + CARDS_PER_PLAYER];
+                (p.id, compute_special_cards(hand))
+            })
+            .collect();
+
+        let start_details = crate::game::start_log::build_start_details(&players, &special_hands);
+        let start_details_json = serde_json::to_string(&start_details).unwrap_or_default();
+        info!(
+            run_id = %run_id,
+            game_id = %plan.game_id,
+            game_index = game_index,
+            bet = plan.bet,
+            details = %start_details_json,
+            "Run game started"
+        );
 
         // Side effects + response.
         self.log_and_publish(&run, plan.game_id, game_index, user_id)
@@ -308,12 +332,12 @@ impl StartNextGameService {
         txn: &sea_orm::DatabaseTransaction,
         game_id: Uuid,
         players: &[Player],
-    ) -> Result<(), RoomServiceError> {
-        let (card_models, _cards) = crate::game::cards::build_game_cards(game_id, players);
+    ) -> Result<Vec<i32>, RoomServiceError> {
+        let (card_models, cards) = crate::game::cards::build_game_cards(game_id, players);
         self.game_card_repo
             .bulk_insert_in_txn(txn, card_models)
             .await?;
-        Ok(())
+        Ok(cards)
     }
 
     async fn finalize_run_in_txn(
@@ -497,6 +521,7 @@ mod tests {
             country_code: None,
             city: None,
             frozen_until: None,
+            cashout_locked: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

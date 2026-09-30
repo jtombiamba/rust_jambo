@@ -85,6 +85,32 @@ export default function GameRules({ isOpen, onClose }: Props) {
           </section>
 
           <section className="mb-5">
+            <h3 className="text-lg font-semibold mb-2">{t('rules.specialCards')}</h3>
+            <p className="text-gray-700 mb-1">{t('rules.specialCardsText')}</p>
+            <ul className="list-disc pl-5 space-y-1 text-gray-700">
+              <li>{t('rules.specialCardsItem1')}</li>
+              <li>{t('rules.specialCardsItem2')}</li>
+              <li>{t('rules.specialCardsItem3')}</li>
+            </ul>
+            <p className="text-gray-700 mt-1">{t('rules.specialCardsOrder')}</p>
+            <p className="text-gray-700 mt-1">{t('rules.specialCardsClaim')}</p>
+            <p className="text-gray-700 mt-1">{t('rules.specialCardsKora')}</p>
+          </section>
+
+          <section className="mb-5">
+            <h3 className="text-lg font-semibold mb-2">{t('rules.cashout')}</h3>
+            <ul className="list-disc pl-5 space-y-1 text-gray-700">
+              <li>{t('rules.cashoutText1')}</li>
+              <li>{t('rules.cashoutText2')}</li>
+              <li>{t('rules.cashoutText3')}</li>
+              <li>{t('rules.cashoutText4')}</li>
+              <li>{t('rules.cashoutText5')}</li>
+              <li>{t('rules.cashoutText6')}</li>
+              <li>{t('rules.cashoutText7')}</li>
+            </ul>
+          </section>
+
+          <section className="mb-5">
             <h3 className="text-lg font-semibold mb-2">{t('rules.gameEnd')}</h3>
             <ul className="list-disc pl-5 space-y-1 text-gray-700">
               <li>{t('rules.gameEndText1')}</li>

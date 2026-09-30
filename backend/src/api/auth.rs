@@ -179,9 +179,8 @@ pub async fn logout(
 pub async fn me(
     auth_user: AuthenticatedUser,
     service: web::Data<Arc<AuthServiceType>>,
-    i18n: I18n,
 ) -> HttpResponse {
-    match service.me(auth_user.user_id, i18n.lang).await {
+    match service.me(auth_user.user_id).await {
         Ok(user_info) => HttpResponse::Ok().json(user_info),
         Err(e) => e.error_response(),
     }

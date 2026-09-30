@@ -82,6 +82,7 @@ impl Scheduler {
         let shutdown_rx4 = shutdown_rx1.clone();
         let shutdown_rx5 = shutdown_rx1.clone();
         let shutdown_rx6 = shutdown_rx1.clone();
+        let shutdown_rx7 = shutdown_rx1.clone();
 
         let task_max_restarts = self.config.scheduler_task_max_restarts;
 
@@ -90,7 +91,8 @@ impl Scheduler {
         let db3 = self.db.clone();
         let db4 = self.db.clone();
         let db5 = self.db.clone();
-        let db6 = self.db;
+        let db6 = self.db.clone();
+        let db7 = self.db;
 
         let redis1 = self.redis.clone();
         let redis2 = self.redis.clone();
@@ -100,18 +102,21 @@ impl Scheduler {
         let mailer1 = self.mailer.clone();
         let mailer2 = self.mailer.clone();
         let mailer3 = self.mailer.clone();
-        let mailer4 = self.mailer;
+        let mailer4 = self.mailer.clone();
+        let mailer5 = self.mailer;
 
         let user_cache1 = self.user_cache.clone();
         let _user_cache2 = self.user_cache;
 
         let config1 = self.config.clone();
         let config2 = self.config.clone();
-        let config3 = self.config;
-        let unfreeze_credit = config3.unfreeze_credit_no_payment;
-        let db_pool_interval = config3.db_pool_metrics_interval_secs;
-        let run_staleness_val = config3.run_staleness_timeout_secs;
-        let config4 = config3;
+        let config3 = self.config.clone();
+        let config4 = config3.clone();
+        let config5 = config3;
+        let unfreeze_credit = config5.unfreeze_credit_no_payment;
+        let db_pool_interval = config5.db_pool_metrics_interval_secs;
+        let run_staleness_val = config5.run_staleness_timeout_secs;
+        let config6 = config5;
 
         let mut tasks = JoinSet::new();
 
@@ -204,6 +209,22 @@ impl Scheduler {
                     mailer4.clone(),
                     run_staleness_val,
                     shutdown_rx6.clone(),
+                )
+                .await;
+            }
+        ));
+
+        tasks.spawn(spawn_with_restart!(
+            "check_cashout_auto_reject",
+            shutdown_rx7.clone(),
+            task_max_restarts,
+            {
+                info!(task = "check_cashout_auto_reject", "Task started");
+                tasks::check_cashout_auto_reject_loop(
+                    db7.clone(),
+                    config6.clone(),
+                    mailer5.clone(),
+                    shutdown_rx7.clone(),
                 )
                 .await;
             }

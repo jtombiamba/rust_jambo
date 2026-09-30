@@ -8,6 +8,7 @@ pub struct PlayerProfileResponse {
     pub kora_wins: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frozen_until: Option<String>,
+    pub cashout_locked: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]

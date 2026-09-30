@@ -8,7 +8,7 @@ use tracing;
 use crate::cache::leaderboard;
 use crate::config::Config;
 use crate::database::models::{player_profile, user};
-use crate::database::repositories::{PlayerProfileRepository, UserRepository};
+use crate::database::repositories::{CashoutRepository, PlayerProfileRepository, UserRepository};
 use crate::game::service::GameService;
 use crate::i18n::Lang;
 use crate::mailer::Mailer;
@@ -416,6 +416,109 @@ async fn check_expired_freezes(db: &sea_orm::DatabaseConnection, mailer: &dyn Ma
                     e
                 );
             }
+        }
+    }
+}
+
+pub async fn check_cashout_auto_reject_loop(
+    db: sea_orm::DatabaseConnection,
+    config: Config,
+    mailer: Arc<dyn Mailer>,
+    mut shutdown: watch::Receiver<bool>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let start = std::time::Instant::now();
+                match tokio::time::timeout(
+                    Duration::from_secs(30),
+                    check_cashout_auto_reject(
+                        &db,
+                        &*mailer,
+                        config.cashout_auto_reject_after_secs,
+                        &config.cashout_admin_email,
+                        config.default_credit,
+                    ),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        record_task_metrics!("check_cashout_auto_reject", start);
+                    }
+                    Err(_elapsed) => {
+                        record_task_timeout!("check_cashout_auto_reject");
+                        tracing::warn!("check_cashout_auto_reject timed out after 30s");
+                    }
+                }
+            }
+            Ok(()) = shutdown.changed() => {
+                tracing::info!("check_cashout_auto_reject_loop received shutdown signal");
+                break;
+            }
+        }
+    }
+}
+
+async fn check_cashout_auto_reject(
+    db: &sea_orm::DatabaseConnection,
+    mailer: &dyn Mailer,
+    after_secs: u64,
+    admin_email: &str,
+    default_credit: i32,
+) {
+    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(after_secs as i64);
+    let repo = CashoutRepository::new(db.clone());
+    let rejected = match repo.auto_reject_expired(cutoff).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!("Failed to auto-reject cashouts: {}", e);
+            return;
+        }
+    };
+
+    if rejected.is_empty() {
+        return;
+    }
+    tracing::info!("Auto-rejected {} expired cashout requests", rejected.len());
+
+    let user_repo = UserRepository::new(db.clone(), default_credit);
+    for id in rejected {
+        let Ok(Some(request)) = repo.find_by_id(id).await else {
+            continue;
+        };
+        let Ok(Some(user_model)) = user_repo.find_by_id(request.user_id).await else {
+            continue;
+        };
+        let lang = Lang::parse(&user_model.language).unwrap_or_default();
+        if let Err(e) = mailer
+            .send_cashout_rejected(
+                &user_model.email,
+                request.credits,
+                request.amount_eur_cents,
+                lang,
+            )
+            .await
+        {
+            tracing::error!(
+                "Failed to send cashout rejection email to {}: {}",
+                user_model.email,
+                e
+            );
+        }
+        if !admin_email.is_empty() {
+            let _ = mailer
+                .send_cashout_admin_alert(
+                    admin_email,
+                    &user_model.pseudo,
+                    &user_model.email,
+                    request.credits,
+                    request.amount_eur_cents,
+                    &request.paypal_email,
+                )
+                .await;
         }
     }
 }

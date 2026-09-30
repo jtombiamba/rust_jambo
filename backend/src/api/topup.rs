@@ -1,16 +1,22 @@
 use actix_web::{web, HttpRequest, HttpResponse, ResponseError};
+use sea_orm::TransactionTrait;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
 use crate::api::dto::requests::CaptureOrderRequest;
 use crate::api::dto::responses::{ApiErrorResponse, TopupCaptureResponse, TopupOrderResponse};
-use crate::api::unfreeze::close_window_html;
+use crate::api::payment_limits::{current_month_start, monthly_limit_exceeded, parse_eur_to_cents};
+use crate::api::unfreeze::{close_window_error_html, close_window_html};
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
+use crate::database::models::TopupTransactionKind;
+use crate::database::repositories::{PlayerProfileRepository, TopupTransactionRepository};
 use crate::error::AppError;
 use crate::messaging::RedisClient;
-use crate::observability::metrics::{PAYMENT_TOPUP_DURATION_SECONDS, PAYMENT_TOPUP_TOTAL};
+use crate::observability::metrics::{
+    GAME_STATE_CACHE_WRITE_ERRORS_TOTAL, PAYMENT_TOPUP_DURATION_SECONDS, PAYMENT_TOPUP_TOTAL,
+};
 
 const TOPUP_CAPTURE_PREFIX: &str = "topup_capture";
 const TOPUP_ORDER_PREFIX: &str = "topup_order";
@@ -45,25 +51,36 @@ pub async fn create_topup_order(
     let profile = match profile_repo.find_by_user_id(auth_user.user_id).await {
         Ok(Some(p)) => p,
         Ok(None) => {
-            return AppError::NotFound("Player profile not found".into()).error_response();
+            return AppError::NotFound("payment.profile_not_found").error_response();
         }
         Err(e) => return AppError::Database(e).error_response(),
     };
 
     if let Some(frozen_until) = profile.frozen_until {
         if frozen_until > chrono::Utc::now() {
-            return AppError::Forbidden("Account is frozen, cannot top up".into()).error_response();
+            return AppError::Forbidden("payment.account_frozen_no_topup").error_response();
         }
     }
 
-    if profile.credit >= config.topup_credit_threshold {
-        return AppError::BadRequest("Credit is already sufficient, top up not needed".into())
-            .error_response();
+    if profile.credit <= 0 {
+        return AppError::BadRequest("payment.credit_depleted").error_response();
     }
 
-    if profile.credit <= 0 {
-        return AppError::BadRequest("Credit depleted, use unfreeze instead".into())
-            .error_response();
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    let spent_cents = match topup_repo
+        .sum_amount_eur_cents_since(auth_user.user_id, current_month_start(chrono::Utc::now()))
+        .await
+    {
+        Ok(cents) => cents,
+        Err(e) => return AppError::Database(e).error_response(),
+    };
+    let upcoming_cents = parse_eur_to_cents(&config.paypal_topup_amount_eur);
+    if monthly_limit_exceeded(
+        spent_cents,
+        upcoming_cents,
+        config.topup_monthly_limit_eur_cents,
+    ) {
+        return AppError::BadRequest("payment.monthly_limit_reached").error_response();
     }
 
     let return_url = format!(
@@ -101,9 +118,17 @@ pub async fn create_topup_order(
 
     if let Some(mut redis_client) = redis.get_ref().clone() {
         let order_key = format!("{}:{}", TOPUP_ORDER_PREFIX, order.order_id);
-        let _ = redis_client
+        if let Err(e) = redis_client
             .set_ex(&order_key, &auth_user.user_id.to_string(), TOPUP_TTL_SECS)
-            .await;
+            .await
+        {
+            tracing::warn!(
+                user_id = %auth_user.user_id,
+                order_id = %order.order_id,
+                error = %e,
+                "failed to persist topup order to user mapping in redis"
+            );
+        }
     }
 
     HttpResponse::Ok().json(TopupOrderResponse {
@@ -142,38 +167,38 @@ pub async fn capture_topup_order(
         TOPUP_CAPTURE_PREFIX, auth_user.user_id, order_id
     );
     let paypal_idem_key = format!("{}_{}", TOPUP_IDEM_PREFIX, order_id);
+    let credit_add = config.topup_credit_amount;
+    let amount_eur_cents = parse_eur_to_cents(&config.paypal_topup_amount_eur);
 
-    let mut redis_opt = redis.get_ref().clone();
-    if let Some(ref mut rc) = redis_opt {
-        match rc.get(&redis_key).await {
-            Ok(Some(ref cached)) if cached == "completed" => {
-                let profile_repo = crate::database::repositories::PlayerProfileRepository::new(
-                    db.get_ref().clone(),
-                );
-                let credit = profile_repo
-                    .find_by_user_id(auth_user.user_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|p| p.credit)
-                    .unwrap_or(0);
-                return HttpResponse::Ok().json(TopupCaptureResponse {
-                    success: true,
-                    message: "Credits already added!".into(),
-                    credit,
-                });
-            }
-            Ok(Some(ref cached)) if cached == "processing" => {
-                return topup_user_and_finalize(
-                    auth_user.user_id,
-                    &db,
-                    redis_opt.as_mut(),
-                    &redis_key,
-                    config.topup_credit_amount,
-                )
-                .await;
-            }
-            _ => {}
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+
+    // Database-level idempotency: replaying an already-completed order is a
+    // no-op regardless of Redis availability.
+    match topup_repo.exists_by_order_id(order_id).await {
+        Ok(true) => {
+            let profile_repo = PlayerProfileRepository::new(db.get_ref().clone());
+            let credit = profile_repo
+                .find_by_user_id(auth_user.user_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|p| p.credit)
+                .unwrap_or(0);
+            return HttpResponse::Ok().json(TopupCaptureResponse {
+                success: true,
+                message: "Credits already added!".into(),
+                credit,
+            });
+        }
+        Ok(false) => {}
+        Err(e) => {
+            tracing::error!(
+                user_id = %auth_user.user_id,
+                order_id = %order_id,
+                error = %e,
+                "failed to check topup order idempotency"
+            );
+            return AppError::Database(e).error_response();
         }
     }
 
@@ -207,18 +232,28 @@ pub async fn capture_topup_order(
         return AppError::Internal("Payment was not successful".into()).error_response();
     }
 
-    if let Some(ref mut rc) = redis_opt {
-        let _ = rc.set_ex(&redis_key, "processing", TOPUP_TTL_SECS).await;
-    }
-
-    topup_user_and_finalize(
-        auth_user.user_id,
+    let mut redis_opt = redis.get_ref().clone();
+    match finalize_topup(
         &db,
         redis_opt.as_mut(),
         &redis_key,
-        config.topup_credit_amount,
+        auth_user.user_id,
+        order_id,
+        credit_add,
+        amount_eur_cents,
     )
     .await
+    {
+        Ok(credit) => {
+            PAYMENT_TOPUP_TOTAL.with_label_values(&["captured"]).inc();
+            HttpResponse::Ok().json(TopupCaptureResponse {
+                success: true,
+                message: "Credits topped up!".into(),
+                credit,
+            })
+        }
+        Err(e) => e.error_response(),
+    }
 }
 
 #[utoipa::path(
@@ -267,17 +302,24 @@ pub async fn paypal_return_topup(
 
     let redis_key = format!("{}:{}:{}", TOPUP_CAPTURE_PREFIX, user_id, order_id);
     let paypal_idem_key = format!("{}_{}", TOPUP_IDEM_PREFIX, order_id);
+    let credit_add = config.topup_credit_amount;
+    let amount_eur_cents = parse_eur_to_cents(&config.paypal_topup_amount_eur);
 
-    if let Some(ref mut rc) = redis_opt {
-        if let Ok(Some(ref cached)) = rc.get(&redis_key).await {
-            if cached == "completed" {
-                return close_window_html("Payment Complete — Credits Added");
-            }
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+
+    // Database-level idempotency: a replay of an already-completed order (e.g.
+    // after the Redis TTL expires or Redis restarts) must not double-credit.
+    match topup_repo.exists_by_order_id(&order_id).await {
+        Ok(true) => return close_window_html("Payment Complete — Credits Added"),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::error!(
+                order_id = %order_id,
+                error = %e,
+                "failed to check topup order idempotency"
+            );
+            return close_window_html("Payment Error — unable to verify payment status");
         }
-    }
-
-    if let Some(ref mut rc) = redis_opt {
-        let _ = rc.set_ex(&redis_key, "processing", TOPUP_TTL_SECS).await;
     }
 
     let capture_start = Instant::now();
@@ -302,35 +344,33 @@ pub async fn paypal_return_topup(
 
     if !capture_ok {
         PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]).inc();
-        if let Some(ref mut rc) = redis_opt {
-            let _ = rc.del(&redis_key).await;
-        }
         return close_window_html("Payment Error — capture failed");
     }
 
-    let profile_repo =
-        crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
-    let profile = match profile_repo.find_by_user_id(user_id).await {
-        Ok(Some(p)) => p,
-        _ => return close_window_html("Payment Error — profile not found"),
-    };
-
-    let new_credit = profile.credit + config.topup_credit_amount;
-
-    match profile_repo
-        .update_credit_and_frozen_until(user_id, new_credit, profile.frozen_until)
-        .await
+    match finalize_topup(
+        &db,
+        redis_opt.as_mut(),
+        &redis_key,
+        user_id,
+        &order_id,
+        credit_add,
+        amount_eur_cents,
+    )
+    .await
     {
         Ok(_) => {
-            if let Some(ref mut rc) = redis_opt {
-                let _ = rc.set_ex(&redis_key, "completed", TOPUP_TTL_SECS).await;
-            }
             PAYMENT_TOPUP_TOTAL.with_label_values(&["captured"]).inc();
             close_window_html("Payment Complete — Credits Added")
         }
         Err(e) => {
-            tracing::error!("Failed to top up user {} after payment: {}", user_id, e);
-            close_window_html("Payment Complete — top up in progress (retry if needed)")
+            tracing::error!(
+                user_id = %user_id,
+                order_id = %order_id,
+                error = %e,
+                "failed to finalize topup after payment on return"
+            );
+            PAYMENT_TOPUP_TOTAL.with_label_values(&["failed"]).inc();
+            close_window_error_html("Payment Error — could not finalize top up (contact support)")
         }
     }
 }
@@ -345,44 +385,140 @@ pub async fn paypal_cancel_topup() -> HttpResponse {
     close_window_html("Payment Cancelled")
 }
 
-async fn topup_user_and_finalize(
-    user_id: Uuid,
+/// Record a successful top-up and atomically credit the user in a single
+/// database transaction.
+///
+/// Idempotency is enforced by the `UNIQUE` constraint on `topup_transactions.
+/// order_id`: if a row with this `order_id` already exists, the insert is a
+/// no-op and no credit is applied. The Redis "completed" flag and dashboard
+/// cache invalidation are best-effort optimisations only; they never gate the
+/// credit.
+async fn finalize_topup(
     db: &web::Data<sea_orm::DatabaseConnection>,
     redis_client: Option<&mut RedisClient>,
     redis_key: &str,
+    user_id: Uuid,
+    order_id: &str,
     credit_add: i32,
-) -> HttpResponse {
-    let profile_repo =
-        crate::database::repositories::PlayerProfileRepository::new(db.get_ref().clone());
-    let profile = match profile_repo.find_by_user_id(user_id).await {
-        Ok(Some(p)) => p,
-        Ok(None) => {
-            return AppError::NotFound("Player profile not found".into()).error_response();
-        }
-        Err(e) => return AppError::Database(e).error_response(),
-    };
+    amount_eur_cents: i32,
+) -> Result<i32, AppError> {
+    let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
+    let profile_repo = PlayerProfileRepository::new(db.get_ref().clone());
 
-    let new_credit = profile.credit + credit_add;
-    match profile_repo
-        .update_credit_and_frozen_until(user_id, new_credit, profile.frozen_until)
+    let txn = db.begin().await.map_err(|e| {
+        tracing::error!(
+            user_id = %user_id,
+            order_id = %order_id,
+            error = %e,
+            "failed to begin topup database transaction"
+        );
+        AppError::Database(e)
+    })?;
+
+    match topup_repo
+        .insert_order_if_absent_in_txn(
+            &txn,
+            user_id,
+            TopupTransactionKind::Topup,
+            amount_eur_cents,
+            credit_add,
+            order_id,
+        )
         .await
     {
-        Ok(_) => {
-            if let Some(rc) = redis_client {
-                // Invalidate the dashboard profile cache so the user sees their updated credit immediately
-                let _ = rc.del(&format!("dashboard:profile:{user_id}")).await;
-                let _ = rc.set_ex(redis_key, "completed", TOPUP_TTL_SECS).await;
+        Ok(Some(_)) => {
+            let profile = profile_repo
+                .find_by_user_id_in_txn(&txn, user_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        user_id = %user_id,
+                        order_id = %order_id,
+                        error = %e,
+                        "failed to read player profile during topup; transaction will roll back"
+                    );
+                    AppError::Database(e)
+                })?;
+            if profile.is_none() {
+                tracing::error!(
+                    user_id = %user_id,
+                    order_id = %order_id,
+                    "player profile not found during topup; transaction will roll back"
+                );
+                return Err(AppError::NotFound("payment.profile_not_found"));
             }
-            PAYMENT_TOPUP_TOTAL.with_label_values(&["captured"]).inc();
-            HttpResponse::Ok().json(TopupCaptureResponse {
-                success: true,
-                message: "Credits topped up!".into(),
-                credit: new_credit,
-            })
+
+            if let Err(e) = profile_repo
+                .credit_in_txn(&txn, user_id, credit_add, chrono::Utc::now())
+                .await
+            {
+                tracing::error!(
+                    user_id = %user_id,
+                    order_id = %order_id,
+                    error = %e,
+                    "failed to credit user after topup; transaction will roll back"
+                );
+                return Err(AppError::Database(e));
+            }
+        }
+        Ok(None) => {
+            tracing::info!(
+                user_id = %user_id,
+                order_id = %order_id,
+                "topup order already recorded; skipping credit"
+            );
         }
         Err(e) => {
-            tracing::error!("Failed to top up user {} after payment: {}", user_id, e);
-            AppError::Database(e).error_response()
+            tracing::error!(
+                user_id = %user_id,
+                order_id = %order_id,
+                error = %e,
+                "failed to record topup transaction; transaction will roll back"
+            );
+            return Err(AppError::Database(e));
         }
     }
+
+    txn.commit().await.map_err(|e| {
+        tracing::error!(
+            user_id = %user_id,
+            order_id = %order_id,
+            error = %e,
+            "failed to commit topup transaction"
+        );
+        AppError::Database(e)
+    })?;
+
+    if let Some(rc) = redis_client {
+        if let Err(e) = rc.del(&format!("dashboard:profile:{user_id}")).await {
+            tracing::warn!(
+                user_id = %user_id,
+                error = %e,
+                "failed to invalidate profile cache after topup"
+            );
+            GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
+        }
+        if let Err(e) = rc.set_ex(redis_key, "completed", TOPUP_TTL_SECS).await {
+            tracing::warn!(
+                user_id = %user_id,
+                order_id = %order_id,
+                error = %e,
+                "failed to mark topup completed in redis"
+            );
+        }
+    }
+
+    let credit = profile_repo
+        .find_by_user_id(user_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|p| p.credit)
+        .unwrap_or(credit_add);
+
+    Ok(credit)
 }
+
+#[cfg(test)]
+#[path = "topup_tests.rs"]
+mod tests;
