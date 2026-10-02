@@ -28,10 +28,11 @@ spec:
                 - -ec
                 - |
                   apk add --no-cache curl >/dev/null 2>&1
-                  curl -sSLo /usr/local/bin/mc \
-                    https://dl.min.io/client/mc/release/linux-amd64/mc
+                  # dl.min.io is deprecated (HTTP 410); fetch mc from GitHub.
+                  curl -fsSLo /usr/local/bin/mc \
+                    https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z
                   chmod +x /usr/local/bin/mc
-                  chmod +x /scripts/db-backup.sh
+                  # chmod +x /scripts/db-backup.sh
                   exec /scripts/db-backup.sh
               envFrom:
                 - configMapRef:
@@ -93,7 +94,7 @@ spec:
               volumeMounts:
                 - name: db-backup-script
                   mountPath: /scripts
-                  readOnly: true
+                  readOnly: false # we need to chmod +x the script at runtime, so it can't be read-only
               resources:
                 requests:
                   memory: "128Mi"

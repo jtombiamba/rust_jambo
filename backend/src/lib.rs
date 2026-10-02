@@ -13,6 +13,7 @@ pub mod payment;
 pub mod room;
 pub mod scheduler;
 pub mod websocket;
+pub mod worker;
 
 pub use config::Config;
 pub use database::create_connection;

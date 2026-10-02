@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # db-backup.sh — Dump the Jambo PostgreSQL database and upload it to an
-# S3-compatible object store (AWS S3, MinIO, Cloudflare R2, Backblaze B2, ...).
+# S3-compatible object store (AWS S3, MinIO, Cloudflare R2, Backblaze B2, RustFS, ...).
 #
 # This script is environment-agnostic: it is used by BOTH the Kubernetes
 # CronJob (k8s/base/db-backup-cronjob.yaml) and the Docker Compose backup
@@ -53,6 +53,13 @@ BACKUP_TMPDIR="${BACKUP_TMPDIR:-/tmp}"
 # mc alias name used for the S3 endpoint (internal, no need to change).
 MC_ALIAS="${MC_ALIAS:-jambos3}"
 
+# A non-empty prefix must end with a trailing slash so object keys and the
+# retention listing/deletion paths stay consistent (e.g. "backups" -> "backups/").
+case "$S3_PREFIX" in
+  ""|*/) : ;;
+  *) S3_PREFIX="${S3_PREFIX}/" ;;
+esac
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +108,13 @@ log "Configuring mc alias for $S3_ENDPOINT"
 mc alias set "${MC_OPTS[@]}" "$MC_ALIAS" "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" \
   --api "s3v4" >/dev/null
 
+# Ensure the target bucket exists (idempotent). If it can't be created here the
+# subsequent upload will fail with a clearer error.
+log "Ensuring bucket '$S3_BUCKET' exists"
+if ! mc mb --ignore-existing "${MC_OPTS[@]}" "$MC_ALIAS/$S3_BUCKET" >/dev/null; then
+  err "could not ensure bucket '$S3_BUCKET' exists (upload may still fail)"
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dump + compress
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,32 +155,30 @@ log "Upload complete: s3://${S3_BUCKET}/${OBJECT_KEY}"
 log "Applying retention: deleting backups older than ${BACKUP_RETENTION_DAYS} days"
 
 CUTOFF_EPOCH="$(( $(date +%s) - BACKUP_RETENTION_DAYS * 86400 ))"
+# Date-only cutoff (UTC) for a portable comparison: busybox date cannot parse
+# the timezone-suffixed timestamps that `mc ls` prints in table mode.
+CUTOFF_DATE="$(date -u -d "@${CUTOFF_EPOCH}" +%Y%m%d)"
 
-# List objects under the prefix. mc ls prints lines like:
-#   [2026-08-12 02:00:01 UTC]  12MiB jambo-20260812-020001.sql.gz
-# Parse the date, convert to epoch, and delete anything older than the cutoff.
+# List objects under the prefix as JSON (machine-readable, independent of the
+# `mc ls` table column layout). `key` is relative to the prefix, so re-prepend
+# $S3_PREFIX when building the delete path.
 while IFS= read -r line; do
   [ -z "$line" ] && continue
-  # Extract the object name (last whitespace-delimited field).
-  obj="$(printf '%s' "$line" | awk '{print $NF}')"
-  # Extract the timestamp (first field, in brackets).
-  ts="$(printf '%s' "$line" | sed -n 's/^\[\(.*\)\].*/\1/p')"
-  if [ -z "$obj" ] || [ -z "$ts" ]; then
+  key="$(printf '%s' "$line" | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')"
+  lm="$(printf '%s' "$line" | sed -n 's/.*"lastModified":"\([^"]*\)".*/\1/p')"
+  if [ -z "$key" ] || [ -z "$lm" ]; then
     continue
   fi
-  obj_epoch="$(date -d "$ts" +%s 2>/dev/null || true)"
-  if [ -z "$obj_epoch" ]; then
-    err "could not parse timestamp for $obj, skipping"
-    continue
-  fi
-  if [ "$obj_epoch" -lt "$CUTOFF_EPOCH" ]; then
-    log "Deleting old backup: $obj"
-    if ! mc rm "${MC_OPTS[@]}" "$MC_ALIAS/$S3_BUCKET/$obj" >/dev/null; then
-      err "failed to delete $obj"
+  # lastModified is ISO-8601 (e.g. 2026-09-30T17:27:29.123Z); keep the date part.
+  obj_date="$(printf '%s' "$lm" | cut -c1-10 | tr -d '-')"
+  if [ "$obj_date" -lt "$CUTOFF_DATE" ]; then
+    log "Deleting old backup: $key"
+    if ! mc rm "${MC_OPTS[@]}" "$MC_ALIAS/$S3_BUCKET/$S3_PREFIX$key" >/dev/null; then
+      err "failed to delete $key"
       exit 4
     fi
   fi
-done < <(mc ls "${MC_OPTS[@]}" "$MC_ALIAS/$S3_BUCKET/$S3_PREFIX" 2>/dev/null || true)
+done < <(mc ls --json "${MC_OPTS[@]}" "$MC_ALIAS/$S3_BUCKET/$S3_PREFIX" 2>/dev/null || true)
 
 log "Backup completed successfully: s3://${S3_BUCKET}/${OBJECT_KEY}"
 exit 0
