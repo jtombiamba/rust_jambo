@@ -1,0 +1,13 @@
+.post-readtime {
+    margin: 0 0 0.5rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--md-default-fg-color--light);
+}
+
+.post-readtime::before {
+    content: "⏱";
+    margin-right: 0.25rem;
+}

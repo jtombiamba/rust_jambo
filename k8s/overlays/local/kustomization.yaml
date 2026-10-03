@@ -27,3 +27,6 @@ images:
   - name: jambo-monitoring-nginx
     newName: jambo-monitoring-nginx
     newTag: local
+  - name: jambo-blog
+    newName: jambo-blog
+    newTag: local

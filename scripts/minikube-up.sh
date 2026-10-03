@@ -38,6 +38,7 @@ if [ "$MODE" = "local" ]; then
   docker build -t jambo-loki:local              -f infra/loki/Dockerfile         infra/loki
   docker build -t jambo-promtail:local          -f infra/promtail/Dockerfile     infra/promtail
   docker build -t jambo-tempo:local             -f infra/tempo/Dockerfile        infra/tempo
+  docker build -t jambo-blog:local              -f blog/Dockerfile               blog
   docker build -t jambo-grafana:local           -f infra/grafana/Dockerfile      infra/grafana
   docker build -t jambo-prometheus:local        -f infra/prometheus/Dockerfile   infra/prometheus
   docker build -t jambo-monitoring-nginx:local  -f infra/nginx/Dockerfile        infra/nginx

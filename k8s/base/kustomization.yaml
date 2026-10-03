@@ -14,6 +14,7 @@ resources:
   - ai-worker.yaml
   - scheduler-worker.yaml
   - frontend.yaml
+  - blog.yaml
   - ingress.yaml
   - loki.yaml
   - promtail.yaml

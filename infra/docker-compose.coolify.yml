@@ -143,6 +143,24 @@ services:
       - "coolify.service.name=jambo-frontend"
       - "coolify.service.port=80"
 
+  blog:
+    build:
+      context: ../blog
+      dockerfile: Dockerfile
+    networks:
+      - internal
+    expose:
+      - "80"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    labels:
+      - "coolify.service.name=jambo-blog"
+      - "coolify.service.port=80"
+
   ai-worker:
     build:
       context: ../backend

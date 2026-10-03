@@ -32,6 +32,7 @@ flowchart LR
         MH[mailhog]
         BE[backend]
         FE[frontend]
+        BLOG[blog]
         AI[ai-worker]
         SW[scheduler-worker]
         LOKI[loki]
@@ -43,6 +44,7 @@ flowchart LR
     end
     ING[Ingress NGINX]
     USER[Browser] --> ING --> FE
+    USER --> ING --> BLOG
     FE -->|proxy /api /ws| BE
     BE --> PG
     BE --> RQ
@@ -118,6 +120,9 @@ curl http://jambo.local/api/anonymous
 # Monitoring UI (Prometheus / Grafana) via the ingress
 curl http://monitoring.jambo.local/prometheus/
 curl http://monitoring.jambo.local/grafana/
+
+# Blog (MkDocs Material, fully static)
+curl http://blog.jambo.local/
 
 # Prometheus targets
 kubectl -n jambo port-forward svc/prometheus 9090:9090
@@ -240,6 +245,39 @@ point the `monitoring.jambo.local` host at your real domain and add TLS via
 `cert-manager`. The basic-auth credentials come from the
 `monitoring-nginx-secrets` Secret (see section 2) — never hardcode them in the
 Deployment.
+
+---
+
+## Blog
+
+A static blog ([`blog/`](../blog/)) built with **MkDocs (Material theme)** from
+the hand-written markdown in [`blog/docs/blog/`](../blog/docs/blog/). It is fully
+static and has no coupling to the backend, database, Redis, RabbitMQ, or CORS
+configuration.
+
+The same image (`ghcr.io/jtombiamba/rust_jambo-blog`) is served by both
+deployment paths:
+
+- **Kubernetes** — the `blog` Deployment + Service (`k8s/base/blog.yaml`),
+  exposed through the Ingress on host `blog.jambo.local` (local overlay) /
+  `blog.tombislab.com` (prod overlay) / `blog.staging.jambo.app` (staging).
+- **Docker Compose / Coolify** — a `blog` service in
+  `infra/docker-compose.coolify.yml` (build) and
+  `infra/docker-compose.coolify.pull.yml` (pull).
+
+Local build + preview:
+
+```bash
+cd blog
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+mkdocs serve            # http://localhost:8000
+mkdocs build --strict   # renders into blog/site/
+```
+
+The production image is a multi-stage build (`blog/Dockerfile`): MkDocs renders
+`site/` in a `python:3.12-alpine` stage, then a `nginx:1.28-alpine` stage serves
+it (non-root, gzip, long asset cache, and a `/healthz` readiness endpoint).
 
 ---
 
