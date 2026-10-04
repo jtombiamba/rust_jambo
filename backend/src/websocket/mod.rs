@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::auth::config::AuthConfig;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
+use connection::WS_SEND_QUEUE_CAPACITY;
 use manager::WebSocketManager;
 use messages::{IncomingMessage, OutgoingMessage};
 
@@ -115,7 +116,7 @@ pub async fn ws_handler(
 
     let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
 
     // Send a welcome message BEFORE registering the connection
     match serde_json::to_string(&OutgoingMessage::GameJoined { game_id }) {
@@ -159,12 +160,13 @@ pub async fn ws_handler(
             connection_id_for_forwarding.uuid()
         );
         while let Some(msg) = rx.recv().await {
+            crate::observability::metrics::WS_SEND_QUEUE_DEPTH.observe(rx.len() as f64);
             trace!(
                 "Forwarding message to connection {}: {}",
                 connection_id_for_forwarding.uuid(),
-                msg
+                msg.payload
             );
-            if let Err(e) = session_clone.text(msg).await {
+            if let Err(e) = session_clone.text(msg.payload.as_ref()).await {
                 error!(
                     "Failed to send WebSocket message to connection {}: {}",
                     connection_id_for_forwarding.uuid(),
@@ -412,7 +414,7 @@ pub async fn ws_room_handler(
 
     let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
 
     // Send welcome BEFORE registering
     if let Err(e) = session
@@ -431,7 +433,7 @@ pub async fn ws_room_handler(
     let manager_clone = manager.clone();
     actix_rt::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if let Err(e) = session_clone.text(msg).await {
+            if let Err(e) = session_clone.text(msg.payload.as_ref()).await {
                 tracing::error!(
                     "Failed to forward to room connection {}: {}",
                     connection_id.uuid(),
@@ -499,7 +501,7 @@ pub async fn ws_user_handler(
 
     let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
 
     if let Err(e) = session
         .text(serde_json::json!({"type": "user_joined", "user_id": user_id}).to_string())
@@ -522,7 +524,7 @@ pub async fn ws_user_handler(
     let manager_clone = manager.clone();
     actix_rt::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if let Err(e) = session_clone.text(msg).await {
+            if let Err(e) = session_clone.text(msg.payload.as_ref()).await {
                 tracing::error!(
                     "Failed to forward to user connection {}: {}",
                     connection_id.uuid(),

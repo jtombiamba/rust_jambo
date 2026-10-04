@@ -181,6 +181,11 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
             Duration::from_secs(config.ws_heartbeat_timeout_secs),
         )
         .await;
+    ws_manager
+        .start_spectator_resync_task(Duration::from_secs(
+            config.ws_spectator_resync_interval_secs,
+        ))
+        .await;
 
     let auth_middleware = AuthMiddleware::new(redis_client.clone(), translator.clone());
     let rate_limit_configs = RateLimitConfigs::from_config(config);

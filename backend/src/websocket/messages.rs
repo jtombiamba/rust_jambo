@@ -44,6 +44,13 @@ pub enum OutgoingMessage {
         game_mode: String,
         claim_pending: bool,
         claim_offered_to_me: bool,
+        /// Public-only: the fixed seat position of the player currently offered a
+        /// claim, if any. Sent to spectators (whose orientation is not rotated) so
+        /// a stream overlay can visualize an in-flight claim without revealing any
+        /// hand data. Omitted from player snapshots to avoid leaking the claim
+        /// target to opponents.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        claim_offered_to_position: Option<i32>,
         special_cards: Option<SpecialCards>,
     },
     /// Error response.
@@ -140,6 +147,7 @@ mod tests {
             game_mode: "multiplayer".to_string(),
             claim_pending: true,
             claim_offered_to_me: true,
+            claim_offered_to_position: None,
             special_cards: Some(SpecialCards {
                 check_triple_seven: false,
                 check_sum_value_under_21: false,

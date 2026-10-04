@@ -181,7 +181,7 @@ That IP — `192.168.96.5` — is `monitoring-nginx`'s address on the **`interna
 
 ### The "Aha!" Moment
 
-The user reported:
+The report mentionned:
 
 > monitoring-nginx is on two networks: internal and monitoring. Coolify added another network that is external, and on each network, monitoring-nginx has a different IP address. In the logs provided, Traefik required the IP address of internal, but dozzle is in monitoring network.
 

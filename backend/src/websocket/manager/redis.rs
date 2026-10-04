@@ -1,9 +1,11 @@
 use futures_util::StreamExt;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::WebSocketManager;
 use crate::game::service::compute_display_position;
 use crate::messaging::events::{GameEvent, GameStartedPlayer, RoomEvent, UserEvent};
+use crate::websocket::connection::{MessageKind, WsMessage};
 use crate::websocket::routing::{parse_channel, shard_for_id, Channel};
 
 impl WebSocketManager {
@@ -130,7 +132,13 @@ impl WebSocketManager {
                                             room_id,
                                             e
                                         );
-                                        manager.broadcast_to_room(room_id, &payload).await;
+                                        manager
+                                            .broadcast_to_room(
+                                                room_id,
+                                                &payload,
+                                                MessageKind::Control,
+                                            )
+                                            .await;
                                     }
                                 }
                             }
@@ -162,7 +170,13 @@ impl WebSocketManager {
                                             user_id,
                                             e
                                         );
-                                        manager.broadcast_to_user(user_id, &payload).await;
+                                        manager
+                                            .broadcast_to_user(
+                                                user_id,
+                                                &payload,
+                                                MessageKind::Control,
+                                            )
+                                            .await;
                                     }
                                 }
                             }
@@ -199,18 +213,19 @@ impl WebSocketManager {
         );
         match &event {
             GameEvent::CardsDealt { player_id, .. } => {
-                self.send_to_player(game_id, *player_id, &event.to_json())
+                self.send_to_player(game_id, *player_id, &event.to_json(), MessageKind::Control)
                     .await;
             }
             GameEvent::ClaimOffered { player_id, .. } => {
-                self.send_to_player(game_id, *player_id, &event.to_json())
+                self.send_to_player(game_id, *player_id, &event.to_json(), MessageKind::Control)
                     .await;
             }
             GameEvent::GameStarted { .. } => {
                 self.send_game_started_per_player(game_id, &event).await;
             }
             GameEvent::PlayerKicked { player_id, .. } => {
-                self.broadcast_to_game(game_id, &event.to_json()).await;
+                self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
+                    .await;
                 self.remove_player_connections(game_id, *player_id).await;
                 let db = {
                     let inner = self.inner.read().await;
@@ -222,7 +237,8 @@ impl WebSocketManager {
                 }
             }
             _ => {
-                self.broadcast_to_game(game_id, &event.to_json()).await;
+                self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
+                    .await;
             }
         }
     }
@@ -230,25 +246,31 @@ impl WebSocketManager {
     /// Send a message to connections of a game that have not yet registered a
     /// player identity. Used as a fallback so lobby members who joined before
     /// their player id arrived still receive game-scoped broadcasts.
-    pub async fn send_to_unidentified(&self, game_id: Uuid, message: &str) {
-        let inner = self.inner.read().await;
-        if let Some(connections) = inner.connections.get(&game_id) {
-            for connection in connections {
-                if connection.player_id.is_none() {
-                    match connection.sender.send(message.to_string()) {
-                        Ok(()) => crate::observability::metrics::WS_MESSAGES_SENT_TOTAL.inc(),
-                        Err(e) => {
-                            crate::observability::metrics::WS_SEND_FAILED_TOTAL.inc();
-                            tracing::warn!(
-                                "Failed to send message to unidentified connection {}: {}",
-                                connection.id.uuid(),
-                                e
-                            );
-                        }
-                    }
-                }
-            }
+    pub async fn send_to_unidentified(&self, game_id: Uuid, message: &str, kind: MessageKind) {
+        let targets = {
+            let inner = self.inner.read().await;
+            inner
+                .connections
+                .get(&game_id)
+                .map(|conns| {
+                    conns
+                        .iter()
+                        .filter(|c| c.player_id.is_none())
+                        .map(|c| (c.id, c.sender.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        if targets.is_empty() {
+            return;
         }
+
+        let msg = WsMessage {
+            payload: Arc::from(message),
+            kind,
+        };
+        let slow = Self::deliver(&msg, &targets);
+        self.disconnect_slow_consumers(game_id, slow).await;
     }
 
     /// Send a personalized GameStarted event to each player with `display_position`
@@ -295,8 +317,13 @@ impl WebSocketManager {
                 correlation_id: *correlation_id,
             };
 
-            self.send_to_player(game_id, player.id, &personalized.to_json())
-                .await;
+            self.send_to_player(
+                game_id,
+                player.id,
+                &personalized.to_json(),
+                MessageKind::Control,
+            )
+            .await;
         }
 
         // Fallback: connections that have not yet registered their player
@@ -304,19 +331,23 @@ impl WebSocketManager {
         // still need to learn the game started so they can leave the lobby. They
         // receive the non-rotated event; the personalized game_state_snapshot
         // corrects seat positions once they re-join with identity.
-        self.send_to_unidentified(game_id, &event.to_json()).await;
+        self.send_to_unidentified(game_id, &event.to_json(), MessageKind::Control)
+            .await;
 
         // Spectators get the public (non-rotated) game_started.
-        self.send_to_spectators(game_id, &event.to_json()).await;
+        self.send_to_spectators(game_id, &event.to_json(), MessageKind::Control)
+            .await;
     }
 
     /// Route a parsed room event to broadcast to room connections.
     pub(super) async fn route_room_event(&self, room_id: Uuid, event: RoomEvent) {
-        self.broadcast_to_room(room_id, &event.to_json()).await;
+        self.broadcast_to_room(room_id, &event.to_json(), MessageKind::Control)
+            .await;
     }
 
     /// Route a parsed user event to the target user's connections.
     pub(super) async fn route_user_event(&self, user_id: Uuid, event: UserEvent) {
-        self.broadcast_to_user(user_id, &event.to_json()).await;
+        self.broadcast_to_user(user_id, &event.to_json(), MessageKind::Control)
+            .await;
     }
 }

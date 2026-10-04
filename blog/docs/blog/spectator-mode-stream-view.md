@@ -250,34 +250,40 @@ The snapshot contains only public information:
 - `roll`, `rank`, `status`, `current_winning_card`, `current_winning_player_position`
 - `game_mode`, `step_by_step`, `claim_pending`
 
-And it explicitly omits the private fields:
+And it explicitly omits the private fields, while still exposing which position a
+claim is being offered to:
 
 ```rust
 claim_offered_to_me: false,
+claim_offered_to_position,
 special_cards: None,
 ```
 
 `special_cards` is the recipient's own special-card flags — a spectator has none,
 so it is `None`. `claim_offered_to_me` is always `false` because a spectator can
-never be offered a claim.
+never be offered a claim, but `claim_offered_to_position` is public so the stream
+can show *which* seat a claim is pending on without revealing any hand data.
 
 ### 7. Fan-out and Redis pub/sub
 
-`send_to_spectators()` iterates every
-connection for a game and sends to those flagged as spectators:
+`send_to_spectators()` snapshots the
+senders of every spectator connection under a read lock, then delivers outside the
+lock. The payload is serialized once and shared via `Arc`, and each recipient gets
+a non-blocking `try_send`:
 
 ```rust
-pub async fn send_to_spectators(&self, game_id: Uuid, message: &str) {
-    let inner = self.inner.read().await;
-    if let Some(connections) = inner.connections.get(&game_id) {
-        for connection in connections {
-            if connection.spectator {
-                if let Err(e) = connection.sender.send(message.to_string()) {
-                    // ...
-                }
-            }
-        }
-    }
+pub async fn send_to_spectators(&self, game_id: Uuid, message: &str, kind: MessageKind) {
+    let targets = {
+        let inner = self.inner.read().await;
+        inner.connections.get(&game_id)
+            .map(|conns| conns.iter().filter(|c| c.spectator)
+                .map(|c| (c.id, c.sender.clone())).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    if targets.is_empty() { return; }
+    let msg = WsMessage { payload: Arc::from(message), kind };
+    let slow = Self::deliver(&msg, &targets);
+    self.disconnect_slow_consumers(game_id, slow).await;
 }
 ```
 
@@ -441,74 +447,49 @@ The spectator role is safe by construction, not by filtering. The invariants:
 ## Current Limitations
 
 This is the honest part. The spectator feature works, but it has known limits.
+A couple of limits from when this post was first written have since been fixed:
+the per-connection send queue is now **bounded** (256 messages) with non-blocking
+`try_send` and message classification, and fan-out now serializes once and shares
+the payload via `Arc`. The earlier unbounded-queue OOM risk and the per-spectator
+`to_string()` allocation are gone. What remains:
 
-### 1. Unbounded send queue — a latent OOM risk
-
-Every connection uses an `UnboundedSender<String>`
-(`connection.rs`). `send` is synchronous
-and infallible on capacity — it never blocks and never signals backpressure.
-
-If a viewer's network stalls (mobile drop, suspended tab, TCP zero-window), the
-forwarding task stops draining its channel, but `send_to_spectators()` keeps
-enqueuing. The queue grows in process memory until the pod is **OOM-killed**,
-taking down *all* games on that instance — not just the slow viewer's stream.
-
-This is a latent availability bug, not a throughput bug. It only manifests under a
-specific client failure mode, which is exactly why it is dangerous. The remediation
-is bounded channels, non-blocking `try_send`, message classification (drop
-snapshots, disconnect on control), and lock discipline.
-
-### 2. O(N) fan-out with per-spectator allocation
-
-`send_to_spectators()` calls
-`message.to_string()` **once per spectator**, inside the loop, while holding
-`inner.read().await`. A single `game_state_snapshot` to N spectators allocates N
-copies of the JSON string. The cost is linear in viewers, and the allocation
-happens under the read lock.
-
-### 3. Redis pub/sub is fire-and-forget
+### 1. Redis pub/sub is fire-and-forget (mitigated by resync)
 
 There is no per-subscriber acknowledgment and no replay. If a backend instance is
-briefly disconnected, events published during the gap are **lost**. For spectators
-this is acceptable — the next snapshot supersedes — but it is a correctness
-constraint worth stating.
+briefly disconnected, events published during the gap are **lost**. A periodic
+resync task now re-sends the full public snapshot (every 10 seconds by default)
+to every game with active spectators, so a missed intermediate event is
+self-healed by the next snapshot. The gap still exists — it is just bounded in
+time by the resync interval.
 
-### 4. Scale ceiling
+### 2. Fan-out cost is still linear in viewers
 
-The current design does not scale to large viewer counts, and the bottleneck is the
-fan-out model, not the game logic:
+Fan-out now shares a single `Arc` allocation, but delivery cost is still linear in
+viewer count: every spectator connection gets a `try_send` per event. The bounded
+queue means a slow viewer can no longer take the instance down, but CPU and
+latency still grow linearly. For large viewer counts the ceiling is reached by
+fan-out cost, not game logic.
 
-| Regime | Viewers per game | Notes |
-|---|---|---|
-| Comfortable | ~100–500 | Fan-out stays in the low-millisecond range |
-| Strained | ~1,000–2,000 | Latency climbs; unbounded queue becomes the dominant risk |
-| Not sustainable | 10,000+ | O(N) CPU and memory per event; OOM vector |
+### 3. Public-only snapshot still omits per-player special-card flags
 
-A 4-player game produces the same event stream whether 10 or 10,000 people watch —
-but the delivery cost is linear in viewers. Changing the ceiling requires
-**aggregate/edge fan-out** (one backend connection per edge node), a **dedicated
-broadcast channel**, or **snapshot coalescing** (at most one snapshot per tick per
-spectator).
+The spectator snapshot sets `special_cards: None` and `claim_offered_to_me: false`.
+The claim *position* is now included (`claim_offered_to_position`), so the stream
+view can show who a claim is being offered to. But the per-player special-card
+flags themselves remain private, so any overlay that wants to visualize the
+streamer's own special-card state still needs a new public-only representation.
 
-### 5. Public-only snapshot omits claim and special-card state
-
-The spectator snapshot sets `claim_offered_to_me: false` and `special_cards: None`.
-This is correct for privacy, but it means the stream view cannot show special-card
-claim prompts or the streamer's special-card flags. If a future stream overlay
-needs to visualize claims, it will need a new public-only representation.
-
-### 6. Refactor TODOs in the snapshot builder
+<!-- ### 4. Refactor TODOs in the snapshot builder
 
 `send_spectator_snapshot()` duplicates
 logic that also exists in the player snapshot path. Two `TODO` comments flag this:
 
 ```rust
-// TODO: refactor game_state_players by having a function that returns the GameStatePlayer list
+// TODO: refactor  game_state_players by having a function that returns the GameStatePlayer list
 // TODO: refactor by creating outside function that return slots based on played_cards
 ```
 
 This duplication is a maintenance risk: a change to the player snapshot could
-silently diverge from the spectator snapshot.
+silently diverge from the spectator snapshot. -->
 
 ---
 
@@ -545,8 +526,9 @@ hot-spot alerts:
 - **Warning alert at 700 spectators** — a single game is becoming a hot spot.
 - **Critical alert at 1,500 spectators** — a single game can threaten the instance.
 - **Companion metrics** — `ws_messages_dropped_total`,
-  `ws_slow_consumer_disconnects_total`, and `ws_send_queue_depth` are pre-registered
-  and will only turn non-zero once bounded send queues land.
+  `ws_slow_consumer_disconnects_total`, and `ws_send_queue_depth` are now active:
+  a full queue drops a `Snapshot` or disconnects a stalled client on a `Control`
+  message.
 
 The intended narrative: **700 spectators is the warning that a game is a hot spot;
 a non-zero dropped-message rate is the proof that the hot spot is degrading.**
@@ -556,8 +538,9 @@ The runbook when the 700 alert fires:
 1. Confirm the concentration with `topk(10, ws_spectators_per_game)`.
 2. Check for degradation with the dropped-message and slow-consumer rates.
 3. If queues are healthy, monitor — no action required.
-4. If queues are filling, the backpressure fix must be in place or the instance is
-   at OOM risk.
+4. If queues are filling, check the drop and slow-consumer metrics — a bounded
+   queue should be shedding `Snapshot` traffic or disconnecting the slow viewer,
+   not growing without bound.
 5. If the game is a persistent hot spot, consider edge aggregation or a dedicated
    broadcast channel.
 
@@ -566,9 +549,10 @@ The runbook when the 700 alert fires:
 ## Roadmap
 
 The single most impactful change for streaming scale is to **stop treating each
-viewer as a first-class WebSocket connection**. Bounded send queues make the
-current model safe; an edge-aggregation or dedicated broadcast channel makes it
-scalable.
+viewer as a first-class WebSocket connection**. The current model is now safe
+under a stalled viewer (bounded queues + backpressure), but it is still O(N) in
+fan-out; an edge-aggregation or dedicated broadcast channel — or snapshot
+coalescing — is what would make it scalable to thousands of viewers.
 
 ---
 
@@ -580,13 +564,12 @@ browser relay — we got streamer hand privacy for the cost of one boolean, one
 snapshot builder, and one token type.
 
 The privacy guarantees are structural: spectators never receive `cards_dealt`, never
-receive hand values, and cannot act. The limitations are equally structural: the
-per-connection fan-out is O(N) in viewers and the send queue is unbounded. Those are
-the next problems to solve.
+receive hand values, and cannot act. The remaining limitations are equally
+structural: fan-out is still O(N) in viewers. That is the next problem to solve.
 
 ---
 
 ## Related Reading
 
-- `strengthening-observability-with-grafana-lgtm.md`
+- `observability-grafana-lgtm-vs-sentry-signoz.md`
   — the observability stack this feature plugs into.

@@ -1,4 +1,5 @@
 use chrono::Utc;
+use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -6,7 +7,9 @@ use super::WebSocketManager;
 use crate::messaging::events::GameEvent;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
-use crate::websocket::connection::{ConnectionId, TrackedConnection, WsSender};
+use crate::websocket::connection::{
+    ConnectionId, MessageKind, TrackedConnection, WsMessage, WsSender,
+};
 
 impl WebSocketManager {
     /// Add a new WebSocket connection for a given game.
@@ -101,7 +104,8 @@ impl WebSocketManager {
                 player_position,
                 reconnected_at: Some(Utc::now().to_rfc3339()),
             };
-            self.broadcast_to_game(game_id, &event.to_json()).await;
+            self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
+                .await;
             tracing::info!(
                 "Player {} (position {}) reconnected to game {}",
                 player_id,
@@ -179,7 +183,8 @@ impl WebSocketManager {
                 player_position: pos,
                 disconnected_at: Some(Utc::now().to_rfc3339()),
             };
-            self.broadcast_to_game(game_id, &event.to_json()).await;
+            self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
+                .await;
         }
     }
     pub async fn remove_connection(&self, game_id: Uuid, connection_id: ConnectionId) {
@@ -242,7 +247,8 @@ impl WebSocketManager {
                 player_position: position,
                 disconnected_at: Some(Utc::now().to_rfc3339()),
             };
-            self.broadcast_to_game(game_id, &event.to_json()).await;
+            self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
+                .await;
             tracing::info!(
                 "Player {} (position {}) disconnected from game {}",
                 player_id,
@@ -306,28 +312,13 @@ impl WebSocketManager {
     }
 
     /// Broadcast a message to all connections of a specific game.
-    pub async fn broadcast_to_game(&self, game_id: Uuid, message: &str) {
-        let inner = self.inner.read().await;
-        if let Some(connections) = inner.connections.get(&game_id) {
-            let count = connections.len();
-            tracing::debug!("Broadcasting to {} connections for game {}", count, game_id);
-            for connection in connections {
-                match connection.sender.send(message.to_string()) {
-                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
-                    Err(e) => {
-                        metrics::WS_SEND_FAILED_TOTAL.inc();
-                        tracing::warn!(
-                            "Failed to send message to WebSocket connection {}: {}",
-                            connection.id.uuid(),
-                            e
-                        );
-                    }
-                }
-            }
-        } else {
-            // Record the set of game IDs currently known to this
-            // manager so we can tell whether the game was never registered or
-            // was already removed when the broadcast arrived.
+    pub async fn broadcast_to_game(&self, game_id: Uuid, message: &str, kind: MessageKind) {
+        let targets = self.snapshot_senders(game_id).await;
+        if targets.is_empty() {
+            // Record the set of game IDs currently known to this manager so we
+            // can tell whether the game was never registered or was already
+            // removed when the broadcast arrived.
+            let inner = self.inner.read().await;
             let known_games: Vec<String> =
                 inner.connections.keys().map(|g| g.to_string()).collect();
             tracing::warn!(
@@ -338,7 +329,15 @@ impl WebSocketManager {
                 known_games.len(),
                 message.len()
             );
+            return;
         }
+
+        let msg = WsMessage {
+            payload: Arc::from(message),
+            kind,
+        };
+        let slow = Self::deliver(&msg, &targets);
+        self.disconnect_slow_consumers(game_id, slow).await;
     }
 
     /// Send a structured error message to all connections of a specific game.
@@ -351,7 +350,8 @@ impl WebSocketManager {
             .unwrap_or_else(|_| {
                 serde_json::json!({"type":"error","message":message,"source":source}).to_string()
             });
-        self.broadcast_to_game(game_id, &error_msg).await;
+        self.broadcast_to_game(game_id, &error_msg, MessageKind::Control)
+            .await;
     }
 
     /// Send a structured error message to a specific player within a game.
@@ -371,36 +371,47 @@ impl WebSocketManager {
             .unwrap_or_else(|_| {
                 serde_json::json!({"type":"error","message":message,"source":source}).to_string()
             });
-        self.send_to_player(game_id, player_id, &error_msg).await;
+        self.send_to_player(game_id, player_id, &error_msg, MessageKind::Control)
+            .await;
     }
 
     /// Send a message to only the connections belonging to a specific player within a game.
-    pub async fn send_to_player(&self, game_id: Uuid, player_id: Uuid, message: &str) {
-        let inner = self.inner.read().await;
-        if let Some(connections) = inner.connections.get(&game_id) {
-            for connection in connections {
-                if connection.player_id == Some(player_id) {
-                    match connection.sender.send(message.to_string()) {
-                        Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
-                        Err(e) => {
-                            metrics::WS_SEND_FAILED_TOTAL.inc();
-                            tracing::warn!(
-                                "Failed to send message to player {} (conn {}): {}",
-                                player_id,
-                                connection.id.uuid(),
-                                e
-                            );
-                        }
-                    }
-                }
-            }
-        } else {
+    pub async fn send_to_player(
+        &self,
+        game_id: Uuid,
+        player_id: Uuid,
+        message: &str,
+        kind: MessageKind,
+    ) {
+        let targets = {
+            let inner = self.inner.read().await;
+            inner
+                .connections
+                .get(&game_id)
+                .map(|conns| {
+                    conns
+                        .iter()
+                        .filter(|c| c.player_id == Some(player_id))
+                        .map(|c| (c.id, c.sender.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        if targets.is_empty() {
             tracing::debug!(
                 "No connections for game {}, message not sent to player {}",
                 game_id,
                 player_id
             );
+            return;
         }
+
+        let msg = WsMessage {
+            payload: Arc::from(message),
+            kind,
+        };
+        let slow = Self::deliver(&msg, &targets);
+        self.disconnect_slow_consumers(game_id, slow).await;
     }
 
     /// Get the list of (player_id, player_position) for all connected players in a game.

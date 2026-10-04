@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
@@ -33,6 +33,9 @@ struct Cli {
     #[arg(long, default_value = "120")]
     duration_secs: u64,
 
+    #[arg(long, default_value = "100")]
+    spectators_per_game: usize,
+
     #[arg(long, default_value = "5000")]
     client_timeout_ms: u64,
 
@@ -57,6 +60,7 @@ struct WsBenchmarkConfig {
     concurrent_games: usize,
     total_games: usize,
     players_per_game: usize,
+    spectators_per_game: usize,
     bet: i32,
     duration_secs: u64,
 }
@@ -67,6 +71,8 @@ struct WsBenchmarkSummary {
     ws_connections_attempted: u64,
     ws_connections_succeeded: u64,
     connection_success_rate: f64,
+    spectator_connections_attempted: u64,
+    spectator_connections_succeeded: u64,
     total_duration_secs: f64,
 }
 
@@ -171,6 +177,37 @@ async fn create_benchmark_game(
         .parse::<Uuid>()?)
 }
 
+/// Mint a spectator token for the game as one of its participants, returning the
+/// raw token to be passed as the `?token=` WebSocket query parameter.
+async fn mint_spectate_token(
+    client: &reqwest::Client,
+    target_url: &str,
+    game_id: Uuid,
+    auth_cookie: &str,
+) -> Result<String> {
+    let resp = client
+        .post(format!(
+            "{}/api/games/{}/spectate-token",
+            target_url, game_id
+        ))
+        .header("Cookie", auth_cookie)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow::anyhow!(
+            "Spectate token mint failed: {} {}",
+            status,
+            body
+        ));
+    }
+
+    let json: serde_json::Value = resp.json().await?;
+    Ok(json["token"].as_str().context("Missing token")?.to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -202,6 +239,8 @@ async fn main() -> Result<()> {
     let total_events = Arc::new(AtomicU64::new(0));
     let ws_connections_succeeded = Arc::new(AtomicU64::new(0));
     let ws_connections_attempted = Arc::new(AtomicU64::new(0));
+    let spectator_connections_succeeded = Arc::new(AtomicU64::new(0));
+    let spectator_connections_attempted = Arc::new(AtomicU64::new(0));
     let games_created = Arc::new(AtomicU64::new(0));
     let reg_errors = Arc::new(AtomicU64::new(0));
     let creation_errors = Arc::new(AtomicU64::new(0));
@@ -251,9 +290,12 @@ async fn main() -> Result<()> {
         let total_events = total_events.clone();
         let ws_connections_succeeded = ws_connections_succeeded.clone();
         let ws_connections_attempted = ws_connections_attempted.clone();
+        let spectator_connections_succeeded = spectator_connections_succeeded.clone();
+        let spectator_connections_attempted = spectator_connections_attempted.clone();
         let games_created = games_created.clone();
         let creation_errors = creation_errors.clone();
         let bet = cli.bet;
+        let spectators_per_game = cli.spectators_per_game;
         let benchmark_token = benchmark_token.clone();
 
         tokio::spawn(async move {
@@ -361,6 +403,104 @@ async fn main() -> Result<()> {
                     }
                 });
             }
+
+            if spectators_per_game > 0 {
+                let token = match mint_spectate_token(
+                    &client,
+                    &target_url,
+                    game_id,
+                    &sessions[0].auth_cookie,
+                )
+                .await
+                {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("Spectate token mint error for {}: {}", game_id, e);
+                        return;
+                    }
+                };
+
+                let mut spectator_handles = Vec::new();
+                for i in 0..spectators_per_game {
+                    let endpoint = format!("{}/ws/{}?token={}", ws_url, game_id, token);
+                    let connect_start = Instant::now();
+                    spectator_connections_attempted.fetch_add(1, Ordering::Relaxed);
+
+                    spectator_handles.push(async move {
+                        let request = match tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(&endpoint) {
+                            Ok(req) => req,
+                            Err(e) => {
+                                error!("SPEC[{}] request build fail: {}", i, e);
+                                return None;
+                            }
+                        };
+                        match tokio_tungstenite::connect_async(request).await {
+                            Ok((ws_stream, _)) => {
+                                let ms = connect_start.elapsed().as_secs_f64() * 1000.0;
+                                Some((ms, ws_stream, i, game_id))
+                            }
+                            Err(e) => {
+                                error!("SPEC[{}] connect fail: {}", i, e);
+                                None
+                            }
+                        }
+                    });
+                }
+
+                let spectator_connections: Vec<_> =
+                    futures_util::future::join_all(spectator_handles)
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .collect();
+
+                for (connect_ms, ws_stream, idx, gid) in spectator_connections {
+                    ws_connect_times.lock().await.push(connect_ms);
+                    spectator_connections_succeeded.fetch_add(1, Ordering::Relaxed);
+
+                    let total_events = total_events.clone();
+                    let first_event_times = first_event_times.clone();
+                    let first_event_recorded = Arc::new(AtomicU64::new(0));
+                    let connection_start = Instant::now();
+
+                    tokio::spawn(async move {
+                        let (mut write, mut read) = ws_stream.split();
+                        // Mark the connection as a spectator so the backend emits a
+                        // public snapshot (and the periodic resync reaches it).
+                        let join = serde_json::json!({
+                            "type": "join_game",
+                            "game_id": gid,
+                            "spectator": true,
+                        });
+                        if let Err(e) = write
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                join.to_string().into(),
+                            ))
+                            .await
+                        {
+                            error!("SPEC[{}] join send fail: {}", idx, e);
+                        }
+                        while let Some(msg) = read.next().await {
+                            match msg {
+                                Ok(tokio_tungstenite::tungstenite::Message::Text(_)) => {
+                                    total_events.fetch_add(1, Ordering::Relaxed);
+                                    if first_event_recorded.fetch_add(1, Ordering::Relaxed) == 0 {
+                                        first_event_times.lock().await.push(
+                                            connection_start.elapsed().as_secs_f64() * 1000.0,
+                                        );
+                                    }
+                                }
+                                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => break,
+                                Err(e) => {
+                                    error!("SPEC[{}] read error: {}", idx, e);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
+                }
+            }
         });
         games_started += 1;
     }
@@ -379,6 +519,7 @@ async fn main() -> Result<()> {
             concurrent_games: cli.concurrent_games,
             total_games: cli.total_games,
             players_per_game: 4,
+            spectators_per_game: cli.spectators_per_game,
             bet: cli.bet,
             duration_secs: cli.duration_secs,
         },
@@ -391,6 +532,10 @@ async fn main() -> Result<()> {
             } else {
                 0.0
             },
+            spectator_connections_attempted: spectator_connections_attempted
+                .load(Ordering::Relaxed),
+            spectator_connections_succeeded: spectator_connections_succeeded
+                .load(Ordering::Relaxed),
             total_duration_secs: elapsed,
         },
         ws_metrics: WsMetrics {

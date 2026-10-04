@@ -67,8 +67,8 @@ nav:
   - Posts:
       - Debugging a 504 Gateway Timeout: blog/504-gateway-timeout-docker-multi-network.md
       - Configuring Promtail for Dynamic Log Discovery: blog/configuring-promtail-dynamic-log-discovery-loki.md
-      - Grafana LGTM vs Sentry: blog/observability-management-grafana-lgtm-vs-sentry.md
+      - Database Backups for a Live Game: blog/database-backup-management.md
+      - Grafana LGTM vs Sentry and SigNoz: blog/observability-grafana-lgtm-vs-sentry-signoz.md
       - Observability in a Rust API: blog/observability-otel-traces-metrics-logs-rust.md
       - Fixing Silent Failures in Production: blog/silent-failure-remediation.md
       - Spectator Mode: blog/spectator-mode-stream-view.md
-      - Strengthening Observability with LGTM: blog/strengthening-observability-with-grafana-lgtm.md

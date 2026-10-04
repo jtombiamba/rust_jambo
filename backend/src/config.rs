@@ -74,6 +74,7 @@ pub struct Config {
     pub redis_event_buffer_flush_interval_secs: u64,
     pub ws_heartbeat_interval_secs: u64,
     pub ws_heartbeat_timeout_secs: u64,
+    pub ws_spectator_resync_interval_secs: u64,
     pub bot_chain_max_retries: u32,
     pub bot_chain_retry_base_delay_ms: u64,
     pub scheduler_task_max_restarts: u32,
@@ -261,6 +262,10 @@ impl std::fmt::Debug for Config {
                 &self.ws_heartbeat_interval_secs,
             )
             .field("ws_heartbeat_timeout_secs", &self.ws_heartbeat_timeout_secs)
+            .field(
+                "ws_spectator_resync_interval_secs",
+                &self.ws_spectator_resync_interval_secs,
+            )
             .field("bot_chain_max_retries", &self.bot_chain_max_retries)
             .field(
                 "bot_chain_retry_base_delay_ms",
@@ -369,6 +374,7 @@ impl Config {
             .set_default("redis_event_buffer_flush_interval_secs", "5")?
             .set_default("ws_heartbeat_interval_secs", "30")?
             .set_default("ws_heartbeat_timeout_secs", "90")?
+            .set_default("ws_spectator_resync_interval_secs", "10")?
             .set_default("bot_chain_max_retries", "3")?
             .set_default("bot_chain_retry_base_delay_ms", "500")?
             .set_default("scheduler_task_max_restarts", "3")?
@@ -660,6 +666,10 @@ impl Config {
                 .unwrap_or_else(|_| "90".to_string())
                 .parse()
                 .unwrap_or(90),
+            ws_spectator_resync_interval_secs: env::var("WS_SPECTATOR_RESYNC_INTERVAL_SECS")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()
+                .unwrap_or(10),
             bot_chain_max_retries: env::var("BOT_CHAIN_MAX_RETRIES")
                 .unwrap_or_else(|_| "3".to_string())
                 .parse()

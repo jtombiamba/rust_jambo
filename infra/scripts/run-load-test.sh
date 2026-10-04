@@ -40,6 +40,7 @@
 #   --ws-duration SECS    Benchmark duration in seconds (default: 120).
 #   --ws-bet N            Bet amount per game (default: 10).
 #   --ws-timeout MS       Per-request client timeout in ms (default: 5000).
+#   --ws-spectators N     Spectator WS connections per game (default: 100).
 #
 #   -h, --help         Show this help message.
 #
@@ -82,6 +83,7 @@ WS_CONCURRENCY=50
 WS_DURATION=120
 WS_BET=10
 WS_TIMEOUT=5000
+WS_SPECTATORS=100
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -123,6 +125,7 @@ while [[ $# -gt 0 ]]; do
         --ws-duration)    WS_DURATION="$2"; shift 2 ;;
         --ws-bet)         WS_BET="$2"; shift 2 ;;
         --ws-timeout)     WS_TIMEOUT="$2"; shift 2 ;;
+        --ws-spectators)  WS_SPECTATORS="$2"; shift 2 ;;
 
         -h|--help)     usage ;;
         *) err "Unknown option: $1"; usage ;;
@@ -285,7 +288,7 @@ docker compose -f "${COMPOSE_FILE}" --profile benchmark run --rm --no-deps \
     --output=/app/benchmark-results/http-benchmark.json
 ok "HTTP load test finished."
 
-log "Running WS load test (${WS_GAMES} games, ${WS_CONCURRENCY} concurrent, ${WS_DURATION}s)..."
+log "Running WS load test (${WS_GAMES} games, ${WS_CONCURRENCY} concurrent, ${WS_SPECTATORS} spectators/game, ${WS_DURATION}s)..."
 docker compose -f "${COMPOSE_FILE}" --profile benchmark run --rm --no-deps \
     -e BENCHMARK_API_TOKEN="${BENCHMARK_TOKEN}" \
     ws-load-test ws-load-test \
@@ -293,6 +296,7 @@ docker compose -f "${COMPOSE_FILE}" --profile benchmark run --rm --no-deps \
     --concurrent-games="${WS_CONCURRENCY}" \
     --total-games="${WS_GAMES}" \
     --duration-secs="${WS_DURATION}" \
+    --spectators-per-game="${WS_SPECTATORS}" \
     --bet="${WS_BET}" \
     --client-timeout-ms="${WS_TIMEOUT}" \
     --output=/app/benchmark-results/ws-benchmark.json

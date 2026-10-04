@@ -1,6 +1,7 @@
 use super::WebSocketManager;
 use crate::messaging::events::{GameEvent, GameStartedPlayer, UserEvent};
 use crate::observability::CorrelationId;
+use crate::websocket::connection::{MessageKind, WsMessage, WS_SEND_QUEUE_CAPACITY};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -13,8 +14,8 @@ async fn add_player_connection(
     game_id: Uuid,
     player_id: Uuid,
     position: i32,
-) -> mpsc::UnboundedReceiver<String> {
-    let (tx, rx) = mpsc::unbounded_channel();
+) -> mpsc::Receiver<WsMessage> {
+    let (tx, rx) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
     let conn_id = manager
         .add_connection(game_id, tx, CorrelationId::default())
         .await;
@@ -29,8 +30,8 @@ async fn add_player_connection(
 async fn add_unidentified_connection(
     manager: &WebSocketManager,
     game_id: Uuid,
-) -> mpsc::UnboundedReceiver<String> {
-    let (tx, rx) = mpsc::unbounded_channel();
+) -> mpsc::Receiver<WsMessage> {
+    let (tx, rx) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
     manager
         .add_connection(game_id, tx, CorrelationId::default())
         .await;
@@ -50,10 +51,10 @@ fn make_game_started_players(num: usize) -> Vec<GameStartedPlayer> {
         .collect()
 }
 
-fn drain_receiver(rx: &mut mpsc::UnboundedReceiver<String>) -> Vec<String> {
+fn drain_receiver(rx: &mut mpsc::Receiver<WsMessage>) -> Vec<String> {
     let mut events = Vec::new();
     while let Ok(msg) = rx.try_recv() {
-        events.push(msg);
+        events.push(msg.payload.to_string());
     }
     events
 }
@@ -119,7 +120,7 @@ async fn test_send_game_started_per_player_rotates_display_positions() {
     let game_id = Uuid::new_v4();
     let players = make_game_started_players(4);
 
-    let mut receivers: Vec<(Uuid, mpsc::UnboundedReceiver<String>)> = Vec::new();
+    let mut receivers: Vec<(Uuid, mpsc::Receiver<WsMessage>)> = Vec::new();
     for p in &players {
         let rx = add_player_connection(&manager, game_id, p.id, p.position).await;
         receivers.push((p.id, rx));
@@ -204,7 +205,7 @@ async fn test_send_game_started_per_player_turn_player_consistent() {
     let game_id = Uuid::new_v4();
     let players = make_game_started_players(4);
 
-    let mut receivers: Vec<(Uuid, mpsc::UnboundedReceiver<String>)> = Vec::new();
+    let mut receivers: Vec<(Uuid, mpsc::Receiver<WsMessage>)> = Vec::new();
     for p in &players {
         let rx = add_player_connection(&manager, game_id, p.id, p.position).await;
         receivers.push((p.id, rx));
@@ -254,7 +255,7 @@ async fn test_send_game_started_per_player_preserves_cards_count() {
         })
         .collect();
 
-    let mut receivers: Vec<(Uuid, mpsc::UnboundedReceiver<String>)> = Vec::new();
+    let mut receivers: Vec<(Uuid, mpsc::Receiver<WsMessage>)> = Vec::new();
     for p in &players {
         let rx = add_player_connection(&manager, game_id, p.id, p.position).await;
         receivers.push((p.id, rx));
@@ -288,7 +289,7 @@ async fn test_send_game_started_per_player_two_players() {
     let game_id = Uuid::new_v4();
     let players = make_game_started_players(2);
 
-    let mut receivers: Vec<(Uuid, mpsc::UnboundedReceiver<String>)> = Vec::new();
+    let mut receivers: Vec<(Uuid, mpsc::Receiver<WsMessage>)> = Vec::new();
     for p in &players {
         let rx = add_player_connection(&manager, game_id, p.id, p.position).await;
         receivers.push((p.id, rx));
@@ -327,7 +328,7 @@ async fn test_send_game_started_per_player_current_turn_preserved() {
     let game_id = Uuid::new_v4();
     let players = make_game_started_players(4);
 
-    let mut receivers: Vec<(Uuid, mpsc::UnboundedReceiver<String>)> = Vec::new();
+    let mut receivers: Vec<(Uuid, mpsc::Receiver<WsMessage>)> = Vec::new();
     for p in &players {
         let rx = add_player_connection(&manager, game_id, p.id, p.position).await;
         receivers.push((p.id, rx));
@@ -355,13 +356,96 @@ async fn test_send_game_started_per_player_current_turn_preserved() {
 }
 
 #[tokio::test]
+async fn test_full_queue_drops_snapshot_without_disconnect() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+
+    // Capacity 1, receiver never drained -> the queue is full after one enqueue.
+    let (tx, _rx) = mpsc::channel(1);
+    manager
+        .add_connection(game_id, tx, CorrelationId::default())
+        .await;
+
+    let before = crate::observability::metrics::WS_MESSAGES_DROPPED_TOTAL.get();
+    // Fill the queue with a Control message (succeeds).
+    manager
+        .broadcast_to_game(game_id, "first", MessageKind::Control)
+        .await;
+    // The queue is now full; a Snapshot is dropped rather than disconnecting.
+    manager
+        .broadcast_to_game(game_id, "second", MessageKind::Snapshot)
+        .await;
+    let after = crate::observability::metrics::WS_MESSAGES_DROPPED_TOTAL.get();
+
+    assert!(
+        after > before,
+        "snapshot overflow must increment the dropped counter"
+    );
+    assert_eq!(
+        manager.connection_count(game_id).await,
+        1,
+        "a dropped snapshot must not disconnect the connection"
+    );
+}
+
+#[tokio::test]
+async fn test_full_queue_on_control_disconnects_connection() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+
+    let (tx, _rx) = mpsc::channel(1);
+    manager
+        .add_connection(game_id, tx, CorrelationId::default())
+        .await;
+
+    let before = crate::observability::metrics::WS_SLOW_CONSUMER_DISCONNECTS_TOTAL.get();
+    // Fill the queue.
+    manager
+        .broadcast_to_game(game_id, "first", MessageKind::Control)
+        .await;
+    // A Control message hitting a full queue is treated as a dead client.
+    manager
+        .broadcast_to_game(game_id, "second", MessageKind::Control)
+        .await;
+    let after = crate::observability::metrics::WS_SLOW_CONSUMER_DISCONNECTS_TOTAL.get();
+
+    assert!(
+        after > before,
+        "control overflow must increment the slow-consumer disconnect counter"
+    );
+    assert_eq!(
+        manager.connection_count(game_id).await,
+        0,
+        "a control overflow must disconnect the connection"
+    );
+}
+
+#[tokio::test]
+async fn test_games_with_spectators_lists_only_games_with_spectators() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+    let player_id = Uuid::new_v4();
+
+    let _player_rx = add_player_connection(&manager, game_id, player_id, 0).await;
+    assert!(manager.games_with_spectators().await.is_empty());
+
+    let (tx, _rx) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    manager
+        .add_connection(game_id, tx, CorrelationId::default())
+        .await;
+    WebSocketManager::mark_spectator_for_latest_connection(&manager, game_id).await;
+
+    assert_eq!(manager.games_with_spectators().await, vec![game_id]);
+}
+
+#[tokio::test]
 async fn test_broadcast_to_user_delivers_to_matching_user_only() {
     let manager = make_manager();
     let user_a = Uuid::new_v4();
     let user_b = Uuid::new_v4();
 
-    let (tx_a, mut rx_a) = mpsc::unbounded_channel();
-    let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+    let (tx_a, mut rx_a) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let (tx_b, mut rx_b) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
     manager
         .add_user_connection(user_a, tx_a, CorrelationId::default())
         .await;
@@ -388,7 +472,7 @@ async fn test_remove_user_connection_stops_delivery() {
     let manager = make_manager();
     let user_id = Uuid::new_v4();
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
     let conn_id = manager
         .add_user_connection(user_id, tx, CorrelationId::default())
         .await;
@@ -426,7 +510,7 @@ async fn test_spectator_gauge_tracks_join_and_removal() {
     let manager = make_manager();
     let game_id = Uuid::new_v4();
 
-    let (tx_player, _rx_player) = mpsc::unbounded_channel();
+    let (tx_player, _rx_player) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
     let player_id = Uuid::new_v4();
     let player_conn = manager
         .add_connection(game_id, tx_player, CorrelationId::default())
@@ -435,7 +519,7 @@ async fn test_spectator_gauge_tracks_join_and_removal() {
         .set_player_for_connection(game_id, player_conn, player_id, 0)
         .await;
 
-    let (tx_spectator, _rx_spectator) = mpsc::unbounded_channel();
+    let (tx_spectator, _rx_spectator) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
     let spectator_conn = manager
         .add_connection(game_id, tx_spectator, CorrelationId::default())
         .await;

@@ -240,4 +240,4 @@ REDIS_SUBSCRIBER_RETRY_MAX_DELAY_SECS=30
 
 ---
 
-All 341 existing tests continue to pass, and the implementation adds zero new runtime dependencies — everything uses the existing `redis`, `tokio`, and `tracing` crates.
+<!-- All 341 existing tests continue to pass, and the implementation adds zero new runtime dependencies — everything uses the existing `redis`, `tokio`, and `tracing` crates. -->

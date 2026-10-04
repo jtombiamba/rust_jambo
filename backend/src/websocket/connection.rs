@@ -1,10 +1,44 @@
+use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
 use crate::observability::CorrelationId;
 
-/// A single WebSocket connection is represented by a sender that can forward messages.
-pub type WsSender = tokio::sync::mpsc::UnboundedSender<String>;
+/// Backpressure classification for an outbound WebSocket message.
+///
+/// The per-connection send queue is bounded (`WS_SEND_QUEUE_CAPACITY`). When a
+/// queue is full, the overflow policy depends on the message kind:
+///
+/// - `Snapshot` — idempotent, latest-wins payload (e.g. `game_state_snapshot`).
+///   Safe to drop: the next snapshot supersedes it.
+/// - `Control` — stateful, one-shot payload (e.g. `game_started`, `player_kicked`,
+///   errors). Dropping it would corrupt client state, so a full queue is treated
+///   as a dead client and the connection is disconnected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageKind {
+    Snapshot,
+    Control,
+}
+
+/// A single outbound WebSocket message: a shared payload plus its backpressure
+/// classification. The payload is `Arc<str>` so a broadcast serializes once and
+/// shares the allocation across every recipient via cheap `Arc` clones.
+#[derive(Debug, Clone)]
+pub struct WsMessage {
+    pub payload: Arc<str>,
+    pub kind: MessageKind,
+}
+
+/// Capacity of each per-connection send queue.
+///
+/// A full queue is the fastest signal of a stalled client (mobile drop, suspended
+/// tab, TCP zero-window). Bounding the queue caps per-connection memory at
+/// `WS_SEND_QUEUE_CAPACITY × message_size`, turning the previous latent OOM risk
+/// into an explicit, observable drop-vs-disconnect decision (see `MessageKind`).
+pub const WS_SEND_QUEUE_CAPACITY: usize = 256;
+
+/// A single WebSocket connection is represented by a bounded sender.
+pub type WsSender = tokio::sync::mpsc::Sender<WsMessage>;
 
 /// Connection identifier for tracking individual WebSocket connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
