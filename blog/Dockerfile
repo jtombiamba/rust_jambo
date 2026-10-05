@@ -18,6 +18,6 @@ RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx /var/log/nginx /
 COPY --chown=nginx:nginx --from=builder /site/site /usr/share/nginx/html
 COPY --chown=nginx:nginx nginx.conf /etc/nginx/nginx.conf
 
-EXPOSE 80
+EXPOSE 8088
 USER nginx
 CMD ["nginx", "-g", "daemon off;"]
