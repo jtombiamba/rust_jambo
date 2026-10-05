@@ -147,6 +147,24 @@ services:
       - "coolify.service.name=jambo-frontend"
       # - "coolify.service.port=3000"
 
+  blog:
+    image: ghcr.io/jtombiamba/rust_jambo-blog:${IMAGE_TAG:-latest}
+    pull_policy: always
+    # networks:
+    #   - internal
+    expose:
+      - "80"
+    restart: unless-stopped
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    labels:
+      - "traefik.enable=true"
+      - "coolify.service.name=jambo-blog"
+
   ai-worker:
     image: ghcr.io/jtombiamba/rust_jambo-backend:${IMAGE_TAG:-latest}
     pull_policy: always

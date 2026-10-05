@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use super::WebSocketManager;
 use crate::observability::metrics;
+use crate::websocket::connection::MessageKind;
 
 impl WebSocketManager {
     /// Clean up stale connections that haven't had activity for more than `max_idle_duration`
@@ -113,7 +114,8 @@ impl WebSocketManager {
                 player_position: position,
                 disconnected_at: Some(chrono::Utc::now().to_rfc3339()),
             };
-            self.broadcast_to_game(game_id, &event.to_json()).await;
+            self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
+                .await;
             inner = self.inner.write().await;
         }
         drop(inner);

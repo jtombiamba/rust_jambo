@@ -21,6 +21,7 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/tests/*.png
 infra/benchmark-results/
+blog/site/
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

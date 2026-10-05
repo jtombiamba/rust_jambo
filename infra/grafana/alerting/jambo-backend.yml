@@ -598,7 +598,7 @@ groups:
           team: backend
         annotations:
           summary: A single game has more than 1,500 spectators
-          description: Game {{ $labels.game_id }} has {{ $value }} spectators. This concentration risks OOM from the unbounded send queue. Consider edge aggregation or a dedicated broadcast channel.
+          description: Game {{ $labels.game_id }} has {{ $value }} spectators. This concentration pushes linear fan-out cost and queue pressure on a single instance. Consider edge aggregation or a dedicated broadcast channel.
 
       - uid: ws-send-failed
         title: WSSendFailed
@@ -642,7 +642,7 @@ groups:
           team: backend
         annotations:
           summary: WebSocket messages dropped on a full send queue
-          description: Snapshots are being dropped because a per-connection send queue is full. A slow spectator is present. This alert is only meaningful once bounded send queues are enabled.
+          description: Snapshots are being dropped because a per-connection send queue is full. A slow spectator is present; the snapshot supersedes the dropped one, but a sustained drop rate indicates the client is not keeping up.
 
       - uid: ws-slow-consumer-disconnects
         title: WSSlowConsumerDisconnects
@@ -664,4 +664,4 @@ groups:
           team: backend
         annotations:
           summary: WebSocket connections torn down for a full send queue
-          description: A control message hit a full queue and a client was disconnected. This alert is only meaningful once bounded send queues are enabled.
+          description: A control message hit a full queue and a client was disconnected. This signals a stalled peer whose state can no longer be kept consistent; the disconnect forces a clean reconnect.

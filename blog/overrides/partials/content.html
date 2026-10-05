@@ -1,0 +1,21 @@
+{#-
+  Overrides Material's `partials/content.html` to show an estimated reading
+  time above the post title. The default partial is reproduced verbatim so the
+  rest of the behaviour (tags, actions, source file, feedback, comments) is
+  preserved.
+-#}
+{% include "partials/tags.html" %}
+{% include "partials/actions.html" %}
+{% if page.url %}
+  {% set _words = page.content | striptags | wordcount %}
+  {% set _minutes = ((_words / 200) | round(0, "ceil")) | int %}
+  {% if _minutes < 1 %}{% set _minutes = 1 %}{% endif %}
+  <p class="post-readtime" aria-label="Estimated reading time">{{ _minutes }} min read</p>
+{% endif %}
+{% if "\u003ch1" not in page.content %}
+  <h1>{{ page.title | d(config.site_name, true)}}</h1>
+{% endif %}
+{{ page.content }}
+{% include "partials/source-file.html" %}
+{% include "partials/feedback.html" %}
+{% include "partials/comments.html" %}

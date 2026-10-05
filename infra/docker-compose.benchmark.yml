@@ -331,6 +331,7 @@ services:
       - "--concurrent-games=50"
       - "--total-games=100"
       - "--duration-secs=120"
+      - "--spectators-per-game=100"
       - "--client-timeout-ms=5000"
       - "--output=/app/benchmark-results/ws-benchmark.json"
     depends_on:

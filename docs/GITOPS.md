@@ -86,6 +86,23 @@ operates by pushing to Git. Recurring cases:
 - Check the AppProject allows the destination namespace
   ([`jambo-project.yaml`](../argocd/apps/jambo-project.yaml)).
 
+## Blog
+
+The static blog ([`blog/`](../blog/)) is deployed like any other component: its
+`blog` Deployment + Service live in [`k8s/base/blog.yaml`](../k8s/base/blog.yaml)
+and are image-mapped by each overlay (`jambo-blog` →
+`ghcr.io/jtombiamba/rust_jambo-blog`). Its Ingress host is added per environment:
+
+| Environment | Host |
+|---|---|
+| staging | `blog.staging.jambo.app` |
+| prod | `blog.tombislab.com` |
+
+cert-manager issues the TLS cert once the host resolves; no extra configuration
+is needed beyond the DNS record. The `build-push-blog` CI job publishes the
+image and the `prod` pinning step (`newTag` → `sha-<sha>`) covers it
+automatically.
+
 ## Secrets (HCP Vault via ESO)
 
 - `k8s/overlays/{staging,prod}/external-secret.yaml` declares a `SecretStore`

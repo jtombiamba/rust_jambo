@@ -1,10 +1,13 @@
+use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
 use super::WebSocketManager;
 use crate::observability::metrics;
 use crate::observability::CorrelationId;
-use crate::websocket::connection::{ConnectionId, TrackedConnection, WsSender};
+use crate::websocket::connection::{
+    ConnectionId, MessageKind, TrackedConnection, WsMessage, WsSender,
+};
 
 impl WebSocketManager {
     /// Add a new WebSocket connection for a specific user.
@@ -75,24 +78,32 @@ impl WebSocketManager {
     }
 
     /// Broadcast a message to all connections of a specific user.
-    pub async fn broadcast_to_user(&self, user_id: Uuid, message: &str) {
-        let inner = self.inner.read().await;
-        if let Some(connections) = inner.user_connections.get(&user_id) {
-            for connection in connections {
-                match connection.sender.send(message.to_string()) {
-                    Ok(()) => metrics::WS_MESSAGES_SENT_TOTAL.inc(),
-                    Err(e) => {
-                        metrics::WS_SEND_FAILED_TOTAL.inc();
-                        tracing::warn!(
-                            "Failed to send message to user connection {}: {}",
-                            connection.id.uuid(),
-                            e
-                        );
-                    }
-                }
-            }
-        } else {
+    pub async fn broadcast_to_user(&self, user_id: Uuid, message: &str, kind: MessageKind) {
+        let targets = {
+            let inner = self.inner.read().await;
+            inner
+                .user_connections
+                .get(&user_id)
+                .map(|conns| {
+                    conns
+                        .iter()
+                        .map(|c| (c.id, c.sender.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        if targets.is_empty() {
             tracing::debug!("No connections for user {}, message not broadcast", user_id);
+            return;
+        }
+
+        let msg = WsMessage {
+            payload: Arc::from(message),
+            kind,
+        };
+        let slow = Self::deliver(&msg, &targets);
+        for conn_id in slow {
+            self.remove_user_connection(user_id, conn_id).await;
         }
     }
 }

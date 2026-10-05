@@ -1,0 +1,79 @@
+site_name: Jambo Blog
+site_url: https://blog.tombislab.com
+site_description: Engineering notes from the Jambo project — Rust, Actix Web, Kubernetes, and observability.
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  custom_dir: overrides
+
+extra_css:
+  - stylesheets/extra.css
+
+plugins:
+  - glightbox:
+      zoomable: true
+      draggable: true
+
+# The posts reference source files (backend/, infra/, docs/) that are not part of
+# the rendered site. Tolerate those links so `mkdocs build --strict`
+# still passes; genuine MkDocs errors (bad nav, bad config) still abort.
+validation:
+  links:
+    not_found: ignore
+    absolute_links: ignore
+    unrecognized_links: ignore
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Home: index.md
+  - Posts:
+      - Debugging a 504 Gateway Timeout: blog/504-gateway-timeout-docker-multi-network.md
+      - Configuring Promtail for Dynamic Log Discovery: blog/configuring-promtail-dynamic-log-discovery-loki.md
+      - Database Backups for a Live Game: blog/database-backup-management.md
+      - Grafana LGTM vs Sentry and SigNoz: blog/observability-grafana-lgtm-vs-sentry-signoz.md
+      - Observability in a Rust API: blog/observability-otel-traces-metrics-logs-rust.md
+      - Fixing Silent Failures in Production: blog/silent-failure-remediation.md
+      - Spectator Mode: blog/spectator-mode-stream-view.md

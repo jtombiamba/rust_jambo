@@ -1,3 +1,6 @@
+// async-trait generates a redundant `#[must_use]` on `Pin<Box<dyn Future>>` returns.
+#![allow(clippy::double_must_use)]
+
 pub mod api;
 pub mod auth;
 pub mod cache;
@@ -13,6 +16,7 @@ pub mod payment;
 pub mod room;
 pub mod scheduler;
 pub mod websocket;
+pub mod worker;
 
 pub use config::Config;
 pub use database::create_connection;

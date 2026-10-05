@@ -19,7 +19,7 @@ data:
       - job_name: kubernetes-pods
         pipeline_stages:
           - match:
-              selector: '{app!="backend"}'
+              selector: '{app!="backend", app!="ai-worker"}'
               stages:
                 - cri: {}
           # - cri: {}
@@ -43,6 +43,21 @@ data:
                 - labels:
                     level:
                     # target:
+          - match:
+              selector: '{app="ai-worker"}'
+              stages:
+                - json:
+                    expressions:
+                      log:
+                - json:
+                    source: log
+                    expressions:
+                      level: level
+                      target: target
+                      timestamp: timestamp
+                      message: fields.message
+                - labels:
+                    level:
 
         kubernetes_sd_configs:
           - role: pod

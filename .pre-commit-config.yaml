@@ -13,7 +13,13 @@ repos:
       - id: check-yaml
         name: Check YAML syntax
         args: ["--allow-multiple-documents"]
-        exclude: ^infra/
+        # `blog/mkdocs.yml` uses the `!!python/name` tag (Mermaid custom fence),
+        # which the safe loader cannot construct.
+        exclude: >
+          (?x)^(
+            infra/|
+            blog/mkdocs\.yml
+          )$
       - id: check-added-large-files
         name: Check for large files
         args: ["--maxkb=500"]

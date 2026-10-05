@@ -543,6 +543,7 @@ impl RabbitMQClient {
     #[allow(dead_code)]
     pub async fn get_queue_length(&self, queue: &str) -> Result<u32, lapin::Error> {
         info!("queue length measure: {}", queue);
+        // proprer error handling: if the connection is closed, try to reconnect and get a new channel
         let channel = self.connection.create_channel().await?;
         let queue_name: lapin::types::ShortString = queue.into();
 

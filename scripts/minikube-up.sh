@@ -38,6 +38,7 @@ if [ "$MODE" = "local" ]; then
   docker build -t jambo-loki:local              -f infra/loki/Dockerfile         infra/loki
   docker build -t jambo-promtail:local          -f infra/promtail/Dockerfile     infra/promtail
   docker build -t jambo-tempo:local             -f infra/tempo/Dockerfile        infra/tempo
+  docker build -t jambo-blog:local              -f blog/Dockerfile               blog
   docker build -t jambo-grafana:local           -f infra/grafana/Dockerfile      infra/grafana
   docker build -t jambo-prometheus:local        -f infra/prometheus/Dockerfile   infra/prometheus
   docker build -t jambo-monitoring-nginx:local  -f infra/nginx/Dockerfile        infra/nginx
@@ -95,16 +96,16 @@ kubectl -n jambo create secret generic jambo-secrets \
   --from-literal=DATABASE_URL="${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/jambo}" \
   --from-literal=RABBITMQ_URL="${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/%2f}" \
   --from-literal=REDIS_URL="${REDIS_URL:-redis://redis:6379}" \
+  --from-literal=S3_ENDPOINT="${S3_ENDPOINT:-https://s3.amazonaws.com}" \
+  --from-literal=S3_BUCKET="${S3_BUCKET:-jambo-backups}" \
+  --from-literal=S3_PREFIX="${S3_PREFIX:-jambo/}" \
+  --from-literal=S3_ACCESS_KEY="${S3_ACCESS_KEY:-}" \
+  --from-literal=S3_SECRET_KEY="${S3_SECRET_KEY:-}" \
+  --from-literal=BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-  # --from-literal=S3_ENDPOINT="${S3_ENDPOINT:-https://s3.amazonaws.com}" \
-  # --from-literal=S3_BUCKET="${S3_BUCKET:-jambo-backups}" \
-  # --from-literal=S3_PREFIX="${S3_PREFIX:-jambo/}" \
-  # --from-literal=S3_ACCESS_KEY="${S3_ACCESS_KEY:-}" \
-  # --from-literal=S3_SECRET_KEY="${S3_SECRET_KEY:-}" \
   # --from-literal=S3_REGION="${S3_REGION:-us-east-1}" \
   # --from-literal=S3_INSECURE="${S3_INSECURE:-false}" \
-  # --from-literal=BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}" \
 
 # monitoring-nginx-secrets: consumed by monitoring-nginx via secretKeyRef.
 kubectl -n jambo create secret generic monitoring-nginx-secrets \

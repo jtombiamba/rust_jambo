@@ -10,6 +10,7 @@ use crate::game::special_cards::{compute_special_cards, SpecialCards};
 
 use super::manager::WebSocketManager;
 use super::messages::{GameStatePlayer, OutgoingMessage};
+use crate::websocket::connection::MessageKind;
 
 /// Compute the recipient's own special-card flags for a snapshot. Only
 /// multiplayer games have the claim mechanic, so solo games and spectators get
@@ -60,7 +61,9 @@ pub(super) async fn send_game_state_snapshot(
                 source: "ws:game_not_found".to_string(),
             };
             if let Ok(json) = serde_json::to_string(&error_msg) {
-                manager.send_to_player(game_id, player_id, &json).await;
+                manager
+                    .send_to_player(game_id, player_id, &json, MessageKind::Control)
+                    .await;
             }
             return;
         }
@@ -71,7 +74,9 @@ pub(super) async fn send_game_state_snapshot(
                 source: "ws:db_error".to_string(),
             };
             if let Ok(json) = serde_json::to_string(&error_msg) {
-                manager.send_to_player(game_id, player_id, &json).await;
+                manager
+                    .send_to_player(game_id, player_id, &json, MessageKind::Control)
+                    .await;
             }
             return;
         }
@@ -147,12 +152,15 @@ pub(super) async fn send_game_state_snapshot(
         game_mode: game_model.game_mode.to_string(),
         claim_pending: game_model.pending_claim_player_id.is_some(),
         claim_offered_to_me: game_model.pending_claim_player_id == Some(player_id),
+        claim_offered_to_position: None,
         special_cards: resolve_special_cards(db, &game_model, Some(player_id)).await,
     };
 
     match serde_json::to_string(&snapshot) {
         Ok(json) => {
-            manager.send_to_player(game_id, player_id, &json).await;
+            manager
+                .send_to_player(game_id, player_id, &json, MessageKind::Snapshot)
+                .await;
             info!(
                 "Sent game state snapshot for game {} to player {}",
                 game_id, player_id
@@ -269,12 +277,15 @@ pub(super) async fn send_snapshots_to_all_players(
             game_mode: game_model.game_mode.to_string(),
             claim_pending,
             claim_offered_to_me: game_model.pending_claim_player_id == Some(player_id),
+            claim_offered_to_position: None,
             special_cards: resolve_special_cards(db, &game_model, Some(player_id)).await,
         };
 
         match serde_json::to_string(&snapshot) {
             Ok(json) => {
-                manager.send_to_player(game_id, player_id, &json).await;
+                manager
+                    .send_to_player(game_id, player_id, &json, MessageKind::Snapshot)
+                    .await;
                 info!(
                     "Sent game state snapshot for game {} to player {}",
                     game_id, player_id
@@ -386,6 +397,11 @@ pub(super) async fn send_spectator_snapshot(
         }
     };
 
+    let claim_offered_to_position: Option<i32> = game_model
+        .pending_claim_player_id
+        .and_then(|pid| players.iter().find(|p| p.id == pid))
+        .map(|p| p.position);
+
     let snapshot = OutgoingMessage::GameStateSnapshot {
         game_id,
         roll: game_model.roll,
@@ -399,12 +415,15 @@ pub(super) async fn send_spectator_snapshot(
         game_mode: game_model.game_mode.to_string(),
         claim_pending: game_model.pending_claim_player_id.is_some(),
         claim_offered_to_me: false,
+        claim_offered_to_position,
         special_cards: None,
     };
 
     match serde_json::to_string(&snapshot) {
         Ok(json) => {
-            manager.send_to_spectators(game_id, &json).await;
+            manager
+                .send_to_spectators(game_id, &json, MessageKind::Snapshot)
+                .await;
             info!("Sent spectator snapshot for game {}", game_id);
         }
         Err(e) => {

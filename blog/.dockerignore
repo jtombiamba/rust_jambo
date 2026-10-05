@@ -1,0 +1,5 @@
+site
+.venv
+.git
+.gitignore
+.dockerignore

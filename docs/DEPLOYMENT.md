@@ -32,6 +32,7 @@ flowchart LR
         MH[mailhog]
         BE[backend]
         FE[frontend]
+        BLOG[blog]
         AI[ai-worker]
         SW[scheduler-worker]
         LOKI[loki]
@@ -43,6 +44,7 @@ flowchart LR
     end
     ING[Ingress NGINX]
     USER[Browser] --> ING --> FE
+    USER --> ING --> BLOG
     FE -->|proxy /api /ws| BE
     BE --> PG
     BE --> RQ
@@ -118,6 +120,9 @@ curl http://jambo.local/api/anonymous
 # Monitoring UI (Prometheus / Grafana) via the ingress
 curl http://monitoring.jambo.local/prometheus/
 curl http://monitoring.jambo.local/grafana/
+
+# Blog (MkDocs Material, fully static)
+curl http://blog.jambo.local/
 
 # Prometheus targets
 kubectl -n jambo port-forward svc/prometheus 9090:9090
@@ -243,11 +248,44 @@ Deployment.
 
 ---
 
+## Blog
+
+A static blog ([`blog/`](../blog/)) built with **MkDocs (Material theme)** from
+the hand-written markdown in [`blog/docs/blog/`](../blog/docs/blog/). It is fully
+static and has no coupling to the backend, database, Redis, RabbitMQ, or CORS
+configuration.
+
+The same image (`ghcr.io/jtombiamba/rust_jambo-blog`) is served by both
+deployment paths:
+
+- **Kubernetes** — the `blog` Deployment + Service (`k8s/base/blog.yaml`),
+  exposed through the Ingress on host `blog.jambo.local` (local overlay) /
+  `blog.tombislab.com` (prod overlay) / `blog.staging.jambo.app` (staging).
+- **Docker Compose / Coolify** — a `blog` service in
+  `infra/docker-compose.coolify.yml` (build) and
+  `infra/docker-compose.coolify.pull.yml` (pull).
+
+Local build + preview:
+
+```bash
+cd blog
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+mkdocs serve            # http://localhost:8000
+mkdocs build --strict   # renders into blog/site/
+```
+
+The production image is a multi-stage build (`blog/Dockerfile`): MkDocs renders
+`site/` in a `python:3.12-alpine` stage, then a `nginx:1.28-alpine` stage serves
+it (non-root, gzip, long asset cache, and a `/healthz` readiness endpoint).
+
+---
+
 ## 7. Database backups (S3-compatible storage)
 
 The stack includes an automated PostgreSQL backup that dumps the database daily,
 compresses it with gzip, uploads it to any S3-compatible object store (AWS S3,
-MinIO, Cloudflare R2, Backblaze B2, …), and prunes dumps older than the
+MinIO, Cloudflare R2, Backblaze B2, RustFS, …), and prunes dumps older than the
 configured retention.
 
 It is implemented by a single shared script,
@@ -269,19 +307,32 @@ The backup is driven entirely by environment variables (see
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `S3_ENDPOINT` | S3-compatible endpoint URL (e.g. `https://s3.eu-west-1.amazonaws.com` or `http://minio:9000`) | *(required)* |
-| `S3_BUCKET` | Bucket name to store dumps in | *(required)* |
-| `S3_PREFIX` | Object key prefix inside the bucket | `backups` |
+| `S3_ENDPOINT` | S3-compatible endpoint URL (e.g. `https://s3.eu-west-1.amazonaws.com`, `http://minio:9000`, `http://host.docker.internal:9000` for a local RustFS) | *(required)* |
+| `S3_BUCKET` | Bucket name to store dumps in (auto-created if missing) | *(required)* |
+| `S3_PREFIX` | Object key prefix inside the bucket (trailing slash added automatically) | `backups/` |
 | `S3_ACCESS_KEY` | Access key / access key ID | *(required)* |
 | `S3_SECRET_KEY` | Secret key | *(required)* |
-| `S3_REGION` | Region for the endpoint | `us-east-1` |
-| `S3_INSECURE` | `true` to skip TLS verification (self-signed / plain HTTP) | `false` |
+| `S3_REGION` | Region for the endpoint (ignored by most self-hosted stores) | `us-east-1` |
+| `S3_INSECURE` | `true` to skip TLS verification (self-signed TLS only; plain HTTP needs nothing) | `false` |
 | `BACKUP_RETENTION_DAYS` | Number of days of dumps to keep | `14` |
 | `BACKUP_CRON_SCHEDULE` | Cron schedule (Compose only; K8s uses the CronJob `schedule`) | `0 2 * * *` |
 
 The database connection is taken from `DATABASE_URL` (or the standard `PG*`
 variables). In Kubernetes this comes from the `jambo-config` ConfigMap; in
 Compose it is built from the `POSTGRES_*` variables.
+
+> **Reaching an out-of-cluster store (e.g. RustFS):** the backup container runs
+> on its own Docker network and cannot resolve another container by name, so it
+> reaches the store through its host-published address:
+> - Docker Desktop — `http://host.docker.internal:9000`
+> - plain Linux / Coolify — `http://<docker-host-ip>:9000` (or the bridge
+>   gateway, e.g. `http://172.17.0.1:9000`; add
+>   `extra_hosts: [host.docker.internal:host-gateway]` to the service if you
+>   prefer that name).
+>
+> The store itself stays out of the compose file. The `mc` (MinIO client) binary
+> is fetched at build/run time from the official GitHub release (the old
+> `dl.min.io` URL is deprecated).
 
 ### Kubernetes
 
