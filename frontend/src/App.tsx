@@ -28,6 +28,7 @@ import { useRoomWebSocket } from './hooks/useRoomWebSocket'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useUserWebSocket } from './hooks/useUserWebSocket'
 import { getStoredStats, saveStats, AnonymousStats } from './utils/storage'
+import { copyTextToClipboard } from './utils/clipboard'
 
 interface QuickGameResponse {
   game_id: string
@@ -401,23 +402,25 @@ function AppContent() {
     setAutoStartCountdown(0)
   }
 
-  const handleCopyStreamUrl = () => {
+  const handleCopyStreamUrl = async () => {
     if (!gameId) return
-    axios.post(`/api/games/${gameId}/spectate-token`)
-      .then((res) => {
-        const url = res.data.url as string
-        if (!url) {
-          showToast(t('game.streamUrlFailed'), 'error')
-          return
-        }
-        navigator.clipboard.writeText(url)
-          .then(() => showToast(t('game.streamUrlCopied'), 'success'))
-          .catch(() => showToast(url, 'info'))
-      })
-      .catch((err) => {
-        const error = extractApiError(err)
-        showToast(error.message || t('game.streamUrlFailed'), 'error')
-      })
+    try {
+      const res = await axios.post(`/api/games/${gameId}/spectate-token`)
+      const url = res.data.url as string
+      if (!url) {
+        showToast(t('game.streamUrlFailed'), 'error')
+        return
+      }
+      const copied = await copyTextToClipboard(url)
+      if (copied) {
+        showToast(t('game.streamUrlCopied'), 'success')
+      } else {
+        showToast(url, 'info')
+      }
+    } catch (err) {
+      const error = extractApiError(err)
+      showToast(error.message || t('game.streamUrlFailed'), 'error')
+    }
   }
 
   const handleViewLobby = (gameId: string) => {

@@ -4,33 +4,36 @@ use uuid::Uuid;
 
 use super::WebSocketManager;
 use crate::observability::metrics;
-use crate::websocket::connection::{MessageKind, WsMessage};
+use crate::websocket::connection::{ConnectionId, MessageKind, WsMessage};
 
 impl WebSocketManager {
-    /// Mark the most recently added connection for a game as a spectator, then
+    /// Mark a specific connection for a game as a read-only spectator, then
     /// refresh the per-game spectator gauge.
-    pub async fn mark_spectator_for_latest_connection(manager: &WebSocketManager, game_id: Uuid) {
-        let conn_id = {
-            let inner = manager.inner.read().await;
-            inner
-                .connections
-                .get(&game_id)
-                .and_then(|conns| conns.last())
-                .map(|c| c.id)
-        };
-        if let Some(cid) = conn_id {
-            {
-                let mut inner = manager.inner.write().await;
-                if let Some(connections) = inner.connections.get_mut(&game_id) {
-                    for conn in connections.iter_mut() {
-                        if conn.id == cid {
+    ///
+    /// Setting the spectator flag also clears any player identity on the same
+    /// connection: a spectator never has a hand, so a connection that is marked
+    /// spectator must not keep receiving personalized (per-player) events.
+    pub async fn mark_spectator_for_connection(&self, game_id: Uuid, connection_id: ConnectionId) {
+        let changed = {
+            let mut inner = self.inner.write().await;
+            let mut changed = false;
+            if let Some(connections) = inner.connections.get_mut(&game_id) {
+                for conn in connections.iter_mut() {
+                    if conn.id == connection_id {
+                        if !conn.spectator {
                             conn.spectator = true;
-                            break;
+                            changed = true;
                         }
+                        conn.player_id = None;
+                        conn.player_position = None;
+                        break;
                     }
                 }
             }
-            manager.refresh_spectator_gauge(game_id).await;
+            changed
+        };
+        if changed {
+            self.refresh_spectator_gauge(game_id).await;
         }
     }
 

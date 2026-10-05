@@ -90,6 +90,11 @@ impl WebSocketManager {
                 if conn.id == connection_id {
                     conn.player_id = Some(player_id);
                     conn.player_position = Some(player_position);
+                    // A player identity always wins over a spectator flag. Without
+                    // this, a connection first marked spectator (or a stale render)
+                    // would keep receiving public-only snapshots and stop receiving
+                    // its personalized hand/deck.
+                    conn.spectator = false;
                     break;
                 }
             }
@@ -448,29 +453,6 @@ impl WebSocketManager {
             .get(&game_id)
             .map(|conns| conns.iter().any(|c| c.player_id == Some(player_id)))
             .unwrap_or(false)
-    }
-
-    /// Set player identity on the most recently added connection for a game.
-    /// Used during WS join when player_id/position arrive after initial connection.
-    pub async fn set_player_for_latest_connection(
-        manager: &WebSocketManager,
-        game_id: Uuid,
-        player_id: Uuid,
-        player_position: i32,
-    ) {
-        let conn_id = {
-            let inner = manager.inner.read().await;
-            inner
-                .connections
-                .get(&game_id)
-                .and_then(|conns| conns.last())
-                .map(|c| c.id)
-        };
-        if let Some(cid) = conn_id {
-            manager
-                .set_player_for_connection(game_id, cid, player_id, player_position)
-                .await;
-        }
     }
 
     /// Get total number of active connections across all games.

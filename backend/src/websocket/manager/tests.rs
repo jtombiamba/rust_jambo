@@ -430,10 +430,12 @@ async fn test_games_with_spectators_lists_only_games_with_spectators() {
     assert!(manager.games_with_spectators().await.is_empty());
 
     let (tx, _rx) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
-    manager
+    let spectator_conn = manager
         .add_connection(game_id, tx, CorrelationId::default())
         .await;
-    WebSocketManager::mark_spectator_for_latest_connection(&manager, game_id).await;
+    manager
+        .mark_spectator_for_connection(game_id, spectator_conn)
+        .await;
 
     assert_eq!(manager.games_with_spectators().await, vec![game_id]);
 }
@@ -523,7 +525,9 @@ async fn test_spectator_gauge_tracks_join_and_removal() {
     let spectator_conn = manager
         .add_connection(game_id, tx_spectator, CorrelationId::default())
         .await;
-    WebSocketManager::mark_spectator_for_latest_connection(&manager, game_id).await;
+    manager
+        .mark_spectator_for_connection(game_id, spectator_conn)
+        .await;
 
     let label = game_id.to_string();
     let gauge = crate::observability::metrics::WS_SPECTATORS_PER_GAME
@@ -545,4 +549,47 @@ async fn test_spectator_gauge_tracks_join_and_removal() {
         !spectator_series_present(&game_id),
         "spectator gauge series should be removed when the last spectator leaves"
     );
+}
+
+#[tokio::test]
+async fn test_player_identity_clears_spectator_flag() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+    let player_id = Uuid::new_v4();
+
+    let (tx, mut rx) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let conn = manager
+        .add_connection(game_id, tx, CorrelationId::default())
+        .await;
+
+    // First marked as spectator (public-only), then the real player joins on the
+    // same connection. The player identity must win over the spectator flag.
+    manager.mark_spectator_for_connection(game_id, conn).await;
+    manager
+        .set_player_for_connection(game_id, conn, player_id, 0)
+        .await;
+
+    assert!(manager.games_with_spectators().await.is_empty());
+
+    // The connection must now receive personalized (per-player) events.
+    let event = GameEvent::CardsDealt {
+        game_id,
+        player_id,
+        cards: vec![1, 2, 3],
+        special_cards: crate::game::special_cards::SpecialCards {
+            check_triple_seven: false,
+            check_sum_value_under_21: false,
+            check_a_square: false,
+        },
+    };
+    manager.route_event(game_id, event).await;
+
+    let received = drain_receiver(&mut rx);
+    assert_eq!(
+        received.len(),
+        1,
+        "player connection should receive cards_dealt"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&received[0]).unwrap();
+    assert_eq!(parsed["type"], "cards_dealt");
 }

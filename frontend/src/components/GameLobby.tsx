@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/useAuthStore'
 import { useWebSocket, GameEvent } from '../hooks/useWebSocket'
 import type { SpecialCards } from '../stores/useGameStore'
 import { extractApiError } from '../utils/errors'
+import { copyTextToClipboard } from '../utils/clipboard'
 
 interface LobbyPlayer {
   pseudo: string
@@ -267,10 +268,10 @@ export default function GameLobby({ gameId, onBack, onGameStart }: Props) {
         showToast(t('game.streamUrlFailed'))
         return
       }
-      try {
-        await navigator.clipboard.writeText(url)
+      const copied = await copyTextToClipboard(url)
+      if (copied) {
         showToast(t('game.streamUrlCopied'))
-      } catch {
+      } else {
         showToast(url)
       }
     } catch (err: unknown) {

@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::auth::config::AuthConfig;
 use crate::messaging::RedisClient;
 use crate::observability::CorrelationId;
-use connection::WS_SEND_QUEUE_CAPACITY;
+use connection::{ConnectionId, WS_SEND_QUEUE_CAPACITY};
 use manager::WebSocketManager;
 use messages::{IncomingMessage, OutgoingMessage};
 
@@ -214,6 +214,7 @@ pub async fn ws_handler(
                             &mut session,
                             &text,
                             game_id,
+                            connection_id,
                             &manager_clone,
                             db_clone.clone(),
                         )
@@ -281,6 +282,7 @@ async fn handle_message(
     session: &mut Session,
     text: &str,
     game_id: Uuid,
+    connection_id: ConnectionId,
     manager: &web::Data<WebSocketManager>,
     db: Option<web::Data<sea_orm::DatabaseConnection>>,
 ) -> Result<(), anyhow::Error> {
@@ -316,24 +318,19 @@ async fn handle_message(
                     }
                     if spectator {
                         // Read-only spectator join: public state only, no player identity.
-                        crate::websocket::manager::WebSocketManager::mark_spectator_for_latest_connection(
-                            manager.get_ref(),
-                            game_id,
-                        )
-                        .await;
+                        manager
+                            .mark_spectator_for_connection(game_id, connection_id)
+                            .await;
                         if let Some(db) = &db {
                             send_spectator_snapshot(manager.get_ref(), db, game_id).await;
                         }
                     } else if let (Some(pid), Some(pos)) = (player_id, player_position) {
-                        // We need the connection_id to set player. Since this is called from
-                        // the incoming handler, we don't have it directly. Register via
-                        // a simple method: set_player_for_latest_connection.
-                        crate::websocket::manager::WebSocketManager::set_player_for_latest_connection(
-                            manager.get_ref(),
-                            game_id,
-                            pid,
-                            pos,
-                        ).await;
+                        // Associate the identity with THIS connection (not the most
+                        // recently added one) so a player's join is never mis-attributed
+                        // to a spectator or stale reconnect connection.
+                        manager
+                            .set_player_for_connection(game_id, connection_id, pid, pos)
+                            .await;
                         // Send current game state snapshot to the newly connected player
                         if let Some(db) = &db {
                             send_game_state_snapshot(manager.get_ref(), db, game_id, pid, pos)

@@ -92,27 +92,68 @@ class WebSocketManager {
   }
 
   setWsToken(token: string | null): void {
+    if (this.wsToken === token) {
+      return;
+    }
     this.wsToken = token;
+    // The token is part of the connection URL, so a real change must be applied
+    // by reconnecting. On first mount this is a no-op because the socket has not
+    // been opened yet (subscribe/connect runs after this call).
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.forceReconnect();
+    }
   }
 
   setSpectator(value: boolean): void {
+    // A connection that has a known player identity is never a spectator. This
+    // guards against a spectator hook instance (or a stale render) flipping the
+    // flag on a shared per-game manager and causing the backend to stop sending
+    // personalized events to a real player.
+    if (value && this.playerId) {
+      return;
+    }
+    if (this.spectator === value) {
+      return;
+    }
     this.spectator = value;
+    // Re-announce the connection so the backend applies the new role. Without
+    // this, a manager that was first created as a spectator would keep the
+    // spectator flag on the server even after the role changes.
+    this.sendJoinIfOpen();
   }
 
   setPlayerIdentity(playerId: string, playerPosition: number): void {
-    const hadNoIdentity = !this.playerId;
+    const identityChanged =
+      this.playerId !== playerId || this.playerPosition !== playerPosition;
+
     this.playerId = playerId;
     this.playerPosition = playerPosition;
+    // A player identity always wins over a spectator flag.
+    this.spectator = false;
 
-    if (hadNoIdentity && this.ws?.readyState === WebSocket.OPEN) {
-      const joinMsg: OutgoingMessage = {
-        type: 'join_game',
-        game_id: this.gameId,
-        player_id: playerId,
-        player_position: playerPosition,
-      };
-      this.send(joinMsg);
+    // Re-send join_game whenever the identity changes (not only the first time).
+    // The effect that calls this can re-run many times; if the socket was
+    // reconnected in between, the backend needs to be told who we are again,
+    // otherwise the connection stays anonymous and stops receiving personalized
+    // events (the player's hand/deck would freeze while spectators stay correct).
+    if (identityChanged) {
+      this.sendJoinIfOpen();
     }
+  }
+
+  /// Send the join_game handshake if the socket is currently open.
+  private sendJoinIfOpen(): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    const joinMsg: OutgoingMessage = {
+      type: 'join_game',
+      game_id: this.gameId,
+      ...(this.playerId ? { player_id: this.playerId } : {}),
+      ...(this.playerPosition !== null ? { player_position: this.playerPosition } : {}),
+      ...(this.spectator ? { spectator: true } : {}),
+    };
+    this.send(joinMsg);
   }
 
   static getInstance(gameId: string): WebSocketManager {
@@ -124,14 +165,6 @@ class WebSocketManager {
       this.instances.set(gameId, new WebSocketManager(gameId));
     }
     return this.instances.get(gameId)!;
-  }
-
-  static cleanupInstance(gameId: string): void {
-    const instance = this.instances.get(gameId);
-    if (instance) {
-      instance.close();
-      this.instances.delete(gameId);
-    }
   }
 
   subscribe(
@@ -287,6 +320,20 @@ class WebSocketManager {
     this.isConnecting = false;
   }
 
+  /// Force a fresh connection while preserving identity, token, spectator flag
+  /// and subscribers. Closing the live socket lets the existing `onclose` handler
+  /// schedule the reconnect and re-send `join_game` on open.
+  forceReconnect(): void {
+    const ws = this.ws;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      ws.close();
+      return;
+    }
+    // No live socket (e.g. already closed and waiting on the reconnect timer):
+    // connect immediately.
+    this.connect();
+  }
+
   getConnectionStatus(): 'connecting' | 'connected' | 'disconnected' {
     if (this.isConnecting) return 'connecting';
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return 'connected';
@@ -324,6 +371,20 @@ export function useWebSocket({
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const lastAppliedTokenRef = useRef<string | null | undefined>(undefined);
 
+  // Keep the latest callbacks in refs so the subscription effect does not need
+  // to depend on them. Callers (e.g. useGameWebSocket) recreate `onMessage` on
+  // every render; depending on it directly would tear down and re-create the
+  // subscription constantly, which is what allowed the identity/spectator race
+  // to corrupt the shared per-game connection.
+  const onMessageRef = useRef(onMessage);
+  const onErrorRef = useRef(onError);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+    onErrorRef.current = onError;
+    onCloseRef.current = onClose;
+  }, [onMessage, onError, onClose]);
+
   // Convert connection status to boolean
   const updateConnectionStatus = useCallback(() => {
     if (!gameId) {
@@ -359,20 +420,21 @@ export function useWebSocket({
       return;
     }
 
-    // Create wrapped callbacks that also update state
-    const wrappedOnMessage = onMessage ? (event: GameEvent) => {
-      onMessage(event);
-    } : undefined;
+    // Create wrapped callbacks that also update state. They read the latest
+    // handler from the refs so the subscription stays stable across renders.
+    const wrappedOnMessage = (event: GameEvent) => {
+      onMessageRef.current?.(event);
+    };
 
-    const wrappedOnError = onError ? (error: Event) => {
+    const wrappedOnError = (error: Event) => {
       setLastError('WebSocket connection error');
-      onError(error);
-    } : undefined;
+      onErrorRef.current?.(error);
+    };
 
-    const wrappedOnClose = onClose ? (event: CloseEvent) => {
+    const wrappedOnClose = (event: CloseEvent) => {
       setIsConnected(false);
-      onClose(event);
-    } : undefined;
+      onCloseRef.current?.(event);
+    };
 
     // Subscribe to the WebSocket manager
     try {
@@ -418,17 +480,21 @@ export function useWebSocket({
       console.error('Failed to subscribe to WebSocket manager:', err);
       setLastError('Invalid gameId');
     }
-  }, [gameId, playerId, playerPosition, wsToken, spectator, onMessage, onError, onClose, updateConnectionStatus]);
+    // NOTE: onMessage/onError/onClose are intentionally NOT in the dependency
+    // array. They are read through refs (see onMessageRef/onErrorRef/onCloseRef)
+    // so that a new callback identity on every render does not tear down and
+    // rebuild the WebSocket subscription. Re-subscribing on every render was the
+    // root cause of the identity/spectator race: the manager would be re-joined
+    // repeatedly and could be mis-attributed as a spectator, causing a player's
+    // own hand to stop updating while the spectator tab stayed correct.
+  }, [gameId, playerId, playerPosition, wsToken, spectator, updateConnectionStatus]);
 
   // Expose a manual reconnect function
   const reconnect = useCallback(() => {
     if (!gameId) return;
 
     try {
-      WebSocketManager.cleanupInstance(gameId);
-      // Get new instance - this will trigger reconnection
-      WebSocketManager.getInstance(gameId);
-      // The next status update will reflect the reconnection
+      WebSocketManager.getInstance(gameId).forceReconnect();
     } catch (err) {
       console.error('Failed to reconnect:', err);
     }
