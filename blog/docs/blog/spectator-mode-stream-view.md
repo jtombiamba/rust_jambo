@@ -193,23 +193,32 @@ spectator: bool,
 ```
 
 When `spectator` is true, the handler calls
-`mark_spectator_for_latest_connection()`,
-which sets the flag on the most recently added connection for that game, then
-immediately sends a snapshot:
+`mark_spectator_for_connection()`,
+passing the *specific* `connection_id` that carried the join, then immediately
+sends a snapshot:
 
 ```rust
 if spectator {
     // Read-only spectator join: public state only, no player identity.
-    crate::websocket::manager::WebSocketManager::mark_spectator_for_latest_connection(
-        manager.get_ref(),
-        game_id,
-    )
-    .await;
+    manager
+        .mark_spectator_for_connection(game_id, connection_id)
+        .await;
     if let Some(db) = &db {
         send_spectator_snapshot(manager.get_ref(), db, game_id).await;
     }
 }
 ```
+
+The `connection_id` is threaded explicitly through `handle_message()` from the
+handshake in `ws_handler()`. This matters: the join is attributed to *this*
+connection, never to the "most recently added" one. The earlier
+`mark_spectator_for_latest_connection()` was a real bug source — a stale
+reconnect or a concurrent spectator could be the latest entry and would steal the
+flag, mis-routing the player's personalized events.
+
+`mark_spectator_for_connection()` does two things: it sets the spectator flag and
+clears any `player_id`/`player_position` on that connection, since a spectator
+never has a hand and must not keep receiving per-player events.
 
 The connection record itself carries the flag
 (`connection.rs`):
@@ -218,6 +227,37 @@ The connection record itself carries the flag
 pub(crate) last_pong: Instant,
 pub(crate) spectator: bool,
 ```
+
+### 5.1 Identity consolidation: player wins
+
+The converse of the spectator join is a player joining on a connection that was
+previously marked spectator (or a stale render flipping the flag). The backend
+resolves this with one invariant: **a player identity always wins over the
+spectator flag.** `set_player_for_connection()` — which the handler now calls for
+the exact `connection_id` rather than a "latest connection" helper — clears the
+flag as it sets the identity:
+
+```rust
+if conn.id == connection_id {
+    conn.player_id = Some(player_id);
+    conn.player_position = Some(player_position);
+    // A player identity always wins over a spectator flag. Without
+    // this, a connection first marked spectator (or a stale render)
+    // would keep receiving public-only snapshots and stop receiving
+    // its personalized hand/deck.
+    conn.spectator = false;
+    break;
+}
+```
+
+Symmetrically, `mark_spectator_for_connection()` clears the player identity when
+it sets the flag. Together these two make the connection role idempotent: applying
+either role wipes the other, so a connection can never be simultaneously "a
+player" and "a spectator".
+ <!-- There is a dedicated test for this
+(`test_player_identity_clears_spectator_flag`) that marks a connection spectator,
+then joins a real player on the same connection, and asserts it receives its
+`cards_dealt` event. -->
 
 ### 6. The public-only snapshot
 
@@ -378,8 +418,88 @@ join payload only when set:
 ...(this.spectator ? { spectator: true } : {}),
 ```
 
-The manager exposes `setSpectator()` and the hook calls it before connecting
-(`useWebSocket.ts`).
+The join message is now produced by a single `sendJoinIfOpen()` helper that the
+manager calls both on open and whenever the role or identity changes:
+
+```ts
+/// Send the join_game handshake if the socket is currently open.
+private sendJoinIfOpen(): void {
+  if (this.ws?.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  const joinMsg: OutgoingMessage = {
+    type: 'join_game',
+    game_id: this.gameId,
+    ...(this.playerId ? { player_id: this.playerId } : {}),
+    ...(this.playerPosition !== null ? { player_position: this.playerPosition } : {}),
+    ...(this.spectator ? { spectator: true } : {}),
+  };
+  this.send(joinMsg);
+}
+```
+
+`setSpectator()` is no longer a passive field write: it no-ops when the value is
+unchanged, refuses to flip a connection that already has a player identity, and
+re-announces the join so the backend applies the new role on the live socket.
+Likewise `setPlayerIdentity()` re-sends `join_game` on every identity change, not
+just the first time, and clears the spectator flag — mirroring the backend's
+"player wins" invariant.
+
+### 3.1 Connection lifecycle and force reconnection
+
+The manager is a singleton per game (`WebSocketManager.getInstance(gameId)`), so a
+player tab and a spectator tab for the same game share one socket. That sharing is
+what made the lifecycle subtle. Three mechanisms keep the shared socket honest:
+
+- **Token change forces a reconnect.** `setWsToken()` compares the new token to
+  the current one and, on a real change, calls `forceReconnect()` — the token is
+  part of the connection URL, so applying it requires a fresh socket:
+
+  ```ts
+  setWsToken(token: string | null): void {
+    if (this.wsToken === token) {
+      return;
+    }
+    this.wsToken = token;
+    // The token is part of the connection URL, so a real change must be applied
+    // by reconnecting. ...
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.forceReconnect();
+    }
+  }
+  ```
+
+- **`forceReconnect()` preserves state.** Closing a live socket lets the existing
+  `onclose` handler schedule the reconnect (5s) and re-send `join_game` on open,
+  so identity, token, spectator flag, and subscribers all survive:
+
+  ```ts
+  forceReconnect(): void {
+    const ws = this.ws;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      ws.close();
+      return;
+    }
+    // No live socket (e.g. already closed and waiting on the reconnect timer):
+    // connect immediately.
+    this.connect();
+  }
+  ```
+
+  The hook's `reconnect` callback now calls this method directly; the old
+  `cleanupInstance()`/re-`getInstance()` dance was removed because it discarded
+  the manager's identity and subscribers.
+
+- **Stable subscription via callback refs.** `onMessage`/`onError`/`onClose` are
+  now held in refs and deliberately excluded from the subscription effect's
+  dependency array. Before this, a new callback identity on every render tore down
+  and rebuilt the subscription each render, re-joining the shared manager over and
+  over — which is exactly how a player connection could be mis-attributed as a
+  spectator and stop receiving its own hand while the spectator tab stayed correct.
+
+These three changes together make the shared-socket connection idempotent: role,
+identity, and token changes converge on a single correct `join_game` per socket,
+and a reconnect re-establishes the same state instead of starting anonymous.
 
 ### 4. Rendering in spectator mode
 
@@ -398,8 +518,14 @@ spectatorMode?: boolean;
 - **No mobile chrome.** The mobile back button and top bar are suppressed, since
   the stream view is not navigable.
 
-There are dedicated tests for this in
+<!-- There are dedicated tests for this in
 `GameTable.test.tsx`.
+
+There is also a Playwright end-to-end test (`spectator-resync.spec.ts`) that
+guards deck-slot stability under the periodic resync: it plays cards in a
+non-seat order, then sends a `game_state_snapshot` with the same seat-ordered
+`played_cards`, and asserts the deck does not reorder or "jump" — the resync must
+be a no-op for an already-live table. -->
 
 ### 5. Getting the URL to the streamer
 
@@ -410,16 +536,27 @@ copying the returned URL to the clipboard:
 - `GameLobby.tsx` — the lobby.
 
 ```tsx
-const handleCopyStreamUrl = () => {
+const handleCopyStreamUrl = async () => {
   if (!gameId) return
-  axios.post(`/api/games/${gameId}/spectate-token`)
-    .then((res) => {
-      const url = res.data.url
-      // ...
-      navigator.clipboard.writeText(url)
-    })
+  const res = await axios.post(`/api/games/${gameId}/spectate-token`)
+  const url = res.data.url
+  const copied = await copyTextToClipboard(url)
+  if (copied) {
+    showToast(t('game.streamUrlCopied'), 'success')
+  } else {
+    showToast(url, 'info')   // fall back to showing the raw URL
+  }
 }
 ```
+
+The clipboard write goes through `copyTextToClipboard()`
+(`utils/clipboard.ts`) instead of a bare
+`navigator.clipboard.writeText()`. That matters: the URL is fetched
+asynchronously before the copy, so the transient user activation can be gone by
+the time `writeText()` runs — and the async Clipboard API is only available in
+secure contexts. The helper tries the async API first, then falls back to a hidden
+`<textarea>` + `document.execCommand('copy')`, returning `false` when neither
+works so the caller can show the URL directly.
 
 ---
 

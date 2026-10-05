@@ -33,6 +33,11 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+plugins:
+  - glightbox:
+      zoomable: true
+      draggable: true
+
 # The posts reference source files (backend/, infra/, docs/) that are not part of
 # the rendered site. Tolerate those links so `mkdocs build --strict`
 # still passes; genuine MkDocs errors (bad nav, bad config) still abort.
