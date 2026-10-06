@@ -2,7 +2,8 @@
 
 Engineering notes from building and operating the Jambo project — a real-time
 multiplayer card game backend in Rust (Actix Web), with Kubernetes, Docker,
-and the Grafana LGTM observability stack.
+and the Grafana LGTM observability stack. Play the game at
+[jambo.tombislab.com](https://jambo.tombislab.com).
 
 ## Posts
 

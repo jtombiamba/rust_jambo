@@ -17,10 +17,10 @@ use crate::error::AppError;
 use crate::messaging::RedisClient;
 use crate::observability::metrics::{PAYMENT_UNFREEZE_DURATION_SECONDS, PAYMENT_UNFREEZE_TOTAL};
 
-const UNFREEZE_CAPTURE_PREFIX: &str = "unfreeze_capture";
-const UNFREEZE_ORDER_PREFIX: &str = "unfreeze_order";
+pub(crate) const UNFREEZE_CAPTURE_PREFIX: &str = "unfreeze_capture";
+pub(crate) const UNFREEZE_ORDER_PREFIX: &str = "unfreeze_order";
 const UNFREEZE_TTL_SECS: u64 = 86400;
-const UNFREEZE_IDEM_PREFIX: &str = "unfreeze";
+pub(crate) const UNFREEZE_IDEM_PREFIX: &str = "unfreeze";
 
 pub(crate) fn close_window_html(title: &str) -> HttpResponse {
     window_html(HttpResponse::Ok(), title)
@@ -55,7 +55,7 @@ fn window_html(mut status: HttpResponseBuilder, title: &str) -> HttpResponse {
 )]
 pub async fn create_unfreeze_order(
     auth_user: AuthenticatedUser,
-    payment_service: web::Data<Arc<crate::payment::PaymentService>>,
+    payment_service: web::Data<Arc<dyn crate::payment::PaymentServiceTrait>>,
     config: web::Data<Config>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
@@ -143,7 +143,7 @@ pub async fn create_unfreeze_order(
 pub async fn capture_unfreeze_order(
     auth_user: AuthenticatedUser,
     body: web::Json<CaptureOrderRequest>,
-    payment_service: web::Data<Arc<crate::payment::PaymentService>>,
+    payment_service: web::Data<Arc<dyn crate::payment::PaymentServiceTrait>>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
     config: web::Data<Config>,
@@ -237,7 +237,7 @@ pub async fn capture_unfreeze_order(
 )]
 pub async fn paypal_return(
     req: HttpRequest,
-    payment_service: web::Data<Arc<crate::payment::PaymentService>>,
+    payment_service: web::Data<Arc<dyn crate::payment::PaymentServiceTrait>>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
     config: web::Data<Config>,
@@ -385,7 +385,7 @@ async fn unfreeze_user_and_finalize(
 /// commit together: if either fails, the whole transaction rolls back, so the
 /// monthly spending cap is never charged for a payment whose credits were not
 /// applied. The Redis "completed" flag is a best-effort cache only.
-async fn finalize_unfreeze(
+pub(crate) async fn finalize_unfreeze(
     user_id: Uuid,
     db: &web::Data<sea_orm::DatabaseConnection>,
     credit: i32,
@@ -462,129 +462,4 @@ async fn finalize_unfreeze(
     })?;
 
     Ok(credit)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::database::models::{PlayerProfile, PlayerType};
-    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
-    use uuid::Uuid;
-
-    fn make_profile(user_id: Uuid, credit: i32) -> PlayerProfile {
-        PlayerProfile {
-            id: Uuid::now_v7(),
-            user_id,
-            player_type: PlayerType::Human,
-            credit,
-            game_played: 0,
-            wins: 0,
-            kora_wins: 0,
-            winning_streak: 0,
-            latitude: None,
-            longitude: None,
-            country_code: None,
-            city: None,
-            frozen_until: Some(chrono::Utc::now()),
-            cashout_locked: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }
-    }
-
-    #[test]
-    fn test_unfreeze_redis_key_format() {
-        let user_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        let order_id = "ORDER123";
-        let key = format!("{}:{}:{}", UNFREEZE_CAPTURE_PREFIX, user_id, order_id);
-        assert_eq!(
-            key,
-            "unfreeze_capture:550e8400-e29b-41d4-a716-446655440000:ORDER123"
-        );
-    }
-
-    #[test]
-    fn test_paypal_idem_key_format() {
-        let order_id = "ORDER456";
-        let key = format!("{}_{}", UNFREEZE_IDEM_PREFIX, order_id);
-        assert_eq!(key, "unfreeze_ORDER456");
-    }
-
-    #[test]
-    fn test_order_redis_key_format() {
-        let order_id = "ORDER789";
-        let key = format!("{}:{}", UNFREEZE_ORDER_PREFIX, order_id);
-        assert_eq!(key, "unfreeze_order:ORDER789");
-    }
-
-    #[test]
-    fn test_close_window_html_returns_ok() {
-        let resp = close_window_html("Test Title");
-        assert!(resp.status().is_success());
-    }
-
-    #[test]
-    fn test_close_window_error_html_returns_server_error() {
-        let resp = close_window_error_html("Test Error");
-        assert!(resp.status().is_server_error());
-    }
-
-    #[tokio::test]
-    async fn finalize_unfreeze_records_and_unfreezes() {
-        let user_id = Uuid::now_v7();
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results(vec![
-                MockExecResult {
-                    last_insert_id: 0,
-                    rows_affected: 1,
-                },
-                MockExecResult {
-                    last_insert_id: 0,
-                    rows_affected: 1,
-                },
-            ])
-            .append_query_results(vec![vec![make_profile(user_id, 50)]])
-            .into_connection();
-
-        let credit = finalize_unfreeze(user_id, &web::Data::new(db), 250, 100)
-            .await
-            .expect("finalize should succeed");
-
-        assert_eq!(credit, 250);
-    }
-
-    #[tokio::test]
-    async fn finalize_unfreeze_returns_error_when_credit_write_fails() {
-        let user_id = Uuid::now_v7();
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results(vec![MockExecResult {
-                last_insert_id: 0,
-                rows_affected: 1,
-            }])
-            .append_exec_errors(vec![sea_orm::DbErr::Custom(
-                "mock credit write failure".into(),
-            )])
-            .append_query_results(vec![vec![make_profile(user_id, 50)]])
-            .into_connection();
-
-        let result = finalize_unfreeze(user_id, &web::Data::new(db), 250, 100).await;
-
-        assert!(matches!(result, Err(AppError::Database(_))));
-    }
-
-    #[tokio::test]
-    async fn finalize_unfreeze_returns_not_found_when_profile_missing() {
-        let user_id = Uuid::now_v7();
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results(vec![MockExecResult {
-                last_insert_id: 0,
-                rows_affected: 1,
-            }])
-            .append_query_results(vec![Vec::<PlayerProfile>::new()])
-            .into_connection();
-
-        let result = finalize_unfreeze(user_id, &web::Data::new(db), 250, 100).await;
-
-        assert!(matches!(result, Err(AppError::NotFound(_))));
-    }
 }

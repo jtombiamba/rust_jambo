@@ -4,10 +4,10 @@ use std::time::Duration;
 use actix_web::web;
 use tracing::info;
 
-use crate::api::auth::AuthServiceType;
-use crate::api::cashout::CashoutServiceType;
-use crate::api::dashboard::DashboardServiceType;
 use crate::api::middleware::rate_limiter::RateLimitConfigs;
+use crate::api::services::auth_service::AuthServiceTrait;
+use crate::api::services::cashout_service::CashoutServiceTrait;
+use crate::api::services::dashboard_service::DashboardServiceTrait;
 use crate::auth::config::AuthConfig;
 use crate::auth::middleware::AuthMiddleware;
 use crate::cache::UserCache;
@@ -22,8 +22,8 @@ use crate::game::service::GameService;
 use crate::i18n::Translator;
 use crate::mailer::{self, Mailer, MailerConfig};
 use crate::messaging::{self, RabbitMQClient, RabbitMQPublishConfig, RedisClient};
-use crate::payment::PaymentService;
-use crate::room::RoomService;
+use crate::payment::{PaymentService, PaymentServiceTrait};
+use crate::room::{RoomService, RoomServiceTrait};
 use crate::websocket::manager::WebSocketManager;
 
 #[derive(Clone)]
@@ -34,13 +34,13 @@ pub struct AppState {
     pub ws_manager: web::Data<WebSocketManager>,
     pub orchestrator: web::Data<Arc<dyn GameServiceTrait>>,
     pub auth_config: web::Data<AuthConfig>,
-    pub auth_service: web::Data<Arc<AuthServiceType>>,
-    pub dashboard_service: web::Data<Arc<DashboardServiceType>>,
+    pub auth_service: web::Data<Arc<dyn AuthServiceTrait>>,
+    pub dashboard_service: web::Data<Arc<dyn DashboardServiceTrait>>,
     pub user_cache: web::Data<Arc<UserCache>>,
     pub mailer: web::Data<Arc<dyn Mailer>>,
-    pub payment_service: web::Data<Arc<PaymentService>>,
-    pub room_service: web::Data<Arc<RoomService>>,
-    pub cashout_service: web::Data<Arc<CashoutServiceType>>,
+    pub payment_service: web::Data<Arc<dyn PaymentServiceTrait>>,
+    pub room_service: web::Data<Arc<dyn RoomServiceTrait>>,
+    pub cashout_service: web::Data<Arc<dyn CashoutServiceTrait>>,
     pub config: web::Data<Config>,
     pub auth_middleware: AuthMiddleware,
     pub rate_limit_configs: RateLimitConfigs,
@@ -117,7 +117,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         Arc::new(GameCardRepository::new(db_connection.clone()));
     let card_repo_dashboard: Arc<dyn GameCardRepoTrait> = card_repo.clone();
     let translator = Arc::new(Translator::new());
-    let auth_service: Arc<AuthServiceType> =
+    let auth_service: Arc<dyn AuthServiceTrait> =
         Arc::new(crate::api::services::auth_service::AuthService::new(
             user_repo,
             auth_config.clone(),
@@ -129,7 +129,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         Some(rc) => Arc::new(UserCache::new_with_redis(rc)),
         None => Arc::new(UserCache::new()),
     };
-    let dashboard_service: Arc<DashboardServiceType> = match redis_client.clone() {
+    let dashboard_service: Arc<dyn DashboardServiceTrait> = match redis_client.clone() {
         Some(rc) => Arc::new(
             crate::api::services::dashboard_service::DashboardService::new_with_redis(
                 dashboard_repo,
@@ -190,7 +190,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let auth_middleware = AuthMiddleware::new(redis_client.clone(), translator.clone());
     let rate_limit_configs = RateLimitConfigs::from_config(config);
 
-    let payment_service = Arc::new(PaymentService::new(
+    let payment_service: Arc<dyn PaymentServiceTrait> = Arc::new(PaymentService::new(
         config.paypal_client_id.clone(),
         config.paypal_client_secret.clone(),
         config.paypal_mode.clone(),
@@ -200,16 +200,17 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
         config.paypal_live_url.clone(),
     ));
 
-    let room_service = Arc::new(RoomService::new(
+    let room_service_concrete = Arc::new(RoomService::new(
         db_connection.clone(),
         mailer.clone(),
         config.clone(),
         redis_client.clone(),
     ));
-    room_service.start_email_consumer().await;
+    room_service_concrete.start_email_consumer().await;
+    let room_service: Arc<dyn RoomServiceTrait> = room_service_concrete;
 
     let cashout_repo = Arc::new(CashoutRepository::new(db_connection.clone()));
-    let cashout_service: Arc<CashoutServiceType> = Arc::new(
+    let cashout_service: Arc<dyn CashoutServiceTrait> = Arc::new(
         crate::api::services::cashout_service::CashoutService::new(cashout_repo, config.clone()),
     );
 

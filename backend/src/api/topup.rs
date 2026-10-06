@@ -37,7 +37,7 @@ const TOPUP_IDEM_PREFIX: &str = "topup";
 )]
 pub async fn create_topup_order(
     auth_user: AuthenticatedUser,
-    payment_service: web::Data<Arc<crate::payment::PaymentService>>,
+    payment_service: web::Data<Arc<dyn crate::payment::PaymentServiceTrait>>,
     config: web::Data<Config>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
@@ -152,7 +152,7 @@ pub async fn create_topup_order(
 pub async fn capture_topup_order(
     auth_user: AuthenticatedUser,
     body: web::Json<CaptureOrderRequest>,
-    payment_service: web::Data<Arc<crate::payment::PaymentService>>,
+    payment_service: web::Data<Arc<dyn crate::payment::PaymentServiceTrait>>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
     config: web::Data<Config>,
@@ -265,7 +265,7 @@ pub async fn capture_topup_order(
 )]
 pub async fn paypal_return_topup(
     req: HttpRequest,
-    payment_service: web::Data<Arc<crate::payment::PaymentService>>,
+    payment_service: web::Data<Arc<dyn crate::payment::PaymentServiceTrait>>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
     config: web::Data<Config>,
@@ -393,7 +393,7 @@ pub async fn paypal_cancel_topup() -> HttpResponse {
 /// no-op and no credit is applied. The Redis "completed" flag and dashboard
 /// cache invalidation are best-effort optimisations only; they never gate the
 /// credit.
-async fn finalize_topup(
+pub(crate) async fn finalize_topup(
     db: &web::Data<sea_orm::DatabaseConnection>,
     redis_client: Option<&mut RedisClient>,
     redis_key: &str,
@@ -518,7 +518,3 @@ async fn finalize_topup(
 
     Ok(credit)
 }
-
-#[cfg(test)]
-#[path = "topup_tests.rs"]
-mod tests;

@@ -164,7 +164,3 @@ pub async fn cleanup_benchmark_data(
         Err(e) => AppError::from(e).error_response(),
     }
 }
-
-#[cfg(test)]
-#[path = "benchmark_tests.rs"]
-mod benchmark_tests;

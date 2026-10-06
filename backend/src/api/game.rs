@@ -433,7 +433,3 @@ pub async fn decline_special(
         Err(e) => AppError::from(e).error_response(),
     }
 }
-
-#[cfg(test)]
-#[path = "game_tests.rs"]
-mod game_tests;

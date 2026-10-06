@@ -1,0 +1,22 @@
+mod anonymous_tests;
+mod auth_tests;
+mod benchmark_tests;
+mod cashout_tests;
+mod config_tests;
+mod contact_tests;
+mod dashboard_tests;
+mod fallback_tests;
+mod game_tests;
+mod integration_tests;
+mod leaderboard_tests;
+mod openapi_tests;
+mod payment_limits_tests;
+mod quickie_tests;
+mod room_tests;
+mod system_tests;
+mod topup_tests;
+mod unfreeze_tests;
+
+mod dto;
+mod middleware;
+mod services;

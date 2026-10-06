@@ -18,6 +18,9 @@ pub mod scheduler;
 pub mod websocket;
 pub mod worker;
 
+#[cfg(test)]
+pub mod test_helpers;
+
 pub use config::Config;
 pub use database::create_connection;
 pub use game::service::{

@@ -6,14 +6,12 @@ use crate::api::dto::requests::CashoutRequest;
 use crate::api::dto::responses::{
     ApiErrorResponse, CashoutHistoryResponse, CashoutRequestResponse,
 };
-use crate::api::services::cashout_service::CashoutService;
+use crate::api::services::cashout_service::CashoutServiceTrait;
 use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
-use crate::database::repositories::{CashoutRepository, UserRepository};
+use crate::database::repositories::UserRepository;
 use crate::i18n::Lang;
 use crate::mailer::Mailer;
-
-pub type CashoutServiceType = CashoutService<CashoutRepository>;
 
 #[utoipa::path(
     post,
@@ -32,7 +30,7 @@ pub type CashoutServiceType = CashoutService<CashoutRepository>;
 pub async fn request_cashout(
     auth_user: AuthenticatedUser,
     body: web::Json<CashoutRequest>,
-    service: web::Data<Arc<CashoutServiceType>>,
+    service: web::Data<Arc<dyn CashoutServiceTrait>>,
     db: web::Data<sea_orm::DatabaseConnection>,
     mailer: web::Data<Arc<dyn Mailer>>,
     config: web::Data<Config>,
@@ -131,7 +129,7 @@ pub async fn request_cashout(
 pub async fn list_cashouts(
     auth_user: AuthenticatedUser,
     query: web::Query<CashoutPagination>,
-    service: web::Data<Arc<CashoutServiceType>>,
+    service: web::Data<Arc<dyn CashoutServiceTrait>>,
 ) -> HttpResponse {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(10).clamp(1, 100);

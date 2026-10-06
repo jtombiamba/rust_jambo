@@ -9,7 +9,7 @@ use crate::api::dto::responses::{
     StartNextGameResponse,
 };
 use crate::auth::extractors::AuthenticatedUser;
-use crate::room::service::RoomService;
+use crate::room::service_trait::RoomServiceTrait;
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct CreateRoomRequest {
@@ -48,7 +48,7 @@ macro_rules! service_response {
     }};
 }
 
-fn to_room_created(room: crate::database::models::room::Model) -> RoomCreatedResponse {
+pub(crate) fn to_room_created(room: crate::database::models::room::Model) -> RoomCreatedResponse {
     RoomCreatedResponse {
         id: room.id,
         name: room.name,
@@ -73,7 +73,7 @@ fn to_room_created(room: crate::database::models::room::Model) -> RoomCreatedRes
 pub async fn create_room(
     auth_user: AuthenticatedUser,
     body: web::Json<CreateRoomRequest>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     match service.create_room(auth_user.user_id, &body.name).await {
         Ok(room) => HttpResponse::Created().json(to_room_created(room)),
@@ -93,7 +93,7 @@ pub async fn create_room(
 )]
 pub async fn list_rooms(
     auth_user: AuthenticatedUser,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(service.list_user_rooms(auth_user.user_id).await)
 }
@@ -113,7 +113,7 @@ pub async fn list_rooms(
 pub async fn get_room(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(
         service
@@ -137,7 +137,7 @@ pub async fn get_room(
 pub async fn join_room(
     auth_user: AuthenticatedUser,
     body: web::Json<JoinRoomRequest>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     match service
         .join_room(auth_user.user_id, &body.invitation_code)
@@ -165,7 +165,7 @@ pub async fn invite_to_room(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     body: web::Json<InviteToRoomRequest>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     match service
         .invite_to_room(path.into_inner(), auth_user.user_id, &body.email)
@@ -190,7 +190,7 @@ pub async fn invite_to_room(
 pub async fn leave_room(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     match service
         .leave_room(path.into_inner(), auth_user.user_id)
@@ -218,7 +218,7 @@ pub async fn create_run(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     body: web::Json<CreateRunRequest>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(
         service
@@ -249,7 +249,7 @@ pub async fn create_run(
 pub async fn join_run(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(service.join_run(path.into_inner(), auth_user.user_id).await)
 }
@@ -268,7 +268,7 @@ pub async fn join_run(
 pub async fn leave_run(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     match service
         .leave_run(path.into_inner(), auth_user.user_id)
@@ -294,7 +294,7 @@ pub async fn leave_run(
 pub async fn get_active_run(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(
         service
@@ -318,7 +318,7 @@ pub async fn get_active_run(
 pub async fn start_next_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(
         service
@@ -342,7 +342,7 @@ pub async fn start_next_game(
 pub async fn get_current_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(
         service
@@ -366,42 +366,11 @@ pub async fn get_current_game(
 pub async fn list_runs(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<RoomService>>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
 ) -> HttpResponse {
     service_response!(
         service
             .list_runs(path.into_inner(), auth_user.user_id)
             .await
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::to_room_created;
-    use chrono::Utc;
-    use uuid::Uuid;
-
-    #[test]
-    fn to_room_created_maps_entity_to_response() {
-        let id = Uuid::new_v4();
-        let creator_id = Uuid::new_v4();
-        let now = Utc::now();
-
-        let room = crate::database::models::room::Model {
-            id,
-            name: "Test Room".to_string(),
-            creator_id,
-            invitation_code: "ABC123".to_string(),
-            created_at: now,
-            updated_at: now,
-        };
-
-        let response = to_room_created(room);
-        assert_eq!(response.id, id);
-        assert_eq!(response.name, "Test Room");
-        assert_eq!(response.creator_id, creator_id);
-        assert_eq!(response.invitation_code, "ABC123");
-        assert_eq!(response.created_at, now);
-        assert_eq!(response.updated_at, now);
-    }
 }

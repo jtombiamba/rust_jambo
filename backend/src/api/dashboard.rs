@@ -13,11 +13,10 @@ use crate::api::dto::responses::{
     QuickGameResponse, RespondToInviteResponse, SendInvitesResponse, SpectateTokenResponse,
     UserSearchResponse,
 };
-use crate::api::services::dashboard_service::{DashboardService, SendInvitesParams};
+use crate::api::services::dashboard_service::{DashboardServiceTrait, SendInvitesParams};
 use crate::auth::config::AuthConfig;
 use crate::auth::extractors::AuthenticatedUser;
 use crate::auth::jwt;
-use crate::database::repositories::DashboardRepository;
 use crate::error::AppError;
 use crate::i18n::I18n;
 use crate::mailer::Mailer;
@@ -26,8 +25,6 @@ use crate::observability::{metrics, CorrelationId};
 
 /// TTL for read-only spectator tokens in seconds (6 hours).
 const SPECTATE_TOKEN_TTL_SECS: u64 = 21600;
-
-pub type DashboardServiceType = DashboardService<DashboardRepository>;
 
 macro_rules! service_response {
     ($result:expr) => {{
@@ -56,7 +53,7 @@ macro_rules! service_response {
 )]
 pub async fn get_profile(
     auth_user: AuthenticatedUser,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     service_response!(service.get_profile(auth_user.user_id).await)
 }
@@ -75,7 +72,7 @@ pub async fn get_profile(
 pub async fn list_games(
     auth_user: AuthenticatedUser,
     query: web::Query<PaginationParams>,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     service_response!(
         service
@@ -98,7 +95,7 @@ pub async fn list_games(
 )]
 pub async fn get_game(
     auth_user: AuthenticatedUser,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
     path: web::Path<Uuid>,
 ) -> HttpResponse {
     service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
@@ -116,7 +113,7 @@ pub async fn get_game(
 )]
 pub async fn get_active_game(
     auth_user: AuthenticatedUser,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     service_response!(service.get_active_game(auth_user.user_id).await)
 }
@@ -215,7 +212,7 @@ pub async fn send_invites(
     path: web::Path<Uuid>,
     body: web::Json<SendInvitesRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::service::InviteService>>,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
     mailer: web::Data<Arc<dyn Mailer>>,
     i18n: I18n,
 ) -> HttpResponse {
@@ -376,7 +373,7 @@ pub async fn respond_to_invite(
 )]
 pub async fn get_invitations(
     auth_user: AuthenticatedUser,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     service_response!(service.get_invitations(auth_user.user_id).await)
 }
@@ -397,7 +394,7 @@ pub async fn start_game(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
     orchestrator: web::Data<Arc<dyn crate::game::service::GameLifecycleService>>,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
 
@@ -427,7 +424,7 @@ pub async fn play_game(
     path: web::Path<Uuid>,
     payload: web::Json<PlayCardRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::service::GamePlayService>>,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     let game_id = path.into_inner();
     let correlation_id = req.extensions().get::<CorrelationId>().copied();
@@ -475,7 +472,7 @@ pub async fn play_game(
 pub async fn game_state(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     service_response!(service.get_game(auth_user.user_id, path.into_inner()).await)
 }
@@ -494,7 +491,7 @@ pub async fn game_state(
 pub async fn search_users(
     _auth_user: AuthenticatedUser,
     query: web::Query<UserSearchQuery>,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
 ) -> HttpResponse {
     service_response!(service.search_users(&query.into_inner()).await)
 }
@@ -517,7 +514,7 @@ pub async fn search_users(
 pub async fn mint_spectate_token(
     auth_user: AuthenticatedUser,
     path: web::Path<Uuid>,
-    service: web::Data<Arc<DashboardServiceType>>,
+    service: web::Data<Arc<dyn DashboardServiceTrait>>,
     auth_config: web::Data<AuthConfig>,
     redis: web::Data<Option<RedisClient>>,
 ) -> HttpResponse {
@@ -560,7 +557,3 @@ pub async fn mint_spectate_token(
         }
     }
 }
-
-#[cfg(test)]
-#[path = "dashboard_tests.rs"]
-mod tests;

@@ -75,6 +75,38 @@ pub struct CaptureResult {
     pub order_id: String,
 }
 
+/// Trait seam for the PayPal payment service, enabling handler-level testing.
+#[async_trait::async_trait]
+pub trait PaymentServiceTrait: Send + Sync {
+    fn is_configured(&self) -> bool;
+
+    async fn create_order(
+        &self,
+        return_url: &str,
+        cancel_url: &str,
+    ) -> Result<OrderCreated, String>;
+
+    async fn create_topup_order(
+        &self,
+        return_url: &str,
+        cancel_url: &str,
+    ) -> Result<OrderCreated, String>;
+
+    async fn capture_order(
+        &self,
+        order_id: &str,
+        idempotency_key: Option<&str>,
+    ) -> Result<CaptureResult, String>;
+
+    #[allow(dead_code)]
+    async fn create_payout(
+        &self,
+        paypal_email: &str,
+        amount_eur_cents: i32,
+        item_id: &str,
+    ) -> Result<String, String>;
+}
+
 #[derive(Debug, Serialize)]
 #[allow(dead_code)]
 struct PayoutItem {
@@ -369,6 +401,46 @@ impl PaymentService {
             .map_err(|e| format!("Failed to parse PayPal payout response: {}", e))?;
 
         Ok(payout.batch_header.payout_batch_id)
+    }
+}
+
+#[async_trait::async_trait]
+impl PaymentServiceTrait for PaymentService {
+    fn is_configured(&self) -> bool {
+        PaymentService::is_configured(self)
+    }
+
+    async fn create_order(
+        &self,
+        return_url: &str,
+        cancel_url: &str,
+    ) -> Result<OrderCreated, String> {
+        PaymentService::create_order(self, return_url, cancel_url).await
+    }
+
+    async fn create_topup_order(
+        &self,
+        return_url: &str,
+        cancel_url: &str,
+    ) -> Result<OrderCreated, String> {
+        PaymentService::create_topup_order(self, return_url, cancel_url).await
+    }
+
+    async fn capture_order(
+        &self,
+        order_id: &str,
+        idempotency_key: Option<&str>,
+    ) -> Result<CaptureResult, String> {
+        PaymentService::capture_order(self, order_id, idempotency_key).await
+    }
+
+    async fn create_payout(
+        &self,
+        paypal_email: &str,
+        amount_eur_cents: i32,
+        item_id: &str,
+    ) -> Result<String, String> {
+        PaymentService::create_payout(self, paypal_email, amount_eur_cents, item_id).await
     }
 }
 

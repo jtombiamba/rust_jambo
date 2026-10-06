@@ -23,6 +23,11 @@ pub struct MockGameService {
     start_game_result: Mutex<Option<Result<(), GameError>>>,
     create_benchmark_game_result: Mutex<Option<Result<BenchmarkGameOutcome, GameError>>>,
     cleanup_benchmark_result: Mutex<Option<Result<BenchmarkCleanupCounts, GameError>>>,
+    verify_ownership_result: Mutex<Option<Result<bool, GameError>>>,
+    advance_bot_result: Mutex<Option<Result<AdvanceBotOutcome, GameError>>>,
+    evaluate_round_result: Mutex<Option<Result<EvaluateRoundOutcome, GameError>>>,
+    claim_special_result: Mutex<Option<Result<ClaimSpecialOutcome, GameError>>>,
+    decline_special_result: Mutex<Option<Result<bool, GameError>>>,
 }
 
 impl MockGameService {
@@ -40,6 +45,11 @@ impl MockGameService {
             start_game_result: Mutex::new(None),
             create_benchmark_game_result: Mutex::new(None),
             cleanup_benchmark_result: Mutex::new(None),
+            verify_ownership_result: Mutex::new(None),
+            advance_bot_result: Mutex::new(None),
+            evaluate_round_result: Mutex::new(None),
+            claim_special_result: Mutex::new(None),
+            decline_special_result: Mutex::new(None),
         }
     }
 
@@ -73,6 +83,37 @@ impl MockGameService {
     pub fn set_create_benchmark_result(&self, result: Result<BenchmarkGameOutcome, GameError>) {
         *self.create_benchmark_game_result.lock().unwrap() = Some(result);
     }
+
+    pub fn set_verify_ownership_result(&self, result: Result<bool, GameError>) {
+        *self.verify_ownership_result.lock().unwrap() = Some(result);
+    }
+
+    pub fn set_advance_bot_result(&self, result: Result<AdvanceBotOutcome, GameError>) {
+        *self.advance_bot_result.lock().unwrap() = Some(result);
+    }
+
+    pub fn set_create_multiplayer_game_result(
+        &self,
+        result: Result<MultiplayerCreationOutcome, GameError>,
+    ) {
+        *self.create_multiplayer_game_result.lock().unwrap() = Some(result);
+    }
+
+    pub fn set_start_game_result(&self, result: Result<(), GameError>) {
+        *self.start_game_result.lock().unwrap() = Some(result);
+    }
+
+    pub fn set_evaluate_round_result(&self, result: Result<EvaluateRoundOutcome, GameError>) {
+        *self.evaluate_round_result.lock().unwrap() = Some(result);
+    }
+
+    pub fn set_claim_special_result(&self, result: Result<ClaimSpecialOutcome, GameError>) {
+        *self.claim_special_result.lock().unwrap() = Some(result);
+    }
+
+    pub fn set_decline_special_result(&self, result: Result<bool, GameError>) {
+        *self.decline_special_result.lock().unwrap() = Some(result);
+    }
 }
 
 // ── GamePlayService ────────────────────────────────────────────────────
@@ -99,13 +140,16 @@ impl GamePlayService for MockGameService {
         _game_id: Uuid,
         _human_player_id: Uuid,
     ) -> Result<AdvanceBotOutcome, GameError> {
-        Ok(AdvanceBotOutcome {
-            card_played: 0,
-            next_player_id: Uuid::new_v4(),
-            next_is_bot: false,
-            round_complete: false,
-            game_ended: false,
-        })
+        match self.advance_bot_result.lock().unwrap().take() {
+            Some(result) => result,
+            None => Ok(AdvanceBotOutcome {
+                card_played: 0,
+                next_player_id: Uuid::new_v4(),
+                next_is_bot: false,
+                round_complete: false,
+                game_ended: false,
+            }),
+        }
     }
 
     async fn evaluate_round(
@@ -114,12 +158,15 @@ impl GamePlayService for MockGameService {
         _human_player_id: Uuid,
         _idempotency_key: Option<String>,
     ) -> Result<EvaluateRoundOutcome, GameError> {
-        Ok(EvaluateRoundOutcome {
-            round_number: 1,
-            winner_id: Some(Uuid::new_v4()),
-            winner_position: 0,
-            game_ended: false,
-        })
+        match self.evaluate_round_result.lock().unwrap().take() {
+            Some(result) => result,
+            None => Ok(EvaluateRoundOutcome {
+                round_number: 1,
+                winner_id: Some(Uuid::new_v4()),
+                winner_position: 0,
+                game_ended: false,
+            }),
+        }
     }
 
     async fn verify_player_ownership(
@@ -128,7 +175,10 @@ impl GamePlayService for MockGameService {
         _player_id: Uuid,
         _user_id: Uuid,
     ) -> Result<bool, GameError> {
-        Ok(true)
+        match self.verify_ownership_result.lock().unwrap().take() {
+            Some(result) => result,
+            None => Ok(true),
+        }
     }
 
     async fn claim_special_victory(
@@ -137,11 +187,14 @@ impl GamePlayService for MockGameService {
         _player_id: Uuid,
         _idempotency_key: Option<String>,
     ) -> Result<ClaimSpecialOutcome, GameError> {
-        Ok(ClaimSpecialOutcome {
-            success: true,
-            winner_id: Uuid::new_v4(),
-            winner_position: 0,
-        })
+        match self.claim_special_result.lock().unwrap().take() {
+            Some(result) => result,
+            None => Ok(ClaimSpecialOutcome {
+                success: true,
+                winner_id: Uuid::new_v4(),
+                winner_position: 0,
+            }),
+        }
     }
 
     async fn decline_special_claim(
@@ -149,7 +202,10 @@ impl GamePlayService for MockGameService {
         _game_id: Uuid,
         _player_id: Uuid,
     ) -> Result<bool, GameError> {
-        Ok(true)
+        match self.decline_special_result.lock().unwrap().take() {
+            Some(result) => result,
+            None => Ok(true),
+        }
     }
 }
 
