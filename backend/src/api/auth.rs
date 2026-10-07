@@ -7,15 +7,13 @@ use crate::api::dto::auth::{
     RegisterRequest, ResetPasswordRequest, ResetPasswordResponse, UserInfo,
 };
 use crate::api::dto::responses::ApiErrorResponse;
-use crate::api::services::auth_service::AuthService;
+use crate::api::services::auth_service::AuthServiceTrait;
 use crate::auth::config::AuthConfig;
 use crate::auth::cookie;
 use crate::auth::extractors::{AuthenticatedUser, ClientIp};
 use crate::auth::jwt;
 use crate::i18n::I18n;
 use crate::messaging::RedisClient;
-
-pub type AuthServiceType = AuthService<super::super::database::repositories::UserRepository>;
 
 #[utoipa::path(
     post,
@@ -32,7 +30,7 @@ pub type AuthServiceType = AuthService<super::super::database::repositories::Use
 pub async fn register(
     req: HttpRequest,
     body: web::Json<RegisterRequest>,
-    service: web::Data<Arc<AuthServiceType>>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
     i18n: I18n,
 ) -> HttpResponse {
     let client_ip = req.extensions().get::<ClientIp>().cloned();
@@ -69,7 +67,7 @@ pub async fn register(
 pub async fn login(
     req: HttpRequest,
     body: web::Json<LoginRequest>,
-    service: web::Data<Arc<AuthServiceType>>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
     i18n: I18n,
 ) -> HttpResponse {
     let client_ip = req.extensions().get::<ClientIp>().cloned();
@@ -101,7 +99,7 @@ pub async fn login(
 )]
 pub async fn forgot_password(
     body: web::Json<ForgotPasswordRequest>,
-    service: web::Data<Arc<AuthServiceType>>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
     i18n: I18n,
 ) -> HttpResponse {
     HttpResponse::Ok().json(service.forgot_password(body.into_inner(), i18n.lang).await)
@@ -120,7 +118,7 @@ pub async fn forgot_password(
 )]
 pub async fn reset_password(
     body: web::Json<ResetPasswordRequest>,
-    service: web::Data<Arc<AuthServiceType>>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
     i18n: I18n,
 ) -> HttpResponse {
     match service.reset_password(body.into_inner(), i18n.lang).await {
@@ -178,7 +176,7 @@ pub async fn logout(
 )]
 pub async fn me(
     auth_user: AuthenticatedUser,
-    service: web::Data<Arc<AuthServiceType>>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
 ) -> HttpResponse {
     match service.me(auth_user.user_id).await {
         Ok(user_info) => HttpResponse::Ok().json(user_info),

@@ -467,6 +467,10 @@ pub(super) fn make_mailer() -> Arc<dyn crate::mailer::Mailer> {
     Arc::new(mailer)
 }
 
+pub(super) fn make_email_queue() -> crate::mailer::EmailQueue {
+    crate::mailer::EmailQueue::channel().0
+}
+
 pub(super) fn make_config() -> Config {
     Config::default()
 }

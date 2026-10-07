@@ -10,7 +10,39 @@ use crate::auth::config::AuthConfig;
 use crate::auth::{jwt, password};
 use crate::database::traits::UserRepoTrait;
 use crate::i18n::{Lang, Translator};
-use crate::mailer::Mailer;
+use crate::mailer::{EmailJob, EmailQueue};
+
+/// Trait seam for the auth service, enabling handler-level testing with a mock.
+#[async_trait::async_trait]
+pub trait AuthServiceTrait: Send + Sync {
+    async fn register(
+        &self,
+        body: RegisterRequest,
+        ip_hash: Option<String>,
+        lang: Lang,
+    ) -> Result<RegisterResult, AuthError>;
+
+    async fn login(
+        &self,
+        body: LoginRequest,
+        ip_hash: Option<String>,
+        lang: Lang,
+    ) -> Result<LoginResult, AuthError>;
+
+    async fn forgot_password(
+        &self,
+        body: ForgotPasswordRequest,
+        lang: Lang,
+    ) -> ForgotPasswordResponse;
+
+    async fn reset_password(
+        &self,
+        body: ResetPasswordRequest,
+        lang: Lang,
+    ) -> Result<ResetPasswordResponse, AuthError>;
+
+    async fn me(&self, user_id: Uuid) -> Result<UserInfo, AuthError>;
+}
 
 #[derive(Debug)]
 pub enum AuthError {
@@ -138,7 +170,7 @@ pub struct LoginResult {
 pub struct AuthService<R: UserRepoTrait> {
     repo: Arc<R>,
     config: AuthConfig,
-    mailer: Arc<dyn Mailer>,
+    email_queue: EmailQueue,
     translator: Arc<Translator>,
 }
 
@@ -146,13 +178,13 @@ impl<R: UserRepoTrait> AuthService<R> {
     pub fn new(
         repo: Arc<R>,
         config: AuthConfig,
-        mailer: Arc<dyn Mailer>,
+        email_queue: EmailQueue,
         translator: Arc<Translator>,
     ) -> Self {
         Self {
             repo,
             config,
-            mailer,
+            email_queue,
             translator,
         }
     }
@@ -354,14 +386,12 @@ impl<R: UserRepoTrait> AuthService<R> {
                     );
 
                     let user_lang = Lang::parse(&user.language).unwrap_or(Lang::En);
-                    tracing::info!("Send password reset link for {}", email);
-                    if let Err(e) = self
-                        .mailer
-                        .send_password_reset(&email, &reset_link, user_lang)
-                        .await
-                    {
-                        tracing::error!("Failed to send password reset email to {email}: {e}");
-                    }
+                    tracing::info!("Enqueue password reset link for {}", email);
+                    self.email_queue.enqueue(EmailJob::PasswordReset {
+                        to_email: email.clone(),
+                        reset_link,
+                        lang: user_lang,
+                    });
                 }
             }
         }
@@ -458,5 +488,46 @@ impl<R: UserRepoTrait> AuthService<R> {
                 key: "auth.user_not_found",
             }),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl<R: UserRepoTrait> AuthServiceTrait for AuthService<R> {
+    async fn register(
+        &self,
+        body: RegisterRequest,
+        ip_hash: Option<String>,
+        lang: Lang,
+    ) -> Result<RegisterResult, AuthError> {
+        AuthService::register(self, body, ip_hash, lang).await
+    }
+
+    async fn login(
+        &self,
+        body: LoginRequest,
+        ip_hash: Option<String>,
+        lang: Lang,
+    ) -> Result<LoginResult, AuthError> {
+        AuthService::login(self, body, ip_hash, lang).await
+    }
+
+    async fn forgot_password(
+        &self,
+        body: ForgotPasswordRequest,
+        lang: Lang,
+    ) -> ForgotPasswordResponse {
+        AuthService::forgot_password(self, body, lang).await
+    }
+
+    async fn reset_password(
+        &self,
+        body: ResetPasswordRequest,
+        lang: Lang,
+    ) -> Result<ResetPasswordResponse, AuthError> {
+        AuthService::reset_password(self, body, lang).await
+    }
+
+    async fn me(&self, user_id: Uuid) -> Result<UserInfo, AuthError> {
+        AuthService::me(self, user_id).await
     }
 }

@@ -78,21 +78,21 @@ pub struct RateLimitCheckResult {
 }
 
 impl RateLimitCheckResult {
-    fn blocked(retry_after_secs: u64) -> Self {
+    pub(crate) fn blocked(retry_after_secs: u64) -> Self {
         Self {
             allowed: false,
             retry_after_secs,
         }
     }
 
-    fn allowed() -> Self {
+    pub(crate) fn allowed() -> Self {
         Self {
             allowed: true,
             retry_after_secs: 0,
         }
     }
 
-    fn fail_closed() -> Self {
+    pub(crate) fn fail_closed() -> Self {
         Self {
             allowed: false,
             retry_after_secs: 60,
@@ -101,12 +101,12 @@ impl RateLimitCheckResult {
 }
 
 #[derive(Default)]
-struct InMemoryRateLimiter {
+pub(crate) struct InMemoryRateLimiter {
     records: Mutex<HashMap<String, Vec<Instant>>>,
 }
 
 impl InMemoryRateLimiter {
-    fn check(&self, ip: &str, config: &RateLimitConfig) -> RateLimitCheckResult {
+    pub(crate) fn check(&self, ip: &str, config: &RateLimitConfig) -> RateLimitCheckResult {
         let key = format!("{}:{}", config.key_prefix, ip);
         let mut records = match self.records.lock() {
             Ok(r) => r,
@@ -145,7 +145,7 @@ pub struct RateLimiter {
     redis_client: Option<RedisClient>,
     in_memory: Arc<InMemoryRateLimiter>,
     config: RateLimitConfig,
-    fallback_warned: Arc<AtomicBool>,
+    pub(crate) fallback_warned: Arc<AtomicBool>,
 }
 
 impl RateLimiter {
@@ -162,7 +162,7 @@ impl RateLimiter {
         &self.config
     }
 
-    async fn check(&self, ip: &str) -> RateLimitCheckResult {
+    pub(crate) async fn check(&self, ip: &str) -> RateLimitCheckResult {
         let key = format!("ratelimit:{}:{}", self.config.key_prefix, ip);
 
         if let Some(mut redis) = self.redis_client.clone() {
@@ -317,6 +317,3 @@ where
         })
     }
 }
-#[cfg(test)]
-#[path = "rate_limiter_tests.rs"]
-mod tests;

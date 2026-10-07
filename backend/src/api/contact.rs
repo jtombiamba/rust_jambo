@@ -1,10 +1,9 @@
 use actix_web::{web, HttpResponse};
 use serde::Deserialize;
-use std::sync::Arc;
 
 use crate::api::dto::responses::{ApiErrorResponse, ContactSentResponse};
 use crate::i18n::I18n;
-use crate::mailer::Mailer;
+use crate::mailer::{EmailJob, EmailQueue};
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct ContactRequest {
@@ -28,7 +27,7 @@ pub struct ContactRequest {
 )]
 pub async fn send_contact(
     body: web::Json<ContactRequest>,
-    mailer: web::Data<Arc<dyn Mailer>>,
+    email_queue: web::Data<EmailQueue>,
     i18n: I18n,
 ) -> HttpResponse {
     let body = body.into_inner();
@@ -49,31 +48,15 @@ pub async fn send_contact(
         });
     }
 
-    match mailer
-        .send_contact_form(
-            &body.name,
-            &body.email,
-            &body.subject,
-            &body.message,
-            i18n.lang,
-        )
-        .await
-    {
-        Ok(()) => HttpResponse::Ok().json(ContactSentResponse {
-            message: i18n.t("contact.sent"),
-        }),
-        Err(e) => {
-            tracing::error!("Failed to send contact form: {}", e);
-            let request_id = crate::observability::CORRELATION_ID
-                .try_with(|id| id.to_string())
-                .ok();
-            HttpResponse::InternalServerError().json(ApiErrorResponse {
-                success: false,
-                error: i18n.t("contact.send_failed"),
-                field: None,
-                source: "contact:email".to_string(),
-                request_id,
-            })
-        }
-    }
+    email_queue.enqueue(EmailJob::ContactForm {
+        name: body.name,
+        email: body.email,
+        subject: body.subject,
+        message: body.message,
+        lang: i18n.lang,
+    });
+
+    HttpResponse::Ok().json(ContactSentResponse {
+        message: i18n.t("contact.sent"),
+    })
 }

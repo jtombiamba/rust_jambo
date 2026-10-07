@@ -75,6 +75,32 @@ jobs:
       - name: Run integration tests (no test binaries)
         run: cargo test --tests
 
+  backend-coverage:
+    name: Backend coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          components: clippy, rustfmt, llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Run coverage (gate on regression)
+        run: cargo llvm-cov --lib --fail-under-lines 40 --summary-only
+
   # ── Frontend (TypeScript) ───────────────────────────────────────
 
   frontend:

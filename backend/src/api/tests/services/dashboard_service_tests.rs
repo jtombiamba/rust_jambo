@@ -1,10 +1,13 @@
-use super::*;
-use crate::api::dto::dashboard::GameFilter;
+use crate::api::dto::dashboard::{GameFilter, PaginationParams};
+use crate::api::services::dashboard_service::DashboardService;
+use crate::cache::UserCache;
 use crate::database::models::{Game, GameCard, GameStatus, Player, PlayerProfile};
-use crate::database::traits::{GameCardRepoTrait, GameRepoTrait};
+use crate::database::traits::{DashboardRepoTrait, GameCardRepoTrait, GameRepoTrait};
 use async_trait::async_trait;
 use sea_orm::{DatabaseTransaction, DbErr};
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use uuid::Uuid;
 
 struct MockGameRepo;
 

@@ -1,4 +1,4 @@
-use actix_web::{get, HttpResponse, Responder};
+use actix_web::{get, HttpResponse};
 use prometheus::Encoder;
 
 #[utoipa::path(
@@ -8,7 +8,7 @@ use prometheus::Encoder;
     responses((status = 200, description = "Service is healthy", body = String))
 )]
 #[get("/health")]
-pub async fn health_check() -> impl Responder {
+pub async fn health_check() -> HttpResponse {
     HttpResponse::Ok().body("OK")
 }
 

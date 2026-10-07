@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, ResponseError};
+use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, ResponseError};
 use uuid::Uuid;
 
 use crate::api::dto::requests::ClaimSpecialRequest;
@@ -33,7 +33,7 @@ pub async fn play_card(
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<PlayCardRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     let game_id = id.into_inner();
     let correlation_id = req.extensions().get::<CorrelationId>().copied();
 
@@ -82,7 +82,7 @@ pub async fn advance_bot(
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<PlayerActionRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     let game_id = id.into_inner();
     let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
     let redis_client = req
@@ -202,7 +202,7 @@ pub async fn evaluate_round(
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<PlayerActionRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     let game_id = id.into_inner();
     let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
     let redis_client = req
@@ -355,7 +355,7 @@ pub async fn claim_special(
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<ClaimSpecialRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     let game_id = id.into_inner();
     let (auth_user_id, is_game_token_auth) = resolve_player_user_id(&req, game_id).await;
 
@@ -405,7 +405,7 @@ pub async fn decline_special(
     orchestrator: web::Data<Arc<dyn GamePlayService>>,
     id: web::Path<Uuid>,
     payload: web::Json<ClaimSpecialRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     let game_id = id.into_inner();
     let (auth_user_id, is_game_token_auth) = resolve_player_user_id(&req, game_id).await;
 
@@ -433,7 +433,3 @@ pub async fn decline_special(
         Err(e) => AppError::from(e).error_response(),
     }
 }
-
-#[cfg(test)]
-#[path = "game_tests.rs"]
-mod game_tests;

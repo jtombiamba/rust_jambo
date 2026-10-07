@@ -18,3 +18,6 @@ pub mod services;
 pub mod system;
 pub mod topup;
 pub mod unfreeze;
+
+#[cfg(test)]
+mod tests;

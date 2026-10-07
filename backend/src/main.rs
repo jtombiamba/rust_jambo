@@ -21,6 +21,9 @@ mod room;
 mod routes;
 mod websocket;
 
+#[cfg(test)]
+pub mod test_helpers;
+
 use crate::bootstrap::bootstrap;
 use crate::routes::configure;
 
