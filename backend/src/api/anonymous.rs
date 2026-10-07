@@ -1,4 +1,4 @@
-use actix_web::{get, HttpResponse, Responder};
+use actix_web::{get, HttpResponse};
 
 use crate::api::dto::responses::AnonymousStatsResponse;
 
@@ -9,7 +9,7 @@ use crate::api::dto::responses::AnonymousStatsResponse;
     responses((status = 200, description = "Anonymous gameplay stats", body = AnonymousStatsResponse))
 )]
 #[get("/anonymous")]
-pub async fn get_anonymous_stats() -> impl Responder {
+pub async fn get_anonymous_stats() -> HttpResponse {
     let stats = AnonymousStatsResponse {
         games_allowed: 10,
         games_played: 0,

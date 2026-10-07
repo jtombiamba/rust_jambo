@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, Responder, ResponseError};
+use actix_web::{post, web, HttpMessage, HttpRequest, HttpResponse, ResponseError};
 
 use crate::api::dto::responses::{ApiErrorResponse, QuickGameResponse};
 use crate::auth::config::AuthConfig;
@@ -29,7 +29,7 @@ pub async fn create_quick_game(
     orchestrator: web::Data<Arc<dyn GameLifecycleService>>,
     auth_config: web::Data<AuthConfig>,
     redis: web::Data<Option<RedisClient>>,
-) -> impl Responder {
+) -> HttpResponse {
     let correlation_id = req.extensions().get::<CorrelationId>().copied();
 
     let step_by_step = req.query_string().contains("step_by_step=true");

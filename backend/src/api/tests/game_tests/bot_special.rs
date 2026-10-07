@@ -2,25 +2,9 @@ use crate::api::game::{advance_bot, claim_special, decline_special, evaluate_rou
 use crate::auth::config::AuthConfig;
 use crate::error::GameError;
 use crate::game::service::mock::MockGameService;
-use crate::game::service::QuickGameOutcome;
 use actix_web::{test, web, App};
 use std::sync::Arc;
 use uuid::Uuid;
-
-fn quick_game_outcome() -> QuickGameOutcome {
-    QuickGameOutcome {
-        game_id: Uuid::new_v4(),
-        players: vec![],
-        status: "active".into(),
-        current_turn: 0,
-        bet: 10,
-        max_players: 4,
-        invite_expires_at: None,
-        deck_slots: None,
-        ws_token: None,
-        step_by_step: false,
-    }
-}
 
 fn test_auth_config() -> AuthConfig {
     AuthConfig {
@@ -62,30 +46,17 @@ async fn advance_bot_success() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(body["success"], true);
+    assert_eq!(body["card_played"], 0);
+    assert_eq!(body["next_is_bot"], false);
+    assert_eq!(body["round_complete"], false);
+    assert_eq!(body["game_ended"], false);
+    assert!(body["next_player_id"].as_str().is_some());
 }
 
 #[actix_web::test]
-async fn advance_bot_game_not_found() {
-    let mock = Arc::new(MockGameService::new(
-        Err(GameError::GameNotFound),
-        Ok(quick_game_outcome()),
-    ));
-    let app = make_app_advance_bot(mock).await;
-    let game_id = Uuid::new_v4();
-    let player_id = Uuid::new_v4();
-    let req = test::TestRequest::post()
-        .uri(&format!("/game/{}/advance-bot", game_id))
-        .set_json(serde_json::json!({ "player_id": player_id }))
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["success"], true);
-}
-
-#[actix_web::test]
-async fn advance_bot_not_a_bot() {
+async fn advance_bot_not_a_bot_returns_400() {
     let mock = Arc::new(MockGameService::ok());
+    mock.set_advance_bot_result(Err(GameError::NotABot));
     let app = make_app_advance_bot(mock).await;
     let game_id = Uuid::new_v4();
     let player_id = Uuid::new_v4();
@@ -94,9 +65,7 @@ async fn advance_bot_not_a_bot() {
         .set_json(serde_json::json!({ "player_id": player_id }))
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["success"], true);
+    assert_eq!(resp.status(), 400);
 }
 
 // ── evaluate_round tests ──
@@ -130,30 +99,16 @@ async fn evaluate_round_success() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(body["success"], true);
+    assert_eq!(body["round_number"], 1);
+    assert_eq!(body["winner_position"], 0);
+    assert_eq!(body["game_ended"], false);
+    assert!(body["winner_id"].as_str().is_some());
 }
 
 #[actix_web::test]
-async fn evaluate_round_game_not_found() {
-    let mock = Arc::new(MockGameService::new(
-        Err(GameError::GameNotFound),
-        Ok(quick_game_outcome()),
-    ));
-    let app = make_app_evaluate_round(mock).await;
-    let game_id = Uuid::new_v4();
-    let player_id = Uuid::new_v4();
-    let req = test::TestRequest::post()
-        .uri(&format!("/game/{}/evaluate-round", game_id))
-        .set_json(serde_json::json!({ "player_id": player_id }))
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["success"], true);
-}
-
-#[actix_web::test]
-async fn evaluate_round_round_not_complete() {
+async fn evaluate_round_round_not_complete_returns_400() {
     let mock = Arc::new(MockGameService::ok());
+    mock.set_evaluate_round_result(Err(GameError::RoundNotComplete));
     let app = make_app_evaluate_round(mock).await;
     let game_id = Uuid::new_v4();
     let player_id = Uuid::new_v4();
@@ -162,9 +117,7 @@ async fn evaluate_round_round_not_complete() {
         .set_json(serde_json::json!({ "player_id": player_id }))
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["success"], true);
+    assert_eq!(resp.status(), 400);
 }
 
 // ── claim_special / decline_special tests ──

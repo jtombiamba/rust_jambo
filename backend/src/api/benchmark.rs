@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use actix_web::{web, HttpRequest, HttpResponse, Responder, ResponseError};
+use actix_web::{web, HttpRequest, HttpResponse, ResponseError};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -80,7 +80,7 @@ pub async fn create_benchmark_game(
     config: web::Data<Config>,
     orchestrator: web::Data<Arc<dyn BenchmarkService>>,
     payload: web::Json<CreateBenchmarkGameRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     if let Some(error_response) = validate_benchmark_token(&req, config.get_ref()) {
         return error_response;
     }
@@ -146,7 +146,7 @@ pub async fn cleanup_benchmark_data(
     req: HttpRequest,
     config: web::Data<Config>,
     orchestrator: web::Data<Arc<dyn BenchmarkService>>,
-) -> impl Responder {
+) -> HttpResponse {
     if let Some(error_response) = validate_benchmark_token(&req, config.get_ref()) {
         return error_response;
     }
