@@ -112,7 +112,7 @@ jobs:
 
       - name: Configure AWS credentials (eks)
         if: matrix.cloud == 'eks'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
           aws-region: eu-west-1
