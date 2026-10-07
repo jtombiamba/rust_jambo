@@ -376,8 +376,8 @@ async fn check_stalled_runs_returns_zero_on_empty_db() {
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results(vec![Vec::<game_run::Model>::new()])
         .into_connection();
-    let mailer = make_mailer();
+    let email_queue = make_email_queue();
 
-    let count = RoomService::check_stalled_runs(db, mailer, 1800).await;
+    let count = RoomService::check_stalled_runs(db, email_queue, 1800).await;
     assert_eq!(count, 0);
 }

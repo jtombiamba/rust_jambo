@@ -11,7 +11,7 @@ use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
 use crate::database::repositories::UserRepository;
 use crate::i18n::Lang;
-use crate::mailer::Mailer;
+use crate::mailer::{EmailJob, EmailQueue};
 
 #[utoipa::path(
     post,
@@ -32,7 +32,7 @@ pub async fn request_cashout(
     body: web::Json<CashoutRequest>,
     service: web::Data<Arc<dyn CashoutServiceTrait>>,
     db: web::Data<sea_orm::DatabaseConnection>,
-    mailer: web::Data<Arc<dyn Mailer>>,
+    email_queue: web::Data<EmailQueue>,
     config: web::Data<Config>,
 ) -> HttpResponse {
     let response = match service
@@ -47,52 +47,29 @@ pub async fn request_cashout(
     match user_repo.find_by_id(auth_user.user_id).await {
         Ok(Some(user)) => {
             let lang = Lang::parse(&user.language).unwrap_or_default();
-            let mailer = mailer.clone();
             let credits = response.credits;
             let amount_eur_cents = response.amount_eur_cents;
             let paypal_email = body.paypal_email.clone();
-            let user_email = user.email.clone();
-            let user_pseudo = user.pseudo.clone();
             let admin_email = config.cashout_admin_email.clone();
-            tokio::spawn(async move {
-                if let Err(e) = mailer
-                    .send_cashout_requested(
-                        &user_email,
-                        credits,
-                        amount_eur_cents,
-                        &paypal_email,
-                        lang,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        user_email = %user_email,
-                        error = %e,
-                        "failed to send cashout request confirmation email to user"
-                    );
-                }
 
-                if !admin_email.is_empty() {
-                    if let Err(e) = mailer
-                        .send_cashout_admin_alert(
-                            &admin_email,
-                            &user_pseudo,
-                            &user_email,
-                            credits,
-                            amount_eur_cents,
-                            &paypal_email,
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            admin_email = %admin_email,
-                            user_email = %user_email,
-                            error = %e,
-                            "failed to send cashout admin alert"
-                        );
-                    }
-                }
+            email_queue.enqueue(EmailJob::CashoutRequested {
+                to_email: user.email.clone(),
+                credits,
+                amount_eur_cents,
+                paypal_email: paypal_email.clone(),
+                lang,
             });
+
+            if !admin_email.is_empty() {
+                email_queue.enqueue(EmailJob::CashoutAdminAlert {
+                    to_email: admin_email,
+                    pseudo: user.pseudo.clone(),
+                    email: user.email.clone(),
+                    credits,
+                    amount_eur_cents,
+                    paypal_email,
+                });
+            }
         }
         Ok(None) => {
             tracing::warn!(

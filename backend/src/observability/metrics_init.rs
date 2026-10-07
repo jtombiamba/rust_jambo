@@ -114,6 +114,12 @@ pub fn init_all() {
     EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["unfreeze"]);
     EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["stall_warning"]);
     EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["stall_kicked"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["invitation"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["contact_form"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["password_reset"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["cashout_requested"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["cashout_admin_alert"]);
+    EMAIL_SEND_ERRORS_TOTAL.with_label_values(&["room_invitation"]);
     GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc_by(0.0);
     WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc_by(0.0);
     WS_AUTH_BLACKLIST_REDIS_ERRORS_TOTAL.inc_by(0.0);

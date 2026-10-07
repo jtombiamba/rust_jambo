@@ -10,7 +10,7 @@ use tracing::{error, info, warn};
 use jambo_backend::cache::UserCache;
 use jambo_backend::config::Config;
 use jambo_backend::database;
-use jambo_backend::mailer::{self, MailerConfig};
+use jambo_backend::mailer::{self, EmailQueue, MailerConfig};
 use jambo_backend::messaging::RedisClient;
 use jambo_backend::observability::metrics_init;
 use jambo_backend::scheduler::Scheduler;
@@ -88,13 +88,21 @@ async fn main() -> Result<()> {
     let mailer_config = MailerConfig::from_env();
     let mailer = mailer::create_mailer(mailer_config)
         .map_err(|e| anyhow::anyhow!("Failed to create mailer: {}", e))?;
+    let email_queue = EmailQueue::start(mailer.clone());
 
     let user_cache = match redis_client.clone() {
         Some(rc) => Arc::new(UserCache::new_with_redis(rc)),
         None => Arc::new(UserCache::new()),
     };
 
-    let scheduler = Scheduler::new(db_connection, redis_client, mailer, user_cache, config);
+    let scheduler = Scheduler::new(
+        db_connection,
+        redis_client,
+        mailer,
+        email_queue,
+        user_cache,
+        config,
+    );
 
     let (mut tasks, shutdown_tx) = scheduler.run_all();
     let start_time = std::time::Instant::now();

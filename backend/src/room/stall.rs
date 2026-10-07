@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::database::models::{GameRun, GameRunGame, GameRunPlayer, GameStatus, User};
@@ -7,14 +6,14 @@ use crate::database::repositories::{
     GameRepository, GameRunGameRepository, GameRunPlayerRepository, GameRunRepository,
     UserRepository,
 };
-use crate::mailer::Mailer;
+use crate::mailer::{EmailJob, EmailQueue};
 use crate::room::service::RoomService;
 
 impl RoomService {
     #[allow(dead_code)]
     pub async fn check_stalled_runs(
         db: sea_orm::DatabaseConnection,
-        mailer: Arc<dyn Mailer>,
+        email_queue: EmailQueue,
         timeout_secs: u64,
     ) -> u64 {
         let now = chrono::Utc::now();
@@ -190,22 +189,13 @@ impl RoomService {
                     for rp in run_players {
                         if let Some(user) = user_map.get(&rp.user_id) {
                             let lang = crate::i18n::Lang::parse(&user.language).unwrap_or_default();
-                            if let Err(e) = mailer
-                                .send_stall_warning(
-                                    &user.email,
-                                    &run.id.to_string(),
-                                    inactive_minutes,
-                                    remaining_minutes,
-                                    lang,
-                                )
-                                .await
-                            {
-                                tracing::error!(
-                                    "Failed to send run stall warning to {}: {}",
-                                    user.email,
-                                    e
-                                );
-                            }
+                            email_queue.enqueue(EmailJob::StallWarning {
+                                to_email: user.email.clone(),
+                                game_id: run.id.to_string(),
+                                inactive_minutes,
+                                remaining_minutes,
+                                lang,
+                            });
                         }
                     }
                 }

@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::game::bot_scheduler::BotScheduler;
-use crate::mailer::Mailer;
+use crate::mailer::{EmailJob, EmailQueue};
 use crate::messaging::RedisClient;
 // pub use types::GameServiceTrait;
 
@@ -88,7 +88,7 @@ pub struct GameService {
     accept_invite_locks: tokio::sync::Mutex<HashMap<Uuid, Arc<tokio::sync::Mutex<()>>>>,
     pub(crate) freeze_duration_secs: u64,
     pub(crate) unfreeze_credit_no_payment: i32,
-    mailer: Option<Arc<dyn Mailer>>,
+    email_queue: Option<EmailQueue>,
     bot_scheduler: Option<BotScheduler>,
 }
 
@@ -101,7 +101,7 @@ impl GameService {
             accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
             freeze_duration_secs: 86400,
             unfreeze_credit_no_payment: 50,
-            mailer: None,
+            email_queue: None,
             bot_scheduler: None,
         }
     }
@@ -116,7 +116,7 @@ impl GameService {
             accept_invite_locks: tokio::sync::Mutex::new(HashMap::new()),
             freeze_duration_secs: 86400,
             unfreeze_credit_no_payment: 50,
-            mailer: None,
+            email_queue: None,
             bot_scheduler: None,
         }
     }
@@ -136,10 +136,14 @@ impl GameService {
         self
     }
 
-    pub fn with_config(mut self, config: &Config, mailer: Arc<dyn Mailer>) -> Self {
+    pub fn with_config(mut self, config: &Config) -> Self {
         self.freeze_duration_secs = config.freeze_duration_secs;
         self.unfreeze_credit_no_payment = config.unfreeze_credit_no_payment;
-        self.mailer = Some(mailer);
+        self
+    }
+
+    pub fn with_email_queue(mut self, email_queue: EmailQueue) -> Self {
+        self.email_queue = Some(email_queue);
         self
     }
 
@@ -149,8 +153,8 @@ impl GameService {
     }
 
     pub(crate) async fn send_unfreeze_email(&self, user_id: Uuid) {
-        let mailer = match &self.mailer {
-            Some(m) => m.clone(),
+        let email_queue = match &self.email_queue {
+            Some(q) => q.clone(),
             None => return,
         };
 
@@ -210,18 +214,10 @@ impl GameService {
             }
         };
 
-        if let Err(e) = mailer
-            .send_freeze_expired(
-                &user.email,
-                profile.credit,
-                crate::i18n::Lang::parse(&user.language).unwrap_or_default(),
-            )
-            .await
-        {
-            tracing::error!("Failed to send unfreeze email to {}: {}", user.email, e);
-            EMAIL_SEND_ERRORS_TOTAL
-                .with_label_values(&["unfreeze"])
-                .inc();
-        }
+        email_queue.enqueue(EmailJob::FreezeExpired {
+            to_email: user.email,
+            credit: profile.credit,
+            lang: crate::i18n::Lang::parse(&user.language).unwrap_or_default(),
+        });
     }
 }

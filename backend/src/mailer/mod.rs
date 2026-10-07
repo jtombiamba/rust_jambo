@@ -5,8 +5,10 @@ use std::sync::Arc;
 use crate::i18n::Lang;
 
 pub mod noop;
+pub mod queue;
 pub mod smtp;
 pub use noop::NoopMailer;
+pub use queue::{EmailJob, EmailQueue};
 pub use smtp::SmtpMailer;
 
 #[derive(Clone, Deserialize)]

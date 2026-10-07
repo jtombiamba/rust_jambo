@@ -4,8 +4,8 @@ use crate::auth::extractors::AuthenticatedUser;
 use crate::config::Config;
 use crate::database::models::User;
 use crate::error::AppError;
-use crate::mailer::Mailer;
-use crate::test_helpers::{MockCashoutService, MockMailer};
+use crate::mailer::{EmailJob, EmailQueue};
+use crate::test_helpers::MockCashoutService;
 use actix_web::{test, web, App, HttpMessage};
 use sea_orm::{DatabaseBackend, MockDatabase};
 use std::sync::Arc;
@@ -39,14 +39,14 @@ async fn make_cashout_app(
     Response = actix_web::dev::ServiceResponse,
     Error = actix_web::Error,
 > {
-    let mailer: Arc<dyn Mailer> = Arc::new(MockMailer::ok());
+    let email_queue = EmailQueue::channel().0;
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results(vec![Vec::<User>::new()])
         .into_connection();
     test::init_service(
         App::new()
             .app_data(web::Data::new(mock))
-            .app_data(web::Data::new(mailer))
+            .app_data(web::Data::new(email_queue))
             .app_data(web::Data::new(Config::default()))
             .app_data(web::Data::new(db))
             .service(
@@ -103,18 +103,18 @@ async fn list_cashouts_success() {
 }
 
 #[actix_web::test]
-async fn request_cashout_success_sends_emails() {
+async fn request_cashout_success_enqueues_confirmation_email() {
     let user = authenticated_user();
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results(vec![vec![make_user(user.user_id)]])
         .into_connection();
-    let mailer: Arc<dyn Mailer> = Arc::new(MockMailer::ok());
+    let (email_queue, mut rx) = EmailQueue::channel();
     let app = actix_web::test::init_service(
         App::new()
             .app_data(web::Data::new(
                 Arc::new(MockCashoutService::new()) as Arc<dyn CashoutServiceTrait>
             ))
-            .app_data(web::Data::new(mailer))
+            .app_data(web::Data::new(email_queue))
             .app_data(web::Data::new(Config::default()))
             .app_data(web::Data::new(db))
             .service(web::resource("/cashout").route(web::post().to(request_cashout))),
@@ -129,6 +129,20 @@ async fn request_cashout_success_sends_emails() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
 
-    // Yield to allow the spawned email task to run on the same runtime.
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let job = rx
+        .try_recv()
+        .expect("expected a cashout confirmation email to be enqueued");
+    match job {
+        EmailJob::CashoutRequested {
+            to_email,
+            credits,
+            paypal_email,
+            ..
+        } => {
+            assert_eq!(to_email, "a@b.co");
+            assert_eq!(credits, 250);
+            assert_eq!(paypal_email, "a@b.co");
+        }
+        other => panic!("expected CashoutRequested job, got {:?}", other),
+    }
 }

@@ -10,7 +10,7 @@ use crate::auth::config::AuthConfig;
 use crate::auth::{jwt, password};
 use crate::database::traits::UserRepoTrait;
 use crate::i18n::{Lang, Translator};
-use crate::mailer::Mailer;
+use crate::mailer::{EmailJob, EmailQueue};
 
 /// Trait seam for the auth service, enabling handler-level testing with a mock.
 #[async_trait::async_trait]
@@ -170,7 +170,7 @@ pub struct LoginResult {
 pub struct AuthService<R: UserRepoTrait> {
     repo: Arc<R>,
     config: AuthConfig,
-    mailer: Arc<dyn Mailer>,
+    email_queue: EmailQueue,
     translator: Arc<Translator>,
 }
 
@@ -178,13 +178,13 @@ impl<R: UserRepoTrait> AuthService<R> {
     pub fn new(
         repo: Arc<R>,
         config: AuthConfig,
-        mailer: Arc<dyn Mailer>,
+        email_queue: EmailQueue,
         translator: Arc<Translator>,
     ) -> Self {
         Self {
             repo,
             config,
-            mailer,
+            email_queue,
             translator,
         }
     }
@@ -386,14 +386,12 @@ impl<R: UserRepoTrait> AuthService<R> {
                     );
 
                     let user_lang = Lang::parse(&user.language).unwrap_or(Lang::En);
-                    tracing::info!("Send password reset link for {}", email);
-                    if let Err(e) = self
-                        .mailer
-                        .send_password_reset(&email, &reset_link, user_lang)
-                        .await
-                    {
-                        tracing::error!("Failed to send password reset email to {email}: {e}");
-                    }
+                    tracing::info!("Enqueue password reset link for {}", email);
+                    self.email_queue.enqueue(EmailJob::PasswordReset {
+                        to_email: email.clone(),
+                        reset_link,
+                        lang: user_lang,
+                    });
                 }
             }
         }

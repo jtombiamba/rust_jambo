@@ -61,6 +61,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
         .app_data(state.dashboard_service.clone())
         .app_data(state.user_cache.clone())
         .app_data(state.mailer.clone())
+        .app_data(state.email_queue.clone())
         .app_data(state.payment_service.clone())
         .app_data(state.room_service.clone())
         .app_data(state.cashout_service.clone())

@@ -7,7 +7,7 @@ use tracing::{error, info, warn};
 
 use crate::cache::UserCache;
 use crate::config::Config;
-use crate::mailer::Mailer;
+use crate::mailer::{EmailQueue, Mailer};
 use crate::messaging::RedisClient;
 
 pub mod tasks;
@@ -54,6 +54,7 @@ pub struct Scheduler {
     db: DatabaseConnection,
     redis: Option<RedisClient>,
     mailer: Arc<dyn Mailer>,
+    email_queue: EmailQueue,
     user_cache: Arc<UserCache>,
     config: Config,
 }
@@ -63,6 +64,7 @@ impl Scheduler {
         db: DatabaseConnection,
         redis: Option<RedisClient>,
         mailer: Arc<dyn Mailer>,
+        email_queue: EmailQueue,
         user_cache: Arc<UserCache>,
         config: Config,
     ) -> Self {
@@ -70,6 +72,7 @@ impl Scheduler {
             db,
             redis,
             mailer,
+            email_queue,
             user_cache,
             config,
         }
@@ -100,10 +103,10 @@ impl Scheduler {
         let _redis4 = self.redis;
 
         let mailer1 = self.mailer.clone();
-        let mailer2 = self.mailer.clone();
-        let mailer3 = self.mailer.clone();
-        let mailer4 = self.mailer.clone();
-        let mailer5 = self.mailer;
+        let mailer2 = self.mailer;
+
+        let email_queue1 = self.email_queue.clone();
+        let email_queue2 = self.email_queue;
 
         let user_cache1 = self.user_cache.clone();
         let _user_cache2 = self.user_cache;
@@ -130,7 +133,6 @@ impl Scheduler {
                     db1.clone(),
                     redis1.clone(),
                     config1.clone(),
-                    mailer1.clone(),
                     shutdown_rx1.clone(),
                 )
                 .await;
@@ -147,7 +149,7 @@ impl Scheduler {
                     db2.clone(),
                     redis2.clone(),
                     config2.clone(),
-                    mailer2.clone(),
+                    email_queue1.clone(),
                     shutdown_rx2.clone(),
                 )
                 .await;
@@ -162,7 +164,7 @@ impl Scheduler {
                 info!(task = "check_expired_freezes", "Task started");
                 tasks::check_expired_freezes_loop(
                     db3.clone(),
-                    mailer3.clone(),
+                    mailer1.clone(),
                     unfreeze_credit,
                     shutdown_rx3.clone(),
                 )
@@ -206,7 +208,7 @@ impl Scheduler {
                 info!(task = "check_stalled_runs", "Task started");
                 tasks::check_stalled_runs_loop(
                     db6.clone(),
-                    mailer4.clone(),
+                    email_queue2.clone(),
                     run_staleness_val,
                     shutdown_rx6.clone(),
                 )
@@ -223,7 +225,7 @@ impl Scheduler {
                 tasks::check_cashout_auto_reject_loop(
                     db7.clone(),
                     config6.clone(),
-                    mailer5.clone(),
+                    mailer2.clone(),
                     shutdown_rx7.clone(),
                 )
                 .await;

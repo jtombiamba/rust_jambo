@@ -19,7 +19,7 @@ use crate::auth::extractors::AuthenticatedUser;
 use crate::auth::jwt;
 use crate::error::AppError;
 use crate::i18n::I18n;
-use crate::mailer::Mailer;
+use crate::mailer::{EmailJob, EmailQueue};
 use crate::messaging::RedisClient;
 use crate::observability::{metrics, CorrelationId};
 
@@ -213,7 +213,7 @@ pub async fn send_invites(
     body: web::Json<SendInvitesRequest>,
     orchestrator: web::Data<Arc<dyn crate::game::service::InviteService>>,
     service: web::Data<Arc<dyn DashboardServiceTrait>>,
-    mailer: web::Data<Arc<dyn Mailer>>,
+    email_queue: web::Data<EmailQueue>,
     i18n: I18n,
 ) -> HttpResponse {
     let game_id = path.into_inner();
@@ -272,21 +272,19 @@ pub async fn send_invites(
                 Ok(u) => u,
                 Err(e) => return e.error_response(),
             };
-            let mut email_errors = 0u32;
+            let game_id_str = game_id.to_string();
             for user in &users {
-                let game_id_str = game_id.to_string();
-                if let Err(e) = mailer
-                    .send_invitation(&user.email, &auth_user.pseudo, &game_id_str, i18n.lang)
-                    .await
-                {
-                    tracing::error!("Failed to send invitation email to {}: {}", user.email, e);
-                    email_errors += 1;
-                }
+                email_queue.enqueue(EmailJob::Invitation {
+                    to_email: user.email.clone(),
+                    inviter_name: auth_user.pseudo.clone(),
+                    game_id: game_id_str.clone(),
+                    lang: i18n.lang,
+                });
             }
             HttpResponse::Ok().json(SendInvitesResponse {
                 success: true,
                 message: i18n.t("game.invites_sent"),
-                email_errors: Some(email_errors),
+                email_errors: None,
             })
         }
         Err(e) => AppError::from(e).error_response(),

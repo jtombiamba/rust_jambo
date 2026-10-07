@@ -1,7 +1,6 @@
 use crate::api::contact::send_contact;
 use crate::i18n::Translator;
-use crate::mailer::Mailer;
-use crate::test_helpers::MockMailer;
+use crate::mailer::{EmailJob, EmailQueue};
 use actix_web::{test, web, App};
 use std::sync::Arc;
 
@@ -15,7 +14,7 @@ fn valid_body() -> serde_json::Value {
 }
 
 async fn make_app(
-    mailer: Arc<dyn Mailer>,
+    email_queue: EmailQueue,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
     Response = actix_web::dev::ServiceResponse,
@@ -23,7 +22,7 @@ async fn make_app(
 > {
     test::init_service(
         App::new()
-            .app_data(web::Data::new(mailer))
+            .app_data(web::Data::new(email_queue))
             .app_data(web::Data::new(Arc::new(Translator::new())))
             .service(web::resource("/contact").route(web::post().to(send_contact))),
     )
@@ -32,7 +31,8 @@ async fn make_app(
 
 #[actix_web::test]
 async fn send_contact_success() {
-    let app = make_app(Arc::new(MockMailer::ok())).await;
+    let (email_queue, mut rx) = EmailQueue::channel();
+    let app = make_app(email_queue).await;
     let req = test::TestRequest::post()
         .uri("/contact")
         .set_json(valid_body())
@@ -41,11 +41,31 @@ async fn send_contact_success() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert!(body["message"].is_string());
+
+    let job = rx
+        .try_recv()
+        .expect("expected a contact form email to be enqueued");
+    match job {
+        EmailJob::ContactForm {
+            name,
+            email,
+            subject,
+            message,
+            ..
+        } => {
+            assert_eq!(name, "Alice");
+            assert_eq!(email, "alice@example.com");
+            assert_eq!(subject, "Hello");
+            assert_eq!(message, "This is a message");
+        }
+        other => panic!("expected ContactForm job, got {:?}", other),
+    }
 }
 
 #[actix_web::test]
 async fn send_contact_missing_fields_returns_400() {
-    let app = make_app(Arc::new(MockMailer::ok())).await;
+    let (email_queue, mut rx) = EmailQueue::channel();
+    let app = make_app(email_queue).await;
     let req = test::TestRequest::post()
         .uri("/contact")
         .set_json(serde_json::json!({
@@ -59,18 +79,9 @@ async fn send_contact_missing_fields_returns_400() {
     assert_eq!(resp.status(), 400);
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(body["success"], false);
-}
 
-#[actix_web::test]
-async fn send_contact_mailer_error_returns_500() {
-    let app = make_app(Arc::new(MockMailer::with_result(Err("smtp down".into())))).await;
-    let req = test::TestRequest::post()
-        .uri("/contact")
-        .set_json(valid_body())
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 500);
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["success"], false);
-    assert_eq!(body["source"], "contact:email");
+    assert!(
+        rx.try_recv().is_err(),
+        "no email should be enqueued when validation fails"
+    );
 }

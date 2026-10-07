@@ -11,7 +11,7 @@ use crate::database::models::{player_profile, user};
 use crate::database::repositories::{CashoutRepository, PlayerProfileRepository, UserRepository};
 use crate::game::service::GameService;
 use crate::i18n::Lang;
-use crate::mailer::Mailer;
+use crate::mailer::{EmailQueue, Mailer};
 use crate::messaging::RedisClient;
 use crate::observability::metrics;
 
@@ -52,10 +52,9 @@ pub async fn cancel_expired_games_loop(
     db: sea_orm::DatabaseConnection,
     redis: Option<RedisClient>,
     config: Config,
-    mailer: Arc<dyn Mailer>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-    let service = GameService::new_with_redis(db, redis).with_config(&config, mailer);
+    let service = GameService::new_with_redis(db, redis).with_config(&config);
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -92,7 +91,7 @@ pub async fn detect_stalled_games_loop(
     db: sea_orm::DatabaseConnection,
     redis: Option<RedisClient>,
     config: Config,
-    mailer: Arc<dyn Mailer>,
+    email_queue: EmailQueue,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let staleness_secs = config.game_staleness_threshold_secs;
@@ -107,8 +106,9 @@ pub async fn detect_stalled_games_loop(
     let mut interval = tokio::time::interval(check_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    let game_service =
-        GameService::new_with_redis(db.clone(), redis.clone()).with_config(&config, mailer);
+    let game_service = GameService::new_with_redis(db.clone(), redis.clone())
+        .with_config(&config)
+        .with_email_queue(email_queue);
 
     loop {
         tokio::select! {
@@ -317,7 +317,7 @@ pub async fn db_pool_metrics_loop(
 
 pub async fn check_stalled_runs_loop(
     db: sea_orm::DatabaseConnection,
-    mailer: Arc<dyn Mailer>,
+    email_queue: EmailQueue,
     timeout_secs: u64,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -332,7 +332,7 @@ pub async fn check_stalled_runs_loop(
                     Duration::from_secs(30),
                     crate::room::RoomService::check_stalled_runs(
                         db.clone(),
-                        mailer.clone(),
+                        email_queue.clone(),
                         timeout_secs,
                     ),
                 )

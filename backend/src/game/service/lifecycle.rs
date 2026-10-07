@@ -246,14 +246,9 @@ impl GameService {
                 winner.id
             );
 
-            // Fire-and-forget the kick email so it doesn't block the caller
-            let mailer = self.mailer.clone();
-            let db = self.db.clone();
-            let kicked_user_id = kicked_player.user_id;
-            let bet = game_model.bet;
-            tokio::spawn(async move {
-                Self::send_kicked_email_impl(mailer, db, kicked_user_id, game_id, bet).await;
-            });
+            // Enqueue the kick email off the critical path (non-blocking).
+            self.send_kicked_email_impl(kicked_player.user_id, game_id, game_model.bet)
+                .await;
 
             if let Some(ref redis) = self.redis_client {
                 let pk_event = GameEvent::PlayerKicked {

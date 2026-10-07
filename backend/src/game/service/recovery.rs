@@ -189,23 +189,15 @@ impl GameService {
                     }
                 }
 
-                // Fire-and-forget the staleness email so it doesn't block the scheduler loop
+                // Enqueue the staleness email off the scheduler's critical path.
                 if let Some(user_id) = current_player.user_id {
-                    let mailer = self.mailer.clone();
-                    let db = self.db.clone();
-                    // let user_id = current_player.user_id.unwrap();
-                    let game_id = g.id;
-                    tokio::spawn(async move {
-                        Self::send_staleness_email_impl(
-                            mailer,
-                            db,
-                            user_id,
-                            game_id,
-                            inactive_minutes,
-                            remaining_minutes,
-                        )
-                        .await;
-                    });
+                    self.send_staleness_email_impl(
+                        user_id,
+                        g.id,
+                        inactive_minutes,
+                        remaining_minutes,
+                    )
+                    .await;
                 }
 
                 match game::Entity::update_many()
@@ -288,19 +280,20 @@ impl GameService {
         processed
     }
 
-    /// Fire-and-forget helper: sends a staleness warning email without blocking the caller.
+    /// Fire-and-forget helper: enqueues a staleness warning email without blocking the caller.
     pub(crate) async fn send_staleness_email_impl(
-        mailer: Option<std::sync::Arc<dyn crate::mailer::Mailer>>,
-        db: sea_orm::DatabaseConnection,
+        &self,
         user_id: Uuid,
         game_id: Uuid,
         inactive_minutes: i64,
         remaining_minutes: i64,
     ) {
-        let Some(mailer) = mailer else { return };
+        let Some(email_queue) = self.email_queue.clone() else {
+            return;
+        };
 
         let user = match crate::database::models::user::Entity::find_by_id(user_id)
-            .one(&db)
+            .one(&self.db)
             .await
         {
             Ok(Some(u)) => u,
@@ -327,40 +320,29 @@ impl GameService {
         let lang = Lang::parse(&user.language).unwrap_or_default();
         let game_id_str = game_id.to_string();
 
-        if let Err(e) = mailer
-            .send_stall_warning(
-                &user.email,
-                &game_id_str,
-                inactive_minutes,
-                remaining_minutes,
-                lang,
-            )
-            .await
-        {
-            tracing::error!(
-                "Failed to send stall warning email to {}: {}",
-                user.email,
-                e
-            );
-            EMAIL_SEND_ERRORS_TOTAL
-                .with_label_values(&["stall_warning"])
-                .inc();
-        }
+        email_queue.enqueue(crate::mailer::EmailJob::StallWarning {
+            to_email: user.email,
+            game_id: game_id_str,
+            inactive_minutes,
+            remaining_minutes,
+            lang,
+        });
     }
 
-    /// Fire-and-forget helper: sends a kicked email without blocking the caller.
+    /// Fire-and-forget helper: enqueues a kicked email without blocking the caller.
     pub(crate) async fn send_kicked_email_impl(
-        mailer: Option<std::sync::Arc<dyn crate::mailer::Mailer>>,
-        db: sea_orm::DatabaseConnection,
+        &self,
         user_id: Option<Uuid>,
         game_id: Uuid,
         bet: i32,
     ) {
         let Some(user_id) = user_id else { return };
-        let Some(mailer) = mailer else { return };
+        let Some(email_queue) = self.email_queue.clone() else {
+            return;
+        };
 
         let user = match crate::database::models::user::Entity::find_by_id(user_id)
-            .one(&db)
+            .one(&self.db)
             .await
         {
             Ok(Some(u)) => u,
@@ -387,14 +369,11 @@ impl GameService {
         let lang = Lang::parse(&user.language).unwrap_or_default();
         let game_id_str = game_id.to_string();
 
-        if let Err(e) = mailer
-            .send_stall_kicked(&user.email, &game_id_str, bet, lang)
-            .await
-        {
-            tracing::error!("Failed to send stall kicked email to {}: {}", user.email, e);
-            EMAIL_SEND_ERRORS_TOTAL
-                .with_label_values(&["stall_kicked"])
-                .inc();
-        }
+        email_queue.enqueue(crate::mailer::EmailJob::StallKicked {
+            to_email: user.email,
+            game_id: game_id_str,
+            bet,
+            lang,
+        });
     }
 }

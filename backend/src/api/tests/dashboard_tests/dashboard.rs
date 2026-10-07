@@ -5,13 +5,14 @@ use crate::api::dashboard::{
 use crate::api::services::dashboard_service::DashboardServiceTrait;
 use crate::auth::config::AuthConfig;
 use crate::auth::extractors::AuthenticatedUser;
+use crate::database::models::User;
 use crate::error::{AppError, GameError};
 use crate::game::service::{
     mock::MockGameService, GameLifecycleService, GamePlayService, InviteService,
 };
 use crate::i18n::Translator;
-use crate::mailer::Mailer;
-use crate::test_helpers::{MockDashboardService, MockMailer};
+use crate::mailer::{EmailJob, EmailQueue};
+use crate::test_helpers::MockDashboardService;
 use actix_web::{test, web, App, HttpMessage};
 use sea_orm::{DatabaseBackend, MockDatabase};
 use std::collections::HashSet;
@@ -22,6 +23,20 @@ fn authenticated_user() -> AuthenticatedUser {
     AuthenticatedUser {
         user_id: Uuid::new_v4(),
         pseudo: "TestPlayer".to_string(),
+    }
+}
+
+fn make_user(user_id: Uuid) -> User {
+    let now = chrono::Utc::now();
+    User {
+        id: user_id,
+        pseudo: "alice".to_string(),
+        email: "a@b.co".to_string(),
+        password_hash: "hash".to_string(),
+        last_ip_hash: None,
+        language: "en".to_string(),
+        created_at: now,
+        updated_at: now,
     }
 }
 
@@ -42,17 +57,28 @@ async fn make_full_dashboard_app(
     Response = actix_web::dev::ServiceResponse,
     Error = actix_web::Error,
 > {
+    make_full_dashboard_app_with_queue(dash, game, EmailQueue::channel().0).await
+}
+
+async fn make_full_dashboard_app_with_queue(
+    dash: Arc<dyn DashboardServiceTrait>,
+    game: Arc<MockGameService>,
+    email_queue: EmailQueue,
+) -> impl actix_web::dev::Service<
+    actix_http::Request,
+    Response = actix_web::dev::ServiceResponse,
+    Error = actix_web::Error,
+> {
     let invite: Arc<dyn InviteService> = game.clone();
     let lifecycle: Arc<dyn GameLifecycleService> = game.clone();
     let gameplay: Arc<dyn GamePlayService> = game.clone();
-    let mailer: Arc<dyn Mailer> = Arc::new(MockMailer::ok());
     test::init_service(
         App::new()
             .app_data(web::Data::new(dash))
             .app_data(web::Data::new(invite))
             .app_data(web::Data::new(lifecycle))
             .app_data(web::Data::new(gameplay))
-            .app_data(web::Data::new(mailer))
+            .app_data(web::Data::new(email_queue))
             .app_data(web::Data::new(Arc::new(Translator::new())))
             .app_data(web::Data::new(test_auth_config()))
             .app_data(web::Data::new(None::<crate::messaging::RedisClient>))
@@ -219,9 +245,12 @@ async fn send_invites_success() {
     seen.insert(invited_id);
     dash.set_resolve_result(Ok((vec![invited_id], seen, vec![])));
     dash.set_check_existing_players_result(Ok(HashSet::new()));
-    dash.set_find_users_by_ids_result(Ok(vec![]));
+    dash.set_find_users_by_ids_result(Ok(vec![make_user(invited_id)]));
 
-    let app = make_full_dashboard_app(dash, Arc::new(MockGameService::ok())).await;
+    let (email_queue, mut rx) = EmailQueue::channel();
+    let app =
+        make_full_dashboard_app_with_queue(dash, Arc::new(MockGameService::ok()), email_queue)
+            .await;
     let user = authenticated_user();
     let game_id = Uuid::new_v4();
     let req = test::TestRequest::post()
@@ -233,6 +262,23 @@ async fn send_invites_success() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(body["success"], true);
+
+    let job = rx
+        .try_recv()
+        .expect("expected an invitation email to be enqueued");
+    match job {
+        EmailJob::Invitation {
+            to_email,
+            inviter_name,
+            game_id: enqueued_game_id,
+            ..
+        } => {
+            assert_eq!(to_email, "a@b.co");
+            assert_eq!(inviter_name, "TestPlayer");
+            assert_eq!(enqueued_game_id, game_id.to_string());
+        }
+        other => panic!("expected Invitation job, got {:?}", other),
+    }
 }
 
 #[actix_web::test]
