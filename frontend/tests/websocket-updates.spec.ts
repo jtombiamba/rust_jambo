@@ -145,7 +145,7 @@ test('WebSocket updates when card is played', async ({ page }) => {
   await page.goto('http://localhost:5173');
 
   // Wait for dashboard and start game
-  await expect(page.getByText('FapFap Card Game')).toBeVisible();
+  await expect(page.getByText('Jambo Card Game')).toBeVisible();
   await page.getByRole('button', { name: 'Start a quick game' }).click();
   await expect(page.getByText('Game Table')).toBeVisible();
 

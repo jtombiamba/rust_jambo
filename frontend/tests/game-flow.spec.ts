@@ -61,7 +61,7 @@ test('start a game and see the game table', async ({ page }) => {
   await page.goto('http://localhost:5173');
 
   // Wait for dashboard to load
-  await expect(page.getByText('FapFap Card Game')).toBeVisible();
+  await expect(page.getByText('Jambo Card Game')).toBeVisible();
 
   // Click start game button
   await page.getByRole('button', { name: 'Start a quick game' }).click();

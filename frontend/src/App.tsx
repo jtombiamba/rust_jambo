@@ -18,6 +18,7 @@ import { useRoomStore } from './stores/useRoomStore'
 import { extractApiError } from './utils/errors'
 import { generateIdempotencyKey } from './utils/idempotency'
 import LanguageSwitcher from './components/LanguageSwitcher'
+import ToggleSwitch from './components/ToggleSwitch'
 import RoomList from './components/RoomList'
 import RoomDashboard from './components/RoomDashboard'
 import CreateRoomModal from './components/CreateRoomModal'
@@ -640,7 +641,7 @@ function AppContent() {
             )}
           </div>
         </div>
-        <Footer />
+        <Footer hideOnMobile />
       </div>
     )
   }
@@ -846,8 +847,11 @@ function AppContent() {
         </div>
       </div>
       <div className="container mx-auto p-4 sm:p-8 flex-1">
-        <h1 className="text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">{t('common.title')}</h1>
-        <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8">
+        <h1 className="flex items-center gap-2 sm:gap-3 text-2xl sm:text-3xl font-bold mb-4 sm:mb-6">
+          <img src="/color_logo.png" alt="Jambo Card Game" className="h-8 w-auto sm:h-9" />
+          <span>{t('common.title')}</span>
+        </h1>
+        <div className="bg-gray-100 p-4 sm:p-6 rounded-lg shadow mb-6 sm:mb-8 lg:w-3/5 lg:mx-auto">
           <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4">{t('dashboard.title')}</h2>
           <p className="mb-2 text-sm sm:text-base">
             {t('dashboard.notLoggedIn', { allowed: gamesAllowed })}
@@ -890,15 +894,11 @@ function AppContent() {
               </button>
             )}
             {!anonymousOutOfCredits && (
-              <label className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
-                <input
-                  type="checkbox"
-                  checked={stepByStepToggle}
-                  onChange={(e) => setStepByStepToggle(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 rounded"
-                />
-                <span className="text-sm text-gray-700">{t('game.stepByStep')}</span>
-              </label>
+              <ToggleSwitch
+                checked={stepByStepToggle}
+                onChange={setStepByStepToggle}
+                label={t('game.stepByStep')}
+              />
             )}
           </div>
           {error && (

@@ -130,7 +130,7 @@ test.describe('Quickie game — bot chain with delays', () => {
 
   test('human plays card, 3 bots chain with delays, turn returns to human', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
 
     // Start the game
     await page.getByRole('button', { name: 'Start a quick game' }).click();
@@ -234,7 +234,7 @@ test.describe('Quickie game — bot chain with delays', () => {
 
   test('bot chain thinking indicator appears on correct bot slot', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
 
     // Start the game
     await page.getByRole('button', { name: 'Start a quick game' }).click();
@@ -287,7 +287,7 @@ test.describe('Quickie game — bot chain with delays', () => {
 
   test('round completion triggers pause before new round', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
@@ -351,7 +351,7 @@ test.describe('Quickie game — bot chain with delays', () => {
 
   test('game finished mid-chain cancels replay queue', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
@@ -397,7 +397,7 @@ test.describe('Quickie game — bot chain with delays', () => {
 
   test('reconnection cancels bot replay and applies snapshot', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
@@ -479,7 +479,7 @@ test.describe('Quickie game — bot chain with delays', () => {
 
   test('reconnect mid-round reveals snapshot cards progressively', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 
@@ -567,7 +567,7 @@ test.describe('Quickie game — bot chain with delays', () => {
     );
 
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
 

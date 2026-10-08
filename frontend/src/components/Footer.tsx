@@ -6,7 +6,11 @@ import { getCachedConfig, saveConfig } from '../utils/configCache'
 import LegalMentions from './LegalMentions'
 import ContactForm from './ContactForm'
 
-export default function Footer() {
+interface FooterProps {
+  hideOnMobile?: boolean
+}
+
+export default function Footer({ hideOnMobile = false }: FooterProps) {
   const { t } = useTranslation()
   const [legalOpen, setLegalOpen] = useState(false)
   const [contactOpen, setContactOpen] = useState(false)
@@ -43,7 +47,7 @@ export default function Footer() {
 
   return (
     <>
-      <footer className="border-t border-gray-200 bg-gray-50 mt-auto">
+      <footer className={`border-t border-gray-200 bg-gray-50 mt-auto ${hideOnMobile ? 'hidden md:block' : ''}`}>
         <div className="container mx-auto px-4 py-4">
           <div className="hidden sm:flex items-center justify-between text-sm text-gray-500">
             <div className="flex gap-4">

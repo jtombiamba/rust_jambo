@@ -4,7 +4,7 @@ metadata:
   name: jambo
   namespace: argocd
 spec:
-  description: Jambo FapFap Game application workloads
+  description: Jambo Game application workloads
   sourceRepos:
     - https://github.com/jtombiamba/rust_jambo.git
   destinations:

@@ -9,6 +9,7 @@ import { getCachedConfig } from '../utils/configCache'
 import GameRules from './GameRules'
 import LeaderboardPanel from './LeaderboardPanel'
 import LanguageSwitcher from './LanguageSwitcher'
+import ToggleSwitch from './ToggleSwitch'
 
 function formatFreezeTime(seconds: number): string {
   if (seconds <= 0) return '0:00:00'
@@ -703,15 +704,11 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 >
                   {starting ? t('dashboard.startGameLoading') : t('dashboard.soloGame')}
                 </button>
-                <label className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
-                  <input
-                    type="checkbox"
-                    checked={stepByStep}
-                    onChange={(e) => onStepByStepChange(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 rounded"
-                  />
-                  <span className="text-sm text-gray-700">{t('game.stepByStep')}</span>
-                </label>
+                <ToggleSwitch
+                  checked={stepByStep}
+                  onChange={onStepByStepChange}
+                  label={t('game.stepByStep')}
+                />
                 <button
                   className="px-4 sm:px-6 py-2 sm:py-3 bg-purple-600 text-white text-sm sm:text-base font-semibold rounded-lg hover:bg-purple-700 disabled:opacity-50"
                   disabled={starting}

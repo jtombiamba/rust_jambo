@@ -2,7 +2,7 @@
 
 A full-stack, real-time trick-taking card game built with **Rust** and **React**. Supports solo play against AI bots, multiplayer games with invitations, persistent rooms with game runs, PayPal payments, and end-to-end observability.
 
-This project is a complete rewrite of the original Python/Django **FapFap** implementation, ported to Rust for performance, safety, and scalability.
+This project is a complete rewrite of the original Python/Django **Jambo** implementation, ported to Rust for performance, safety, and scalability.
 
 ---
 
