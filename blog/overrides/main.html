@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {% if page.meta and page.meta.title %}
+    {% set _title = page.meta.title ~ " - " ~ config.site_name %}
+  {% elif page.title and not page.is_homepage %}
+    {% set _title = (page.title | striptags) ~ " - " ~ config.site_name %}
+  {% else %}
+    {% set _title = config.site_name %}
+  {% endif %}
+  {% set _description = page.meta.description if page.meta and page.meta.description else config.site_description %}
+  {% set _image = config.site_url.rstrip("/") ~ "/images/color_logo.png" %}
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="{{ config.site_name }}" />
+  <meta property="og:title" content="{{ _title }}" />
+  <meta property="og:description" content="{{ _description }}" />
+  <meta property="og:url" content="{{ page.canonical_url }}" />
+  <meta property="og:image" content="{{ _image }}" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{{ _title }}" />
+  <meta name="twitter:description" content="{{ _description }}" />
+  <meta name="twitter:image" content="{{ _image }}" />
+{% endblock %}

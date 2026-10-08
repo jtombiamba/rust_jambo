@@ -641,7 +641,7 @@ function AppContent() {
             )}
           </div>
         </div>
-        <Footer />
+        <Footer hideOnMobile />
       </div>
     )
   }
