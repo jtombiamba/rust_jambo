@@ -104,8 +104,8 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_TLS: "false"
-      SMTP_FROM_EMAIL: noreply@fapfap.local
-      SMTP_FROM_NAME: "FapFap Game"
+      SMTP_FROM_EMAIL: noreply@jambo.local
+      SMTP_FROM_NAME: "Jambo Game"
       FREEZE_DURATION_SECS: 1800  # 86400
       # PayPal credentials come from the gitignored .env file (see .env.example).
       PAYPAL_CLIENT_ID: "${PAYPAL_CLIENT_ID:-}"
@@ -198,8 +198,8 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_TLS: "false"
-      SMTP_FROM_EMAIL: noreply@fapfap.local
-      SMTP_FROM_NAME: "FapFap Game"
+      SMTP_FROM_EMAIL: noreply@jambo.local
+      SMTP_FROM_NAME: "Jambo Game"
     expose:
       - "7000"
     restart: unless-stopped
@@ -249,8 +249,8 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_TLS: "false"
-      SMTP_FROM_EMAIL: noreply@fapfap.local
-      SMTP_FROM_NAME: "FapFap Game"
+      SMTP_FROM_EMAIL: noreply@jambo.local
+      SMTP_FROM_NAME: "Jambo Game"
       FREEZE_DURATION_SECS: 1800
       UNFREEZE_CREDIT_NO_PAYMENT: 50
       DEFAULT_CREDIT: 100

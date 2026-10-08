@@ -59,7 +59,7 @@ impl MailerConfig {
         let smtp_from_email =
             std::env::var("SMTP_FROM_EMAIL").unwrap_or_else(|_| "noreply@example.com".to_string());
         let smtp_from_name =
-            std::env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "FapFap Game".to_string());
+            std::env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "Jambo Game".to_string());
         let frontend_url =
             std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".to_string());
         let contact_to_email =

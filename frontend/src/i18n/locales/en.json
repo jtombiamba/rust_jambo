@@ -1,15 +1,16 @@
 {
   "common": {
-    "title": "FapFap Card Game",
+    "title": "Jambo Card Game",
     "loading": "Loading...",
     "dismiss": "Dismiss",
     "backToDashboard": "Back to Dashboard",
-    "backToLogin": "Back to login",
     "cancel": "Cancel",
     "close": "Close",
     "next": "Next",
     "prev": "Prev",
     "menu": "Menu",
+    "on": "ON",
+    "off": "OFF",
     "reconnecting": "Reconnecting to game server...",
     "cards": "cards",
     "deck": "Deck",
@@ -18,6 +19,7 @@
   },
   "auth": {
     "welcome": "Welcome",
+    "backToLogin": "Back to login",
     "createAccount": "Create an account",
     "createAccountBtn": "Create account",
     "creatingAccount": "Creating account...",
@@ -293,7 +295,7 @@
   "legal": {
     "title": "Legal mentions",
     "section1Title": "1. Site Editor",
-    "section1Text": "This website is edited by the FapFap Card Game team. For any inquiries, please use the Contact Us form available in the footer.",
+    "section1Text": "This website is edited by the Jambo Card Game team. For any inquiries, please use the Contact Us form available in the footer.",
     "section2Title": "2. Hosting",
     "section2Text": "The site is hosted on secure infrastructure. Technical specifications and hosting provider details are available upon request.",
     "section3Title": "3. Intellectual Property",

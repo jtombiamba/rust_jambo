@@ -125,7 +125,7 @@ test.describe('Special cards claim flow', () => {
 
   const startGame = async (page: import('@playwright/test').Page) => {
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible();
+    await expect(page.getByText('Jambo Card Game')).toBeVisible();
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible();
   };

@@ -1,15 +1,16 @@
 {
   "common": {
-    "title": "FapFap Card Game",
+    "title": "Jambo Card Game",
     "loading": "Chargement...",
     "dismiss": "Fermer",
     "backToDashboard": "Retour au tableau de bord",
-    "backToLogin": "Retour à la connexion",
     "cancel": "Annuler",
     "close": "Fermer",
     "next": "Suivant",
     "prev": "Précédent",
     "menu": "Menu",
+    "on": "ON",
+    "off": "OFF",
     "reconnecting": "Reconnexion au serveur de jeu...",
     "cards": "cartes",
     "deck": "Pioche",
@@ -18,6 +19,7 @@
   },
   "auth": {
     "welcome": "Bienvenue",
+    "backToLogin": "Retour à la connexion",
     "createAccount": "Créer un compte",
     "createAccountBtn": "Créer un compte",
     "creatingAccount": "Création du compte...",
@@ -293,7 +295,7 @@
   "legal": {
     "title": "Mentions légales",
     "section1Title": "1. Éditeur du site",
-    "section1Text": "Ce site est édité par l'équipe FapFap Card Game. Pour toute question, veuillez utiliser le formulaire de contact disponible en bas de page.",
+    "section1Text": "Ce site est édité par l'équipe Jambo Card Game. Pour toute question, veuillez utiliser le formulaire de contact disponible en bas de page.",
     "section2Title": "2. Hébergement",
     "section2Text": "Le site est hébergé sur une infrastructure sécurisée. Les spécifications techniques et les détails de l'hébergeur sont disponibles sur demande.",
     "section3Title": "3. Propriété intellectuelle",

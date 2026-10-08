@@ -127,8 +127,8 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_TLS: "false"
-      SMTP_FROM_EMAIL: noreply@fapfap.local
-      SMTP_FROM_NAME: "FapFap Game"
+      SMTP_FROM_EMAIL: noreply@jambo.local
+      SMTP_FROM_NAME: "Jambo Game"
     ports:
       - "5000:5000"
     volumes:
@@ -188,8 +188,8 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_TLS: "false"
-      SMTP_FROM_EMAIL: noreply@fapfap.local
-      SMTP_FROM_NAME: "FapFap Game"
+      SMTP_FROM_EMAIL: noreply@jambo.local
+      SMTP_FROM_NAME: "Jambo Game"
     volumes:
       - ../backend/migrations:/app/migrations:ro
     deploy:
@@ -242,8 +242,8 @@ services:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_TLS: "false"
-      SMTP_FROM_EMAIL: noreply@fapfap.local
-      SMTP_FROM_NAME: "FapFap Game"
+      SMTP_FROM_EMAIL: noreply@jambo.local
+      SMTP_FROM_NAME: "Jambo Game"
     volumes:
       - ../backend/migrations:/app/migrations:ro
     deploy:

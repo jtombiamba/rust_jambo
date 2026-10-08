@@ -8,15 +8,15 @@ export default function LanguageSwitcher() {
   }
 
   return (
-    <div className="flex gap-1">
+    <div className="inline-flex rounded-full bg-gray-200 p-1">
       {availableLanguages.map((lang) => (
         <button
           key={lang.code}
           onClick={() => setLanguage(lang.code)}
-          className={`px-2 py-1 text-xs font-semibold rounded ${
+          className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${
             language === lang.code
-              ? 'bg-blue-600 text-white'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              ? 'bg-white text-blue-600 shadow'
+              : 'text-gray-600 hover:text-gray-800'
           }`}
         >
           {lang.code.toUpperCase()}

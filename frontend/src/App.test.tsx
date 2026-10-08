@@ -58,7 +58,7 @@ describe('App', () => {
   it('renders the dashboard heading after loading', async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByText(/FapFap Card Game/i)).toBeInTheDocument();
+      expect(screen.getByText(/Jambo Card Game/i)).toBeInTheDocument();
     });
   });
 

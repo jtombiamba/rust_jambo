@@ -49,7 +49,7 @@ test.describe('Live quickie game — full round on the real backend', () => {
 
     // --- Start a quickie game against the real backend. ---
     await page.goto('/');
-    await expect(page.getByText('FapFap Card Game')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Jambo Card Game')).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: 'Start a quick game' }).click();
     await expect(page.getByText('Game Table')).toBeVisible({ timeout: 15000 });
 

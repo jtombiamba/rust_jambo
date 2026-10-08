@@ -25,7 +25,7 @@
 
 ## 1. Project Overview
 
-A real‑time, multiplayer card game (Jambo / FapFap Game) with:
+A real‑time, multiplayer card game (Jambo) with:
 
 - **Quick solo games**: A human vs. 3 AI bots playing a 5-card trick-taking game.
 - **Multiplayer games**: Up to 4 human players via invitations, game runs, and rooms.
