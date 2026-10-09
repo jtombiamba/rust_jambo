@@ -3,15 +3,14 @@ FROM rust:1.94-bookworm AS builder
 WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY templates ./templates
+COPY crates ./crates
 COPY migration ./migration
 # Build only service binaries (test binaries are feature-gated behind "load-tests")
 RUN cargo build --release \
-    --bin jambo-backend \
-    --bin ai-worker \
-    --bin scheduler-worker \
-    --bin admin-cli
+    -p jambo-server \
+    -p jambo-ai-worker \
+    -p jambo-scheduler-worker \
+    -p jambo-admin-cli
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -34,11 +33,10 @@ RUN groupadd -r -g "${GROUP_ID}" jambo \
 
 WORKDIR /app
 
-COPY --from=builder /usr/src/app/target/release/jambo-backend /usr/local/bin/jambo-backend
+COPY --from=builder /usr/src/app/target/release/jambo-server /usr/local/bin/jambo-server
 COPY --from=builder /usr/src/app/target/release/ai-worker /usr/local/bin/ai-worker
 COPY --from=builder /usr/src/app/target/release/scheduler-worker /usr/local/bin/scheduler-worker
 COPY --from=builder /usr/src/app/target/release/admin-cli /usr/local/bin/admin-cli
-COPY --from=builder --chown=jambo:jambo /usr/src/app/migration ./migration
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -52,4 +50,4 @@ STOPSIGNAL SIGTERM
 
 USER jambo
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["jambo-backend"]
+CMD ["jambo-server"]

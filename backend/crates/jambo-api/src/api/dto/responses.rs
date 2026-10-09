@@ -1,0 +1,268 @@
+use serde::Serialize;
+use uuid::Uuid;
+
+use jambo_types::cards::SpecialCards;
+use jambo_types::game::{MultiplayerCreationOutcome, PlayCardOutcome, QuickGameOutcome};
+pub use jambo_types::responses::{ApiErrorResponse, PlayerInfoDto};
+
+pub use jambo_domain::room::dto::{
+    ActiveRunResponse, CreateRunResponse, CurrentGameResponse, JoinRunResponse, RoomDetailResponse,
+    RoomListItem, RunListItem, StartNextGameResponse,
+};
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PlayCardResponse {
+    pub success: bool,
+    pub message: String,
+    pub card_id: Uuid,
+    pub next_turn: Option<Uuid>,
+    pub round_completed: bool,
+    pub game_ended: bool,
+    pub current_round: i32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct QuickGameResponse {
+    pub game_id: Uuid,
+    pub players: Vec<PlayerInfoDto>,
+    pub status: String,
+    pub current_turn: i32,
+    pub bet: i32,
+    pub max_players: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invite_expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deck_slots: Option<Vec<Option<i32>>>,
+    /// One-time WebSocket authentication token for anonymous users.
+    /// Present only when the user is not authenticated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ws_token: Option<String>,
+    pub step_by_step: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub special_cards: Option<SpecialCards>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct GameListItem {
+    pub id: Uuid,
+    pub status: String,
+    pub bet: i32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct MultiplayerGameResponse {
+    pub game_id: Uuid,
+    pub status: String,
+    pub bet: i32,
+    pub max_players: i16,
+    pub invite_expires_at: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AnonymousStatsResponse {
+    pub games_allowed: i32,
+    pub games_played: i32,
+    pub total_wins: i32,
+    pub credits: i32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RespondToInviteResponse {
+    pub success: bool,
+    pub message: String,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub player_count: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_players: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_status: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct InvitationItem {
+    pub invite_id: Uuid,
+    pub game_id: Uuid,
+    pub creator_pseudo: String,
+    pub bet: i32,
+    pub player_count: i64,
+    pub max_players: i32,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct InvitationsResponse {
+    pub invitations: Vec<InvitationItem>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UserSearchItem {
+    pub id: Uuid,
+    pub pseudo: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UserSearchResponse {
+    pub users: Vec<UserSearchItem>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UnfreezeOrderResponse {
+    pub order_id: String,
+    pub approval_url: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct UnfreezeCaptureResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TopupOrderResponse {
+    pub order_id: String,
+    pub approval_url: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TopupCaptureResponse {
+    pub success: bool,
+    pub message: String,
+    pub credit: i32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CashoutRequestResponse {
+    pub id: Uuid,
+    pub credits: i32,
+    pub amount_eur_cents: i32,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CashoutHistoryItem {
+    pub id: Uuid,
+    pub credits: i32,
+    pub amount_eur_cents: i32,
+    pub status: String,
+    pub paypal_email: String,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct CashoutHistoryResponse {
+    pub items: Vec<CashoutHistoryItem>,
+    pub total: u64,
+    pub page: u64,
+    pub per_page: u64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct AdvanceBotResponse {
+    pub success: bool,
+    pub card_played: i32,
+    pub next_player_id: Uuid,
+    pub next_is_bot: bool,
+    pub round_complete: bool,
+    pub game_ended: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct EvaluateRoundResponse {
+    pub success: bool,
+    pub round_number: i32,
+    pub winner_id: Uuid,
+    pub winner_position: i32,
+    pub game_ended: bool,
+}
+
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct PlayerActionRequest {
+    pub player_id: Uuid,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SendInvitesResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_errors: Option<u32>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SpectateTokenResponse {
+    pub token: String,
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct RoomCreatedResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub creator_id: Uuid,
+    pub invitation_code: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct SimpleSuccessResponse {
+    pub success: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ContactSentResponse {
+    pub message: String,
+}
+
+impl From<PlayCardOutcome> for PlayCardResponse {
+    fn from(o: PlayCardOutcome) -> Self {
+        PlayCardResponse {
+            success: true,
+            message: "Card played successfully".to_string(),
+            card_id: o.card_id,
+            next_turn: o.next_turn,
+            round_completed: o.round_completed,
+            game_ended: o.game_ended,
+            current_round: o.current_round,
+        }
+    }
+}
+
+impl From<QuickGameOutcome> for QuickGameResponse {
+    fn from(o: QuickGameOutcome) -> Self {
+        QuickGameResponse {
+            game_id: o.game_id,
+            players: o.players,
+            status: o.status,
+            current_turn: o.current_turn,
+            bet: o.bet,
+            max_players: o.max_players,
+            invite_expires_at: o.invite_expires_at,
+            deck_slots: o.deck_slots.map(|v| v.into_iter().map(Some).collect()),
+            ws_token: o.ws_token,
+            step_by_step: o.step_by_step,
+            special_cards: None,
+        }
+    }
+}
+
+impl From<MultiplayerCreationOutcome> for MultiplayerGameResponse {
+    fn from(o: MultiplayerCreationOutcome) -> Self {
+        MultiplayerGameResponse {
+            game_id: o.game_id,
+            status: o.status,
+            bet: o.bet,
+            max_players: o.max_players,
+            invite_expires_at: o.invite_expires_at,
+        }
+    }
+}

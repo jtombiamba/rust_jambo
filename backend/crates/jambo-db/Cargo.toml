@@ -1,0 +1,26 @@
+[package]
+name = "jambo-db"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "jambo_db"
+path = "src/lib.rs"
+
+[dependencies]
+jambo-core = { path = "../jambo-core" }
+jambo-types = { path = "../jambo-types" }
+migration = { path = "../../migration" }
+sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "schema-sync", "entity-registry", "macros", "with-chrono", "with-uuid", "tracing-spans"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+tracing = { version = "0.1", features = ["log"] }
+thiserror = "2.0"
+utoipa = { version = "5", features = ["uuid", "chrono", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }

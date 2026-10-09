@@ -41,7 +41,7 @@ repos:
     hooks:
       - id: fmt
         name: cargo fmt
-        args: ["--manifest-path", "backend/Cargo.toml", "--", "--check"]
+        args: ["--all", "--manifest-path", "backend/Cargo.toml", "--", "--check"]
         files: ^backend/
       - id: clippy
         name: cargo clippy
@@ -84,7 +84,7 @@ repos:
         name: Max 600 lines per .rs file
         entry: bash
         language: system
-        files: ^backend/src/.*\.rs$
+        files: ^backend/crates/.*\.rs$
         args:
           - -c
           - |
