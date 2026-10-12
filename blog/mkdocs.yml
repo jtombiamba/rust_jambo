@@ -70,6 +70,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Posts:
+      - Your AI Agent Shouldn't Be Able to rm -rf Production: blog/llm-agent-unix-permission-isolation.md
       - Debugging a 504 Gateway Timeout: blog/504-gateway-timeout-docker-multi-network.md
       - Configuring Promtail for Dynamic Log Discovery: blog/configuring-promtail-dynamic-log-discovery-loki.md
       - Database Backups for a Live Game: blog/database-backup-management.md

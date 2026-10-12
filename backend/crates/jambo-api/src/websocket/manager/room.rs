@@ -1,0 +1,96 @@
+use std::sync::Arc;
+use std::time::Instant;
+use uuid::Uuid;
+
+use super::WebSocketManager;
+use crate::websocket::connection::{
+    ConnectionId, MessageKind, TrackedConnection, WsMessage, WsSender,
+};
+use jambo_core::observability::metrics;
+use jambo_core::observability::CorrelationId;
+
+impl WebSocketManager {
+    /// Add a new WebSocket connection for a given room.
+    pub async fn add_room_connection(
+        &self,
+        room_id: Uuid,
+        sender: WsSender,
+        correlation_id: CorrelationId,
+    ) -> ConnectionId {
+        let mut inner = self.inner.write().await;
+        let connection_id = ConnectionId::new();
+
+        inner
+            .room_connections
+            .entry(room_id)
+            .or_default()
+            .push(TrackedConnection {
+                sender,
+                id: connection_id,
+                correlation_id,
+                last_activity: Instant::now(),
+                player_id: None,
+                player_position: None,
+                disconnected: false,
+                last_pong: Instant::now(),
+                spectator: false,
+                user_id: None,
+            });
+
+        metrics::WS_CONNECTIONS_ACTIVE.inc();
+        tracing::info!(
+            "Added room connection {} (correlation_id={}) for room {}",
+            connection_id.uuid(),
+            correlation_id,
+            room_id
+        );
+        connection_id
+    }
+
+    /// Remove a WebSocket connection for a room.
+    pub async fn remove_room_connection(&self, room_id: Uuid, connection_id: ConnectionId) {
+        let mut inner = self.inner.write().await;
+        if let Some(connections) = inner.room_connections.get_mut(&room_id) {
+            connections.retain(|c| c.id != connection_id);
+            if connections.is_empty() {
+                inner.room_connections.remove(&room_id);
+            }
+            metrics::WS_CONNECTIONS_ACTIVE.dec();
+            metrics::WS_DISCONNECTS_TOTAL.inc();
+            tracing::info!(
+                "Removed room connection {} for room {}",
+                connection_id.uuid(),
+                room_id
+            );
+        }
+    }
+
+    /// Broadcast a message to all connections of a specific room.
+    pub async fn broadcast_to_room(&self, room_id: Uuid, message: &str, kind: MessageKind) {
+        let targets = {
+            let inner = self.inner.read().await;
+            inner
+                .room_connections
+                .get(&room_id)
+                .map(|conns| {
+                    conns
+                        .iter()
+                        .map(|c| (c.id, c.sender.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        if targets.is_empty() {
+            return;
+        }
+
+        let msg = WsMessage {
+            payload: Arc::from(message),
+            kind,
+        };
+        let slow = Self::deliver(&msg, &targets);
+        for conn_id in slow {
+            self.remove_room_connection(room_id, conn_id).await;
+        }
+    }
+}

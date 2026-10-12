@@ -41,7 +41,7 @@ repos:
     hooks:
       - id: fmt
         name: cargo fmt
-        args: ["--manifest-path", "backend/Cargo.toml", "--", "--check"]
+        args: ["--all", "--manifest-path", "backend/Cargo.toml", "--", "--check"]
         files: ^backend/
       - id: clippy
         name: cargo clippy
@@ -84,14 +84,14 @@ repos:
         name: Max 600 lines per .rs file
         entry: bash
         language: system
-        files: ^backend/src/.*\.rs$
+        files: ^backend/crates/.*\.rs$
         args:
           - -c
           - |
             max=600
             for f in "$@"; do
             case "$f" in
-              *config.rs|*_tests.rs|*/tests/*|*test_helpers.rs) continue ;;
+              *config.rs|*tests.rs|*_tests.rs|*/tests/*|*test_helpers.rs) continue ;;
             esac
               lines=$(wc -l < "$f")
               if [ "$lines" -gt "$max" ]; then

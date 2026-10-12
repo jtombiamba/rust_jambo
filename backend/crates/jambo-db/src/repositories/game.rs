@@ -1,0 +1,541 @@
+use async_trait::async_trait;
+use sea_orm::{
+    sea_query::Expr, ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection,
+    DatabaseTransaction, DbErr, EntityTrait, QueryFilter, QueryOrder, Set, Value,
+};
+use serde_json::json;
+use uuid::Uuid;
+
+use crate::models::{game, player, Game, GameMode, GameStatus, Player};
+use crate::traits::GameRepoTrait;
+
+#[derive(Debug, Clone)]
+pub struct GameRepository {
+    pub(crate) connection: DatabaseConnection,
+}
+
+impl GameRepository {
+    pub fn new(connection: DatabaseConnection) -> Self {
+        Self { connection }
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn create(&self, bet: i32, auto: bool, step_by_step: bool) -> Result<Game, DbErr> {
+        let id = Uuid::now_v7();
+        let now = chrono::Utc::now();
+
+        let game_active = game::ActiveModel {
+            id: Set(id),
+            status: Set(GameStatus::Pending),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(auto),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(json!({})),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: ActiveValue::NotSet,
+            game_mode: Set(GameMode::Solo),
+            max_players: Set(4),
+            invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(step_by_step),
+            kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
+        };
+        let insert_result = game::Entity::insert(game_active)
+            .exec(&self.connection)
+            .await?;
+        let inserted_id = insert_result.last_insert_id;
+        let game = game::Entity::find_by_id(inserted_id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found after insertion".to_string()))?;
+        Ok(game)
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    #[allow(dead_code)]
+    pub async fn create_with_mode(
+        &self,
+        bet: i32,
+        game_mode: GameMode,
+        initial_status: GameStatus,
+    ) -> Result<Game, DbErr> {
+        let id = Uuid::now_v7();
+        let now = chrono::Utc::now();
+
+        let game_active = game::ActiveModel {
+            id: Set(id),
+            status: Set(initial_status),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(json!({})),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: ActiveValue::NotSet,
+            game_mode: Set(game_mode),
+            max_players: Set(4),
+            invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
+            kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
+        };
+        let insert_result = game::Entity::insert(game_active)
+            .exec(&self.connection)
+            .await?;
+        let inserted_id = insert_result.last_insert_id;
+        let game = game::Entity::find_by_id(inserted_id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found after insertion".to_string()))?;
+        Ok(game)
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    #[allow(dead_code)]
+    pub async fn create_with_mode_and_creator(
+        &self,
+        bet: i32,
+        game_mode: GameMode,
+        initial_status: GameStatus,
+        creator_id: Option<Uuid>,
+    ) -> Result<Game, DbErr> {
+        let id = Uuid::now_v7();
+        let now = chrono::Utc::now();
+
+        let game_active = game::ActiveModel {
+            id: Set(id),
+            status: Set(initial_status),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(json!({})),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: Set(creator_id),
+            game_mode: Set(game_mode),
+            max_players: Set(4),
+            invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
+            kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
+        };
+        let insert_result = game::Entity::insert(game_active)
+            .exec(&self.connection)
+            .await?;
+        let inserted_id = insert_result.last_insert_id;
+        let game = game::Entity::find_by_id(inserted_id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found after insertion".to_string()))?;
+        Ok(game)
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
+        game::Entity::find_by_id(id).one(&self.connection).await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_by_ids(&self, ids: &[Uuid]) -> Result<Vec<Game>, DbErr> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        game::Entity::find()
+            .filter(game::Column::Id.is_in(ids.iter().copied()))
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_active_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
+        game::Entity::find_by_id(id)
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .one(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn update_rank(&self, id: Uuid, rank: Option<i32>) -> Result<Game, DbErr> {
+        let mut active: game::ActiveModel = game::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found".to_string()))?
+            .into();
+        active.rank = Set(rank);
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn update_status(&self, id: Uuid, status: GameStatus) -> Result<Game, DbErr> {
+        let mut active: game::ActiveModel = game::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found".to_string()))?
+            .into();
+        active.status = Set(status);
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    #[allow(dead_code)]
+    pub async fn update_winner(&self, id: Uuid, winner_id: Option<Uuid>) -> Result<Game, DbErr> {
+        let mut active: game::ActiveModel = game::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found".to_string()))?
+            .into();
+        active.winner_id = Set(winner_id);
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    #[allow(dead_code)]
+    pub async fn update_player_positions(
+        &self,
+        id: Uuid,
+        player_id: Uuid,
+        position: i32,
+    ) -> Result<Game, DbErr> {
+        let game_model = game::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("Game not found".to_string()))?;
+
+        let current_positions = game_model.player_positions.clone();
+        let mut positions_map = current_positions.as_object().cloned().unwrap_or_default();
+        positions_map.insert(player_id.to_string(), json!(position));
+
+        let mut active: game::ActiveModel = game_model.into();
+        active.player_positions = Set(json!(positions_map));
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    #[allow(dead_code)]
+    pub async fn list_players(&self, game_id: Uuid) -> Result<Vec<Player>, DbErr> {
+        player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .order_by_asc(player::Column::Position)
+            .all(&self.connection)
+            .await
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_game_for_run_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        bet: i32,
+        creator_id: Option<Uuid>,
+        player_positions: serde_json::Value,
+        num_players: i16,
+        run_id: Uuid,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Utc::now();
+        game::Entity::insert(game::ActiveModel {
+            id: Set(game_id),
+            status: Set(GameStatus::Active),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: Set(Some(0)),
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(player_positions),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: Set(creator_id),
+            game_mode: Set(GameMode::Multiplayer),
+            max_players: Set(num_players),
+            invite_expires_at: ActiveValue::NotSet,
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: Set(Some(run_id)),
+            step_by_step: Set(false),
+            kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
+        })
+        .exec(txn)
+        .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_multiplayer_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        bet: i32,
+        creator_id: Uuid,
+        max_players: i16,
+        invite_expires_at: chrono::DateTime<chrono::Utc>,
+        player_positions: serde_json::Value,
+    ) -> Result<(), DbErr> {
+        let now = chrono::Utc::now();
+        game::Entity::insert(game::ActiveModel {
+            id: Set(game_id),
+            status: Set(GameStatus::Pending),
+            bet: Set(bet),
+            created_at: Set(now),
+            updated_at: Set(now),
+            finished_at: ActiveValue::NotSet,
+            rank: ActiveValue::NotSet,
+            roll: Set(1),
+            auto: Set(false),
+            winner_id: ActiveValue::NotSet,
+            player_positions: Set(player_positions),
+            current_winning_card: ActiveValue::NotSet,
+            current_winning_player_position: ActiveValue::NotSet,
+            creator_id: Set(Some(creator_id)),
+            game_mode: Set(GameMode::Multiplayer),
+            max_players: Set(max_players),
+            invite_expires_at: Set(Some(invite_expires_at)),
+            stall_warning_sent_at: ActiveValue::NotSet,
+            game_run_id: ActiveValue::NotSet,
+            step_by_step: Set(false),
+            kicked_players: Set(json!([])),
+            pending_claim_player_id: ActiveValue::NotSet,
+        })
+        .exec_without_returning(txn)
+        .await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn find_by_id_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        id: Uuid,
+    ) -> Result<Option<Game>, DbErr> {
+        game::Entity::find_by_id(id).one(txn).await
+    }
+
+    /// Atomically finish a game as the result of a special-card claim. The
+    /// compare-and-set on `status = active` is the concurrency guard: only one
+    /// claim can win, a concurrent finish affects 0 rows.
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn finish_by_claim_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        winner_id: Uuid,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, DbErr> {
+        let result = game::Entity::update_many()
+            .col_expr(
+                game::Column::Status,
+                Expr::cust_with_values(
+                    "$1::game_status",
+                    [Value::String(Some(GameStatus::Finished.to_string()))],
+                ),
+            )
+            .col_expr(
+                game::Column::WinnerId,
+                Expr::value(Value::Uuid(Some(winner_id))),
+            )
+            .col_expr(
+                game::Column::FinishedAt,
+                Expr::value(Value::ChronoDateTimeUtc(Some(now))),
+            )
+            .col_expr(
+                game::Column::UpdatedAt,
+                Expr::value(Value::ChronoDateTimeUtc(Some(now))),
+            )
+            .col_expr(
+                game::Column::PendingClaimPlayerId,
+                Expr::value(Value::Uuid(None)),
+            )
+            .filter(game::Column::Id.eq(game_id))
+            .filter(game::Column::Status.eq(GameStatus::Active))
+            .exec(txn)
+            .await?;
+        Ok(result.rows_affected)
+    }
+
+    /// Clear the pending special-card claim for `player_id`. Returns the number
+    /// of affected rows (0 when the claim was already resolved by someone else).
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn clear_pending_claim_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        player_id: Uuid,
+    ) -> Result<u64, DbErr> {
+        let result = game::Entity::update_many()
+            .col_expr(
+                game::Column::PendingClaimPlayerId,
+                Expr::value(Value::Uuid(None)),
+            )
+            .filter(game::Column::Id.eq(game_id))
+            .filter(game::Column::PendingClaimPlayerId.eq(player_id))
+            .exec(txn)
+            .await?;
+        Ok(result.rows_affected)
+    }
+}
+
+#[tracing::instrument(skip(txn))]
+pub async fn optimistic_update_round_state(
+    txn: &DatabaseTransaction,
+    game_id: Uuid,
+    new_rank: Option<i32>,
+    new_winning_card: Option<i32>,
+    new_winning_position: Option<i32>,
+    read_version: chrono::DateTime<chrono::Utc>,
+) -> Result<u64, DbErr> {
+    let result = game::Entity::update_many()
+        .col_expr(game::Column::Rank, Expr::value(Value::Int(new_rank)))
+        .col_expr(
+            game::Column::CurrentWinningCard,
+            Expr::value(Value::Int(new_winning_card)),
+        )
+        .col_expr(
+            game::Column::CurrentWinningPlayerPosition,
+            Expr::value(Value::Int(new_winning_position)),
+        )
+        .col_expr(
+            game::Column::UpdatedAt,
+            Expr::value(Value::ChronoDateTimeUtc(Some(chrono::Utc::now()))),
+        )
+        .filter(game::Column::Id.eq(game_id))
+        .filter(game::Column::UpdatedAt.eq(read_version))
+        .exec(txn)
+        .await?;
+    Ok(result.rows_affected)
+}
+
+/// Optimistically write the result of a completed round evaluation inside a
+/// transaction.
+///
+/// Performs a single `UPDATE` guarded by `read_version` so a concurrent
+/// modification between the caller's read and this write affects 0 rows
+/// (surfaced to the caller as `Ok(0)` for a retry/`VersionConflict`).
+///
+/// When `final_status` is `Some`, the `status` column is also written using an
+/// explicit `::game_status` CAST (required because `col_expr` sends a raw
+/// `Value::String`, which PostgreSQL otherwise interprets as `text`).
+#[tracing::instrument(skip(txn))]
+pub async fn optimistic_update_round_result_in_txn(
+    txn: &DatabaseTransaction,
+    game_id: Uuid,
+    winner_id: Uuid,
+    winner_position: i32,
+    new_roll: i32,
+    read_version: chrono::DateTime<chrono::Utc>,
+    final_status: Option<GameStatus>,
+) -> Result<u64, DbErr> {
+    let mut update = game::Entity::update_many()
+        .col_expr(
+            game::Column::WinnerId,
+            Expr::value(Value::Uuid(Some(winner_id))),
+        )
+        .col_expr(
+            game::Column::Rank,
+            Expr::value(Value::Int(Some(winner_position))),
+        )
+        .col_expr(game::Column::Roll, Expr::value(Value::Int(Some(new_roll))))
+        .col_expr(
+            game::Column::CurrentWinningCard,
+            Expr::value(Value::Int(None)),
+        )
+        .col_expr(
+            game::Column::CurrentWinningPlayerPosition,
+            Expr::value(Value::Int(None)),
+        )
+        .col_expr(
+            game::Column::UpdatedAt,
+            Expr::value(Value::ChronoDateTimeUtc(Some(chrono::Utc::now()))),
+        )
+        .filter(game::Column::Id.eq(game_id))
+        .filter(game::Column::UpdatedAt.eq(read_version))
+        .to_owned();
+
+    if let Some(status) = final_status {
+        update = update.col_expr(
+            game::Column::Status,
+            Expr::cust_with_values("$1::game_status", [Value::String(Some(status.to_string()))]),
+        );
+    }
+
+    let result = update.exec(txn).await?;
+    Ok(result.rows_affected)
+}
+
+#[async_trait]
+#[allow(dead_code)]
+impl GameRepoTrait for GameRepository {
+    async fn create(&self, bet: i32, auto: bool, step_by_step: bool) -> Result<Game, DbErr> {
+        self.create(bet, auto, step_by_step).await
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<Game>, DbErr> {
+        self.find_by_id(id).await
+    }
+
+    async fn update_rank(&self, id: Uuid, rank: Option<i32>) -> Result<Game, DbErr> {
+        self.update_rank(id, rank).await
+    }
+
+    async fn update_status(&self, id: Uuid, status: GameStatus) -> Result<Game, DbErr> {
+        self.update_status(id, status).await
+    }
+
+    async fn update_winner(&self, id: Uuid, winner_id: Option<Uuid>) -> Result<Game, DbErr> {
+        self.update_winner(id, winner_id).await
+    }
+
+    async fn list_players(&self, game_id: Uuid) -> Result<Vec<Player>, DbErr> {
+        self.list_players(game_id).await
+    }
+
+    async fn create_game_for_run_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        bet: i32,
+        creator_id: Option<Uuid>,
+        player_positions: serde_json::Value,
+        num_players: i16,
+        run_id: Uuid,
+    ) -> Result<(), DbErr> {
+        self.create_game_for_run_in_txn(
+            txn,
+            game_id,
+            bet,
+            creator_id,
+            player_positions,
+            num_players,
+            run_id,
+        )
+        .await
+    }
+}

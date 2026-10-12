@@ -1,0 +1,44 @@
+[package]
+name = "jambo-load-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+load-tests = []
+
+[[bin]]
+name = "load-test"
+path = "src/bin/load_test.rs"
+required-features = ["load-tests"]
+
+[[bin]]
+name = "http-load-test"
+path = "src/bin/http_load_test.rs"
+required-features = ["load-tests"]
+
+[[bin]]
+name = "ws-load-test"
+path = "src/bin/ws_load_test.rs"
+required-features = ["load-tests"]
+
+[dependencies]
+jambo-core = { path = "../jambo-core" }
+jambo-db = { path = "../jambo-db" }
+jambo-domain = { path = "../jambo-domain" }
+jambo-mailer = { path = "../jambo-mailer" }
+sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+anyhow = "1.0"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sysinfo = "0.31"
+tokio = { version = "1.0", features = ["full"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+rand = "0.10"

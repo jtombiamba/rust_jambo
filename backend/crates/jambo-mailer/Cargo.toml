@@ -1,0 +1,23 @@
+[package]
+name = "jambo-mailer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "jambo_mailer"
+path = "src/lib.rs"
+
+[dependencies]
+jambo-i18n = { path = "../jambo-i18n" }
+jambo-metrics = { path = "../jambo-metrics" }
+jambo-templates = { path = "../jambo-templates" }
+handlebars = "6"
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+tracing = { version = "0.1", features = ["log"] }
+
+[dev-dependencies]
+serial_test = "3"

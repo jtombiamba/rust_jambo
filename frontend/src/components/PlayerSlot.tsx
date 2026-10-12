@@ -117,7 +117,7 @@ const PlayerSlot: React.FC<PlayerSlotProps> = ({
       data-testid={`player-slot-${playerId}`}
     >
       {isCurrentTurn && <div className="turn-ring" data-testid={`turn-ring-${playerId}`} />}
-      <div className={`${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2 flex items-center gap-1`}>
+      <div className={`text-yellow-400 ${compact ? 'text-sm' : 'text-base sm:text-lg'} font-semibold mb-1 sm:mb-2 flex items-center gap-1`}>
         {name} {type === 'bot' && '🤖'}
         {isThinking && (
           <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse" title="thinking..." />

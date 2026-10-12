@@ -1,0 +1,39 @@
+[package]
+name = "jambo-domain"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "jambo_domain"
+path = "src/lib.rs"
+
+[features]
+testing = []
+
+[dependencies]
+jambo-core = { path = "../jambo-core" }
+jambo-types = { path = "../jambo-types" }
+jambo-db = { path = "../jambo-db" }
+jambo-mailer = { path = "../jambo-mailer" }
+sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "with-chrono", "with-uuid", "tracing-spans"] }
+actix-web = "4.6"
+lapin = { version = "4.0", features = ["tokio"] }
+redis = { version = "1.4", features = ["tokio-comp", "connection-manager"] }
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = { version = "0.1", features = ["log"] }
+futures = "0.3"
+rand = "0.10"
+async-trait = "0.1"
+anyhow = "1.0"
+thiserror = "2.0"
+opentelemetry = { version = "0.32", features = ["trace"] }
+tracing-opentelemetry = "0.33"
+utoipa = { version = "5", features = ["uuid", "chrono", "macros"] }
+
+[dev-dependencies]
+sea-orm = { version = "2.0.0", features = ["mock"] }

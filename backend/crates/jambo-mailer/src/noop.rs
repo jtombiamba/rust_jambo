@@ -1,0 +1,370 @@
+use async_trait::async_trait;
+use handlebars::Handlebars;
+use std::sync::Arc;
+
+use super::{
+    ContactFormEmail, FreezeExpiredEmail, InvitationEmail, MailerConfig, PasswordResetEmail,
+    StallKickedEmail, StallWarningEmail,
+};
+use crate::Mailer;
+use jambo_i18n::{Lang, Translator};
+
+pub struct NoopMailer {
+    pub(crate) handlebars: Arc<Handlebars<'static>>,
+    pub(crate) config: MailerConfig,
+    #[allow(dead_code)]
+    translator: Arc<Translator>,
+}
+
+impl NoopMailer {
+    pub fn new(config: MailerConfig) -> Result<Self, String> {
+        let mut handlebars = Handlebars::new();
+        handlebars.set_strict_mode(true);
+
+        handlebars
+            .register_template_string("en_password_reset", jambo_templates::en::PASSWORD_RESET)
+            .map_err(|e| format!("Failed to register en/password_reset template: {e}"))?;
+
+        handlebars
+            .register_template_string("fr_password_reset", jambo_templates::fr::PASSWORD_RESET)
+            .map_err(|e| format!("Failed to register fr/password_reset template: {e}"))?;
+
+        handlebars
+            .register_template_string("en_invitation", jambo_templates::en::INVITATION)
+            .map_err(|e| format!("Failed to register en/invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string("fr_invitation", jambo_templates::fr::INVITATION)
+            .map_err(|e| format!("Failed to register fr/invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string("en_freeze_expired", jambo_templates::en::FREEZE_EXPIRED)
+            .map_err(|e| format!("Failed to register en/freeze_expired template: {e}"))?;
+
+        handlebars
+            .register_template_string("fr_freeze_expired", jambo_templates::fr::FREEZE_EXPIRED)
+            .map_err(|e| format!("Failed to register fr/freeze_expired template: {e}"))?;
+
+        handlebars
+            .register_template_string("en_contact_form", jambo_templates::en::CONTACT_FORM)
+            .map_err(|e| format!("Failed to register en/contact_form template: {e}"))?;
+
+        handlebars
+            .register_template_string("fr_contact_form", jambo_templates::fr::CONTACT_FORM)
+            .map_err(|e| format!("Failed to register fr/contact_form template: {e}"))?;
+
+        handlebars
+            .register_template_string("en_stall_warning", jambo_templates::en::STALL_WARNING)
+            .map_err(|e| format!("Failed to register en/stall_warning template: {e}"))?;
+
+        handlebars
+            .register_template_string("fr_stall_warning", jambo_templates::fr::STALL_WARNING)
+            .map_err(|e| format!("Failed to register fr/stall_warning template: {e}"))?;
+
+        handlebars
+            .register_template_string("en_stall_kicked", jambo_templates::en::STALL_KICKED)
+            .map_err(|e| format!("Failed to register en/stall_kicked template: {e}"))?;
+
+        handlebars
+            .register_template_string("fr_stall_kicked", jambo_templates::fr::STALL_KICKED)
+            .map_err(|e| format!("Failed to register fr/stall_kicked template: {e}"))?;
+
+        handlebars
+            .register_template_string("en_room_invitation", jambo_templates::en::ROOM_INVITATION)
+            .map_err(|e| format!("Failed to register en/room_invitation template: {e}"))?;
+
+        handlebars
+            .register_template_string("fr_room_invitation", jambo_templates::fr::ROOM_INVITATION)
+            .map_err(|e| format!("Failed to register fr/room_invitation template: {e}"))?;
+
+        super::register_cashout_templates(&mut handlebars)?;
+
+        let translator = Arc::new(Translator::new());
+
+        Ok(Self {
+            handlebars: Arc::new(handlebars),
+            config,
+            translator,
+        })
+    }
+
+    fn template_name(&self, name: &str, lang: Lang) -> String {
+        format!("{}_{name}", lang.as_str())
+    }
+}
+
+#[async_trait]
+impl Mailer for NoopMailer {
+    async fn send_password_reset(
+        &self,
+        to_email: &str,
+        reset_link: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = PasswordResetEmail {
+            reset_link: reset_link.to_string(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("password_reset", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Password reset email for {to_email}:\nReset link: {reset_link}\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_invitation(
+        &self,
+        to_email: &str,
+        inviter_name: &str,
+        game_id: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let accept_link = format!(
+            "{}?invite_game_id={game_id}&invite_action=accept",
+            self.config.frontend_url
+        );
+        let decline_link = format!(
+            "{}?invite_game_id={game_id}&invite_action=decline",
+            self.config.frontend_url
+        );
+
+        let data = InvitationEmail {
+            inviter_name: inviter_name.to_string(),
+            game_id: game_id.to_string(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+            accept_link: accept_link.clone(),
+            decline_link: decline_link.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("invitation", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Invitation email for {to_email} from {inviter_name} (game {game_id}):\nAccept: {accept_link}\nDecline: {decline_link}\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_freeze_expired(
+        &self,
+        to_email: &str,
+        credit: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = FreezeExpiredEmail {
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+            credit,
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("freeze_expired", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Freeze expired email for {to_email} (credit={credit}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_contact_form(
+        &self,
+        name: &str,
+        email: &str,
+        subject: &str,
+        message: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = ContactFormEmail {
+            name: name.to_string(),
+            email: email.to_string(),
+            subject: subject.to_string(),
+            message: message.to_string(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("contact_form", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Contact form from {name} <{email}>, subject: {subject}:\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_stall_warning(
+        &self,
+        to_email: &str,
+        game_id: &str,
+        inactive_minutes: i64,
+        remaining_minutes: i64,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = StallWarningEmail {
+            game_id: game_id.to_string(),
+            inactive_minutes,
+            remaining_minutes,
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("stall_warning", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Stall warning for {to_email} (game {game_id}, inactive={inactive_minutes}min, remaining={remaining_minutes}min):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_stall_kicked(
+        &self,
+        to_email: &str,
+        game_id: &str,
+        bet: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = StallKickedEmail {
+            game_id: game_id.to_string(),
+            bet,
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("stall_kicked", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Stall kicked for {to_email} (game {game_id}, bet={bet}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_room_invitation(
+        &self,
+        to_email: &str,
+        inviter_name: &str,
+        room_name: &str,
+        invitation_code: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let join_link = format!(
+            "{}/rooms/join?code={invitation_code}",
+            self.config.frontend_url
+        );
+
+        let data = super::RoomInvitationEmail {
+            inviter_name: inviter_name.to_string(),
+            room_name: room_name.to_string(),
+            invitation_code: invitation_code.to_string(),
+            join_link: join_link.clone(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("room_invitation", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Room invitation for {to_email} from {inviter_name} to join \"{room_name}\" (code: {invitation_code})\nLink: {join_link}\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_cashout_requested(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::CashoutRequestedEmail {
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            paypal_email: paypal_email.to_string(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_requested", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Cashout requested email for {to_email} (credits={credits}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_cashout_rejected(
+        &self,
+        to_email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::CashoutRejectedEmail {
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_rejected", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Cashout rejected email for {to_email} (credits={credits}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_cashout_admin_alert(
+        &self,
+        to_email: &str,
+        pseudo: &str,
+        email: &str,
+        credits: i32,
+        amount_eur_cents: i32,
+        paypal_email: &str,
+    ) -> Result<(), String> {
+        let data = super::CashoutAdminAlertEmail {
+            pseudo: pseudo.to_string(),
+            email: email.to_string(),
+            credits,
+            amount_eur: super::format_cents(amount_eur_cents),
+            paypal_email: paypal_email.to_string(),
+        };
+
+        let html = self
+            .handlebars
+            .render("en_cashout_admin_alert", &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Cashout admin alert to {to_email} (player {pseudo}, credits={credits}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+}

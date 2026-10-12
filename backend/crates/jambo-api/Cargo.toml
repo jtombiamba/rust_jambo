@@ -1,0 +1,49 @@
+[package]
+name = "jambo-api"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "jambo_api"
+path = "src/lib.rs"
+
+[dependencies]
+jambo-core = { path = "../jambo-core" }
+jambo-types = { path = "../jambo-types" }
+jambo-db = { path = "../jambo-db" }
+jambo-domain = { path = "../jambo-domain" }
+jambo-mailer = { path = "../jambo-mailer" }
+actix-web = "4.6"
+actix-http = "3"
+actix-ws = "0.3"
+actix-rt = "2.9"
+sea-orm = { version = "2.0.0", features = ["sqlx-postgres", "runtime-tokio-rustls", "with-chrono", "with-uuid", "tracing-spans"] }
+lapin = { version = "4.0", features = ["tokio"] }
+redis = { version = "1.4", features = ["tokio-comp", "connection-manager"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+futures-util = "0.3"
+tracing = { version = "0.1", features = ["log"] }
+anyhow = "1.0"
+async-trait = "0.1"
+jsonwebtoken = "9"
+cookie = "0.18"
+sha2 = "0.10"
+hex = "0.4"
+config = "0.15"
+prometheus = "0.13"
+num_cpus = "1.16"
+sysinfo = "0.31"
+http = "1"
+utoipa = { version = "5", features = ["actix_extras", "uuid", "chrono", "macros"] }
+
+[dev-dependencies]
+sea-orm = { version = "2.0.0", features = ["mock"] }
+actix-rt = "2.9"
+jambo-domain = { path = "../jambo-domain", features = ["testing"] }
+jambo-test-helpers = { path = "../jambo-test-helpers" }

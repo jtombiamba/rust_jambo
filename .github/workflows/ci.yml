@@ -32,6 +32,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Install mold
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: 2.42.1
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -40,11 +45,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy (lib + bins, no test binaries)
-        run: cargo clippy --lib --bins -- -D warnings
-
-      - name: Clippy (test code only)
-        run: cargo clippy --tests -- -D warnings
+      - name: Clippy (workspace, all targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   backend-test:
     name: Backend tests
@@ -61,19 +63,24 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Install mold
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: 2.42.1
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend
 
-      - name: Run lib tests (fast — no test binaries)
-        run: cargo test --lib
+      - name: Run workspace tests (lib + doc + integration)
+        run: cargo test --workspace
 
-      - name: Run doc tests
-        run: cargo test --doc
+      - name: Build shipped binaries
+        run: cargo build --release -p jambo-server -p jambo-ai-worker -p jambo-scheduler-worker -p jambo-admin-cli
 
-      - name: Run integration tests (no test binaries)
-        run: cargo test --tests
+      - name: Build load-test binaries
+        run: cargo build --release -p jambo-load-tests --features load-tests
 
   backend-coverage:
     name: Backend coverage
@@ -90,6 +97,11 @@ jobs:
         with:
           components: clippy, rustfmt, llvm-tools-preview
 
+      - name: Install mold
+        uses: rui314/setup-mold@v1
+        with:
+          mold-version: 2.42.1
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -99,7 +111,7 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
 
       - name: Run coverage (gate on regression)
-        run: cargo llvm-cov --lib --fail-under-lines 40 --summary-only
+        run: cargo llvm-cov --workspace --fail-under-lines 40 --summary-only
 
   # ── Frontend (TypeScript) ───────────────────────────────────────
 

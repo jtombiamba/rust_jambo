@@ -1,0 +1,5 @@
+[build]
+rustflags = ["-C", "linker-features=-lld", "-C", "link-arg=-fuse-ld=mold"]
+
+[env]
+RUSTC_WRAPPER = "sccache"

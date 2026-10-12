@@ -485,7 +485,7 @@ const GameTable: React.FC<GameTableProps> = ({
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.2 }}
                         >
-                          <div className="text-gray-400">{t('common.slot')} {idx + 1}</div>
+                          <div className="text-gray-400">S{idx + 1}</div>
                         </motion.div>
                       )}
                     </AnimatePresence>
