@@ -3,31 +3,37 @@ pub mod messages;
 
 mod auth;
 pub(crate) mod connection;
+mod forwarding;
+mod game_state;
+mod incoming;
+mod membership;
+mod room;
 mod routing;
+mod user;
 
 pub use auth::{validate_game_token, validate_spectate_token, validate_ws_token};
 
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
-use actix_ws::{self, Message, Session};
-use futures_util::StreamExt;
-use serde_json::Value;
-use tracing::{debug, error, info, trace};
+use actix_ws;
+use tracing::info;
 use uuid::Uuid;
 
 use crate::auth::config::AuthConfig;
-use connection::{ConnectionId, WS_SEND_QUEUE_CAPACITY};
+use auth::{authenticate_ws_request, AuthContext};
+use connection::{ConnectionContext, WS_SEND_QUEUE_CAPACITY};
+use forwarding::spawn_forwarding_task;
+use incoming::spawn_incoming_handler;
 use jambo_core::observability::CorrelationId;
 use jambo_domain::messaging::RedisClient;
 use manager::WebSocketManager;
-use messages::{IncomingMessage, OutgoingMessage};
-
-mod game_state;
-use game_state::{send_game_state_snapshot, send_spectator_snapshot};
+use membership::enforce_participation;
+use messages::OutgoingMessage;
+use room::ws_room_handler;
+use user::ws_user_handler;
 
 /// WebSocket endpoint for a specific game.
 /// Path parameter: game_id (UUID)
 /// Query parameter: token (optional) — one-time game token for unauthenticated users
-#[allow(unused_mut)]
 pub async fn ws_handler(
     req: HttpRequest,
     stream: web::Payload,
@@ -42,49 +48,10 @@ pub async fn ws_handler(
         .cloned()
         .and_then(|r| r.get_ref().clone());
 
-    // Try auth cookie first, then fall back to one-time game token from query param
-    let token = req.cookie("Authorization").map(|c| c.value().to_string());
-    tracing::info!("[DEBUG] WebSocket connection attempt recovery of token");
-    let user_id = if token.is_some() {
-        tracing::info!(
-            "[DEBUG] WebSocket connection via token cookie for game {}",
-            game_id
-        );
-        validate_ws_token(token, auth_config.clone(), redis_client.clone()).await
-    } else {
-        tracing::info!(
-            "[DEBUG] WebSocket connection via token query params for game {}",
-            game_id
-        );
-        // Check for one-time game token in query parameter
-        let game_token = req
-            .query_string()
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .find(|(k, _)| *k == "token")
-            .map(|(_, v)| v.to_string());
-        if let Some(ref gt) = game_token {
-            tracing::info!("[DEBUG] WebSocket validating token for game {}", game_id);
-            let game_id_auth =
-                validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await;
-            if game_id_auth.is_some() {
-                game_id_auth
-            } else {
-                tracing::info!(
-                    "[DEBUG] WebSocket validating spectator token for game {}",
-                    game_id
-                );
-                validate_spectate_token(gt, game_id, auth_config.clone(), redis_client.clone())
-                    .await
-            }
-        } else {
-            tracing::warn!(
-                "[WARN] WebSocket connection via token: no query params for game {}",
-                game_id
-            );
-            None
-        }
-    };
+    let AuthContext {
+        user_id,
+        is_cookie_auth,
+    } = authenticate_ws_request(&req, game_id, auth_config, redis_client).await;
 
     if user_id.is_none() {
         tracing::warn!(
@@ -96,15 +63,20 @@ pub async fn ws_handler(
         ));
     }
 
+    // Cookie-authenticated connections must belong to this game (creator, accepted
+    // player, or pending invitee). Anonymous game-token and spectator connections
+    // are exempt from the participant check.
+    let authenticated_user_id = if is_cookie_auth { user_id } else { None };
+    let db = req
+        .app_data::<web::Data<sea_orm::DatabaseConnection>>()
+        .cloned();
+    enforce_participation(db.clone(), authenticated_user_id, game_id).await?;
+
     let correlation_id = req
         .extensions()
         .get::<CorrelationId>()
         .copied()
         .unwrap_or_else(CorrelationId::new);
-
-    let db = req
-        .app_data::<web::Data<sea_orm::DatabaseConnection>>()
-        .cloned();
 
     let ws_span = tracing::info_span!(
         "ws_connection",
@@ -114,15 +86,15 @@ pub async fn ws_handler(
     );
     let _span_guard = ws_span.enter();
 
-    let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
+    let (res, mut session, stream) = actix_ws::handle(&req, stream)?;
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let (tx, rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
 
     // Send a welcome message BEFORE registering the connection
     match serde_json::to_string(&OutgoingMessage::GameJoined { game_id }) {
         Ok(welcome_message) => {
             if let Err(e) = session.text(welcome_message).await {
-                error!(
+                tracing::error!(
                     "Failed to send welcome message, not registering connection: {}",
                     e
                 );
@@ -131,7 +103,7 @@ pub async fn ws_handler(
             info!("Sent welcome message for game {}", game_id);
         }
         Err(e) => {
-            error!(
+            tracing::error!(
                 "Failed to serialize welcome message, not registering: {}",
                 e
             );
@@ -142,233 +114,27 @@ pub async fn ws_handler(
     // Register the connection AFTER successful welcome message
     let connection_id = manager.add_connection(game_id, tx, correlation_id).await;
 
-    // Spawn a task that forwards messages from the manager to the WebSocket
-    let mut session_clone = session.clone();
-    let manager_clone_for_forwarding = manager.clone();
-    let connection_id_for_forwarding = connection_id;
-    let cid_for_forward = correlation_id;
-    let fwd_span = tracing::info_span!(
-        "ws_forward",
-        correlation_id = %cid_for_forward,
-        game_id = %game_id,
-        connection_id = %connection_id_for_forwarding.uuid(),
-    );
-    actix_rt::spawn(async move {
-        let _guard = fwd_span.enter();
-        info!(
-            "Message forwarding task started for connection {}",
-            connection_id_for_forwarding.uuid()
-        );
-        while let Some(msg) = rx.recv().await {
-            jambo_core::observability::metrics::WS_SEND_QUEUE_DEPTH.observe(rx.len() as f64);
-            trace!(
-                "Forwarding message to connection {}: {}",
-                connection_id_for_forwarding.uuid(),
-                msg.payload
-            );
-            if let Err(e) = session_clone.text(msg.payload.as_ref()).await {
-                error!(
-                    "Failed to send WebSocket message to connection {}: {}",
-                    connection_id_for_forwarding.uuid(),
-                    e
-                );
-                manager_clone_for_forwarding
-                    .force_disconnect(game_id, connection_id_for_forwarding)
-                    .await;
-                break;
-            }
-        }
-        info!(
-            "Message forwarding task ended for connection {} (channel closed)",
-            connection_id_for_forwarding.uuid()
-        );
-    });
-
-    // Spawn a task that handles incoming messages from the client
-    let manager_clone = manager.clone();
-    let db_clone = db.clone();
-    let cid_for_handler = correlation_id;
-    let handler_span = tracing::info_span!(
-        "ws_incoming",
-        correlation_id = %cid_for_handler,
-        game_id = %game_id,
-        connection_id = %connection_id.uuid(),
-    );
-    actix_rt::spawn(async move {
-        let _guard = handler_span.enter();
-        let mut session = session;
-        info!(
-            "Incoming message handler started for connection {}",
-            connection_id.uuid()
-        );
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(msg) => match msg {
-                    Message::Text(text) => {
-                        debug!(
-                            "Received text message from connection {}: {}",
-                            connection_id.uuid(),
-                            text
-                        );
-                        if let Err(e) = handle_message(
-                            &mut session,
-                            &text,
-                            game_id,
-                            connection_id,
-                            &manager_clone,
-                            db_clone.clone(),
-                        )
-                        .await
-                        {
-                            error!(
-                                "Error handling message for connection {}: {}",
-                                connection_id.uuid(),
-                                e
-                            );
-                        }
-                    }
-                    Message::Close(reason) => {
-                        info!(
-                            "WebSocket closed for game {}, connection {}: {:?}",
-                            game_id,
-                            connection_id.uuid(),
-                            reason
-                        );
-                        break;
-                    }
-                    Message::Ping(bytes) => {
-                        trace!("Received ping from connection {}", connection_id.uuid());
-                        if let Err(e) = session.pong(&bytes).await {
-                            error!(
-                                "Failed to send pong for connection {}: {}",
-                                connection_id.uuid(),
-                                e
-                            );
-                        }
-                    }
-                    Message::Pong(_) => {
-                        trace!("Received pong from connection {}", connection_id.uuid());
-                        manager_clone.update_pong(game_id, connection_id).await;
-                    }
-                    _ => {}
-                },
-                Err(e) => {
-                    error!(
-                        "WebSocket stream error for connection {}: {}",
-                        connection_id.uuid(),
-                        e
-                    );
-                    break;
-                }
-            }
-        }
-        // Clean up connection on close
-        info!(
-            "Stream ended for connection {}, cleaning up",
-            connection_id.uuid()
-        );
-        manager.remove_connection(game_id, connection_id).await;
-        info!(
-            "Connection {} cleaned up for game {}",
-            connection_id.uuid(),
-            game_id
-        );
-    });
-
-    Ok(res)
-}
-
-async fn handle_message(
-    session: &mut Session,
-    text: &str,
-    game_id: Uuid,
-    connection_id: ConnectionId,
-    manager: &web::Data<WebSocketManager>,
-    db: Option<web::Data<sea_orm::DatabaseConnection>>,
-) -> Result<(), anyhow::Error> {
-    let span = tracing::info_span!(
-        "ws_message",
-        game_id = %game_id,
-    );
-    let _guard = span.enter();
-
-    debug!("Parsing message: {}", text);
-    match serde_json::from_str::<IncomingMessage>(text) {
-        Ok(msg) => {
-            debug!("Successfully parsed message as {:?}", msg);
-            match msg {
-                IncomingMessage::Ping => {
-                    trace!("Processing ping");
-                    let response = OutgoingMessage::Pong;
-                    session.text(serde_json::to_string(&response)?).await?;
-                }
-                IncomingMessage::JoinGame {
-                    game_id: join_id,
-                    player_id,
-                    player_position,
-                    spectator,
-                } => {
-                    trace!("Processing join game: {}", join_id);
-                    if join_id != game_id {
-                        tracing::warn!(
-                            "Client attempted to join game {} but connected to {}",
-                            join_id,
-                            game_id
-                        );
-                    }
-                    if spectator {
-                        // Read-only spectator join: public state only, no player identity.
-                        manager
-                            .mark_spectator_for_connection(game_id, connection_id)
-                            .await;
-                        if let Some(db) = &db {
-                            send_spectator_snapshot(manager.get_ref(), db, game_id).await;
-                        }
-                    } else if let (Some(pid), Some(pos)) = (player_id, player_position) {
-                        // Associate the identity with THIS connection (not the most
-                        // recently added one) so a player's join is never mis-attributed
-                        // to a spectator or stale reconnect connection.
-                        manager
-                            .set_player_for_connection(game_id, connection_id, pid, pos)
-                            .await;
-                        // Send current game state snapshot to the newly connected player
-                        if let Some(db) = &db {
-                            send_game_state_snapshot(manager.get_ref(), db, game_id, pid, pos)
-                                .await;
-                        }
-                    }
-                    let response = OutgoingMessage::GameJoined { game_id };
-                    session.text(serde_json::to_string(&response)?).await?;
-                }
-                IncomingMessage::LeaveGame => {
-                    tracing::info!("Client left game {}", game_id);
-                }
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Failed to parse incoming message: {}; text: {}", e, text);
-            // Fallback to legacy command format for compatibility
-            let value: Value = serde_json::from_str(text)?;
-            let command = value.get("command").and_then(Value::as_str);
-            match command {
-                Some("ping") => {
-                    trace!("Fallback parsing: ping command");
-                    let response = OutgoingMessage::Pong;
-                    session.text(serde_json::to_string(&response)?).await?;
-                }
-                _ => {
-                    trace!("Fallback parsing: unknown command");
-                    let response = OutgoingMessage::Error {
-                        message: "unknown command".to_string(),
-                        source: "ws:unknown_command".to_string(),
-                    };
-                    session.text(serde_json::to_string(&response)?).await?;
-                }
-            }
-        }
+    // Record the authenticated identity on the connection (used for ownership and
+    // single-session enforcement in `set_player_for_connection`).
+    if let Some(uid) = authenticated_user_id {
+        manager
+            .set_connection_user(game_id, connection_id, uid)
+            .await;
     }
 
-    Ok(())
+    let ctx = ConnectionContext {
+        game_id,
+        connection_id,
+        correlation_id,
+        user_id: authenticated_user_id,
+    };
+
+    // Spawn a task that forwards messages from the manager to the WebSocket
+    spawn_forwarding_task(manager.clone(), session.clone(), rx, ctx);
+    // Spawn a task that handles incoming messages from the client
+    spawn_incoming_handler(manager.clone(), db, session, stream, ctx);
+
+    Ok(res)
 }
 
 pub fn scope() -> actix_web::Scope {
@@ -376,198 +142,4 @@ pub fn scope() -> actix_web::Scope {
         .service(web::resource("/me").route(web::get().to(ws_user_handler)))
         .service(web::resource("/room/{room_id}").route(web::get().to(ws_room_handler)))
         .service(web::resource("/{game_id}").route(web::get().to(ws_handler)))
-}
-
-pub async fn ws_room_handler(
-    req: HttpRequest,
-    stream: web::Payload,
-    room_id: web::Path<Uuid>,
-    manager: web::Data<WebSocketManager>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let room_id = room_id.into_inner();
-
-    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
-    let token = req.cookie("Authorization").map(|c| c.value().to_string());
-    let redis_client = req
-        .app_data::<web::Data<Option<RedisClient>>>()
-        .cloned()
-        .and_then(|r| r.get_ref().clone());
-    let user_id = validate_ws_token(token, auth_config, redis_client).await;
-    if user_id.is_none() {
-        tracing::warn!(
-            "Unauthenticated WebSocket connection attempt for room {}",
-            room_id
-        );
-        return Err(actix_web::error::ErrorUnauthorized(
-            "Authentication required",
-        ));
-    }
-
-    let correlation_id = req
-        .extensions()
-        .get::<CorrelationId>()
-        .copied()
-        .unwrap_or_else(CorrelationId::new);
-
-    let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
-
-    // Send welcome BEFORE registering
-    if let Err(e) = session
-        .text(serde_json::json!({"type": "room_joined", "room_id": room_id}).to_string())
-        .await
-    {
-        tracing::error!("Failed to send room welcome, not registering: {}", e);
-        return Ok(res);
-    }
-
-    let connection_id = manager
-        .add_room_connection(room_id, tx, correlation_id)
-        .await;
-
-    let mut session_clone = session.clone();
-    let manager_clone = manager.clone();
-    actix_rt::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if let Err(e) = session_clone.text(msg.payload.as_ref()).await {
-                tracing::error!(
-                    "Failed to forward to room connection {}: {}",
-                    connection_id.uuid(),
-                    e
-                );
-                manager_clone
-                    .remove_room_connection(room_id, connection_id)
-                    .await;
-                break;
-            }
-        }
-    });
-
-    actix_rt::spawn(async move {
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(actix_ws::Message::Ping(bytes)) => {
-                    let _ = session.pong(&bytes).await;
-                }
-                Ok(actix_ws::Message::Close(reason)) => {
-                    tracing::info!("Room WS closed for room {}: {:?}", room_id, reason);
-                    break;
-                }
-                Err(e) => {
-                    tracing::error!("Room WS stream error: {}", e);
-                    break;
-                }
-                _ => {}
-            }
-        }
-        manager.remove_room_connection(room_id, connection_id).await;
-    });
-
-    Ok(res)
-}
-
-/// WebSocket endpoint for a single authenticated user.
-/// Used to push user-scoped events (e.g. game invitations) in real time.
-pub async fn ws_user_handler(
-    req: HttpRequest,
-    stream: web::Payload,
-    manager: web::Data<WebSocketManager>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
-    let token = req.cookie("Authorization").map(|c| c.value().to_string());
-    let redis_client = req
-        .app_data::<web::Data<Option<RedisClient>>>()
-        .cloned()
-        .and_then(|r| r.get_ref().clone());
-    let user_id = validate_ws_token(token, auth_config, redis_client).await;
-    if user_id.is_none() {
-        tracing::warn!("Unauthenticated user WebSocket connection attempt");
-        return Err(actix_web::error::ErrorUnauthorized(
-            "Authentication required",
-        ));
-    }
-    let user_id = user_id.unwrap();
-    info!("User WebSocket connection established for user {}", user_id);
-
-    let correlation_id = req
-        .extensions()
-        .get::<CorrelationId>()
-        .copied()
-        .unwrap_or_else(CorrelationId::new);
-
-    let (res, mut session, mut stream) = actix_ws::handle(&req, stream)?;
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
-
-    if let Err(e) = session
-        .text(serde_json::json!({"type": "user_joined", "user_id": user_id}).to_string())
-        .await
-    {
-        tracing::error!("Failed to send user welcome, not registering: {}", e);
-        return Ok(res);
-    }
-
-    let connection_id = manager
-        .add_user_connection(user_id, tx, correlation_id)
-        .await;
-    info!(
-        "User WebSocket connection registered for user {} with connection ID {}",
-        user_id,
-        connection_id.uuid()
-    );
-
-    let mut session_clone = session.clone();
-    let manager_clone = manager.clone();
-    actix_rt::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if let Err(e) = session_clone.text(msg.payload.as_ref()).await {
-                tracing::error!(
-                    "Failed to forward to user connection {}: {}",
-                    connection_id.uuid(),
-                    e
-                );
-                manager_clone
-                    .remove_user_connection(user_id, connection_id)
-                    .await;
-                break;
-            }
-        }
-    });
-
-    actix_rt::spawn(async move {
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(actix_ws::Message::Text(text)) => {
-                    if let Ok(IncomingMessage::Ping) =
-                        serde_json::from_str::<IncomingMessage>(&text)
-                    {
-                        let response = OutgoingMessage::Pong;
-                        let _ = session
-                            .text(serde_json::to_string(&response).unwrap_or_default())
-                            .await;
-                        manager.update_user_pong(user_id, connection_id).await;
-                    }
-                }
-                Ok(actix_ws::Message::Ping(bytes)) => {
-                    let _ = session.pong(&bytes).await;
-                }
-                Ok(actix_ws::Message::Pong(_)) => {
-                    manager.update_user_pong(user_id, connection_id).await;
-                }
-                Ok(actix_ws::Message::Close(reason)) => {
-                    tracing::info!("User WS closed for user {}: {:?}", user_id, reason);
-                    break;
-                }
-                Err(e) => {
-                    tracing::error!("User WS stream error: {}", e);
-                    break;
-                }
-                _ => {}
-            }
-        }
-        manager.remove_user_connection(user_id, connection_id).await;
-    });
-
-    Ok(res)
 }

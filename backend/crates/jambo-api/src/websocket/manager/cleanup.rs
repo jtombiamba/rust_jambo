@@ -108,6 +108,12 @@ impl WebSocketManager {
         // Publish PlayerDisconnected events for expired game connections
         for (game_id, player_id, position) in expired_players {
             drop(inner);
+            tracing::info!(
+                "Player {} (position {}) disconnected from game {} (stale/heartbeat timeout)",
+                player_id,
+                position,
+                game_id
+            );
             let event = jambo_domain::messaging::events::GameEvent::PlayerDisconnected {
                 game_id,
                 player_id,

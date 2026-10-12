@@ -300,7 +300,8 @@ function AppContent() {
     setCardError(null);
     setPlayingCard(cardIndex);
     const idempotencyKey = generateIdempotencyKey();
-    axios.post(`/api/game/${gameId}/play`, {
+    const tokenParam = wsToken ? `?token=${wsToken}` : '';
+    axios.post(`/api/game/${gameId}/play${tokenParam}`, {
       player_id: playerId,
       card_index: cardIndex,
     }, { headers: { 'X-Idempotency-Key': idempotencyKey } })

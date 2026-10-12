@@ -11,7 +11,7 @@
 7. [AI Worker Mechanisms](#7-ai-worker-mechanisms)
 8. [Scheduler Worker Mechanisms](#8-scheduler-worker-mechanisms)
 9. [Frontend Components & Wirings](#9-frontend-components--wirings)
-10. [The GameOrchestrator](#10-the-gameorchestrator)
+10. [Game Service Layer](#10-game-service-layer)
 11. [Cache Mechanisms](#11-cache-mechanisms)
 12. [Scalability Mechanisms](#12-scalability-mechanisms)
 13. [Fallback Mechanisms](#13-fallback-mechanisms)
@@ -74,16 +74,17 @@ rank = index % 8    (3=0, 4=1, 5=2, 6=3, 7=4, 8=5, 9=6, 10=7)
 KORA = index % 8 == 0
 ```
 
-### Binary Targets (5)
+### Binary Targets (5 crates, 7 binaries)
 
-| Binary | Source | Role |
-|--------|--------|------|
-| `jambo-backend` | `main.rs` | HTTP/WS server, route registration, Prometheus metrics |
-| `ai-worker` | `bin/ai_worker.rs` | Standalone RabbitMQ consumer for bot moves |
-| `scheduler-worker` | `bin/scheduler_worker.rs` | Background task runner (7 periodic tasks) |
-| `load-test` | `bin/load_test.rs` | Full‑stack load testing tool |
-| `http-load-test` | `bin/http_load_test.rs` | HTTP‑only load testing |
-| `ws-load-test` | `bin/ws_load_test.rs` | WebSocket‑only load testing |
+| Binary | Crate | Source |
+|--------|-------|--------|
+| `jambo-server` | `jambo-server` | `crates/jambo-server/src/main.rs` — HTTP/WS server, routes, Prometheus metrics |
+| `ai-worker` | `jambo-ai-worker` | `crates/jambo-ai-worker/src/main.rs` — RabbitMQ consumer for bot moves |
+| `scheduler-worker` | `jambo-scheduler-worker` | `crates/jambo-scheduler-worker/src/main.rs` — background task runner |
+| `admin-cli` | `jambo-admin-cli` | `crates/jambo-admin-cli/src/main.rs` — admin CLI |
+| `load-test` | `jambo-load-tests` | `crates/jambo-load-tests/src/bin/load_test.rs` (feature `load-tests`) |
+| `http-load-test` | `jambo-load-tests` | `crates/jambo-load-tests/src/bin/http_load_test.rs` (feature `load-tests`) |
+| `ws-load-test` | `jambo-load-tests` | `crates/jambo-load-tests/src/bin/ws_load_test.rs` (feature `load-tests`) |
 
 ---
 
@@ -91,226 +92,283 @@ KORA = index % 8 == 0
 
 ### 2.1 High‑Level System Overview
 
-```
-                          ┌──────────────────────────────────────────────────────────┐
-                          │                    Docker Compose                        │
-                          │  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
-                          │  │PostgreSQL│  │  Redis   │  │ RabbitMQ │               │
-                          │  └────┬─────┘  └────┬─────┘  └────┬─────┘               │
-                          └───────┼─────────────┼─────────────┼─────────────────────┘
-                                  │             │             │
-        ┌─────────────────────────┼─────────────┼─────────────┼──────────────────┐
-        │                   Rust Backend (jambo-backend)                          │
-        │                                                                         │
-        │  ┌──────────┐   ┌──────────────┐   ┌───────────┐   ┌───────────────┐  │
-        │  │   API     │──>│   Game       │──>│   Game    │──>│  Database     │  │
-        │  │ Handlers  │   │ Orchestrator │   │  Service  │   │  (SeaORM)     │  │
-        │  └──────────┘   └──────┬───────┘   └─────┬─────┘   └───────────────┘  │
-        │                        │                 │                             │
-        │              ┌─────────┼─────────────────┼──────────┐                  │
-        │              ▼         ▼                 ▼          ▼                  │
-        │     ┌────────────┐ ┌──────────┐  ┌────────────┐ ┌───────────┐         │
-        │     │BotScheduler│ │  Redis   │  │  WebSocket │ │  Auth     │         │
-        │     │(RabbitMQ)  │ │  Client  │  │  Manager   │ │Middleware │         │
-        │     └─────┬──────┘ └──────────┘  └─────┬──────┘ └───────────┘         │
-        └───────────┼────────────────────────────┼──────────────────────────────┘
-                    │                            │
-           ┌────────┴────────┐          ┌────────┴────────┐
-           │   AI Worker     │          │    Frontend     │
-           │  (RabbitMQ      │          │  (React/TS)     │
-           │   consumer)     │          │                 │
-           └─────────────────┘          │  Zustand stores │
-                                        │  WebSocket hook │
-                                        └─────────────────┘
+```mermaid
+flowchart LR
+  subgraph infra["Docker Compose"]
+    pg[("PostgreSQL")]
+    redis[("Redis")]
+    rabbit[("RabbitMQ")]
+  end
+
+  subgraph backend["Rust Backend (jambo-server)"]
+    api["API Handlers"]
+    orch["Game Orchestrator / GameService"]
+    db["Database (SeaORM)"]
+    bots["BotScheduler (RabbitMQ)"]
+    redisc["Redis Client"]
+    ws["WebSocket Manager"]
+    auth["Auth Middleware"]
+    api --> orch --> db
+    orch --> bots & redisc & ws & auth
+  end
+
+  aiworker["AI Worker (RabbitMQ consumer)"]
+  frontend["Frontend (React/TS) — Zustand stores + WebSocket hook"]
+
+  infra --> backend
+  rabbit --> aiworker
+  ws --> frontend
 ```
 
-### 2.2 Backend Internal Module Graph
+### 2.2 Backend Crate Dependency Graph
 
+The backend is a Cargo **workspace** of 15 crates plus the `migration` crate
+(`backend/Cargo.toml`: `members = ["crates/*", "migration"]`). Edges point from
+a crate to the workspace crates it must compile against (`A --> B` = "A depends
+on B").
+
+```mermaid
+graph TD
+  subgraph leaf["Leaf crates (no internal deps)"]
+    types["jambo-types"]
+    i18n["jambo-i18n"]
+    metrics["jambo-metrics"]
+    templates["jambo-templates"]
+    migration["migration"]
+  end
+
+  subgraph libs["Library crates"]
+    core["jambo-core"] --> types & i18n & metrics
+    mailer["jambo-mailer"] --> i18n & metrics & templates
+    db["jambo-db"] --> core & types & migration
+    domain["jambo-domain"] --> core & types & db & mailer
+    api["jambo-api"] --> core & types & db & domain & mailer
+  end
+
+  subgraph bins["Binary crates"]
+    server["jambo-server"] --> api & core & db & domain & mailer
+    aiworker["jambo-ai-worker"] --> api & core
+    scheduler["jambo-scheduler-worker"] --> core & db & domain & mailer
+    admincli["jambo-admin-cli"] --> core & db
+    loadtests["jambo-load-tests"] --> core & db & domain & mailer
+  end
+
+  subgraph tests["Test support"]
+    testhelpers["jambo-test-helpers"] --> domain & db & core & mailer
+  end
+
+  api -. "dev" .-> testhelpers
+  api -. "dev" .-> domain
 ```
-                               ┌───────────────────────┐
-                               │       main.rs         │
-                               │  (bootstrap + routes) │
-                               └───────────┬───────────┘
-                                           │
-                 ┌─────────────────────────┼─────────────────────────┐
-                 │                         │                         │
-        ┌────────▼────────┐      ┌────────▼────────┐       ┌────────▼────────┐
-        │   api/          │      │   auth/          │       │  i18n/          │
-        │  (16 modules)   │      │  (jwt,middleware)│       │ (translations)  │
-        └────────┬────────┘      └─────────────────┘       └─────────────────┘
-                 │
-    ┌────────────┼────────────┬──────────────┬──────────────┐
-    │            │            │              │              │
-    ▼            ▼            ▼              ▼              ▼
-┌───────┐  ┌──────────┐  ┌────────┐  ┌───────────┐  ┌──────────┐
-│game/  │  │websocket/│  │cache/  │  │messaging/ │  │database/ │
-│orches-│  │manager   │  │UserCache│  │RabbitMQ   │  │models/   │
-│trator │  │+ sharded │  │+ leader-│  │+ Redis    │  │reposi-   │
-│+ svc  │  │subscriber│  │board    │  │+ events   │  │tories    │
-└───┬───┘  └──────────┘  └────────┘  └───────────┘  └──────────┘
-    │
-    ├─ GameService (transactional engine)
-    │    ├─ gameplay.rs        (3-retry optimistic lock card play)
-    │    ├─ evaluation.rs      (round winner + KORA detection)
-    │    ├─ creation.rs        (game creation + credit freeze)
-    │    ├─ lifecycle.rs       (start/cancel/kick_player)
-    │    ├─ recovery.rs        (stalled game detection + recovery)
-    │    ├─ caching.rs         (game state Redis cache)
-    │    ├─ invites.rs         (multiplayer invite lifecycle)
-    │    ├─ events.rs          (Redis event publishing)
-    │    └─ ai_task.rs         (AITask construction)
-    ├─ bot_scheduler.rs        (RabbitMQ dispatch + sync fallback)
-    └─ worker_core.rs          (process_bot_move shared logic)
-```
+
+| Crate | Role | Workspace deps |
+|-------|------|----------------|
+| `jambo-types` | Shared DTOs, cards, constants | - |
+| `jambo-i18n` | Translations | - |
+| `jambo-metrics` | Prometheus registry/init | - |
+| `jambo-templates` | Handlebars email templates | - |
+| `migration` | SeaORM migrations | - |
+| `jambo-core` | Config, auth utils, observability, i18n, payment | types, i18n, metrics |
+| `jambo-mailer` | Email queue + SMTP/noop mailer | i18n, metrics, templates |
+| `jambo-db` | SeaORM entities + repositories | core, types, migration |
+| `jambo-domain` | Game engine, rooms, messaging, cache | core, types, db, mailer |
+| `jambo-api` | HTTP handlers, websocket, worker | core, types, db, domain, mailer |
+| `jambo-server` | API binary (bootstrap + routes) | api, core, db, domain, mailer |
+| `jambo-ai-worker` | AI bot-move consumer binary | api, core |
+| `jambo-scheduler-worker` | Background scheduler binary | core, db, domain, mailer |
+| `jambo-admin-cli` | Admin CLI binary | core, db |
+| `jambo-load-tests` | Load-test binaries | core, db, domain, mailer |
+| `jambo-test-helpers` | Test fixtures/factories | domain, db, core, mailer |
 
 ### 2.3 Request Lifecycle (Card Play Sequence)
 
-```
-Time ──────────────────────────────────────────────────────────────────────>
+```mermaid
+sequenceDiagram
+  participant FE as Frontend
+  participant API as Backend API
+  participant ORC as GameService
+  participant GS as GameService
+  participant RB as Redis/RabbitMQ
+  participant AI as AI Worker
+  participant WS as Frontend (WS)
 
-Frontend          Backend API        Orchestrator        GameService         Redis/RabbitMQ       AI Worker         Frontend(WS)
-  │                   │                   │                   │                   │                   │                  │
-  │─ POST /play ────>│                   │                   │                   │                   │                  │
-  │  + Idempotency   │                   │                   │                   │                   │                  │
-  │  -Key header     │                   │                   │                   │                   │                  │
-  │                   │─ play_card() ───>│                   │                   │                   │                  │
-  │                   │                   │                   │                   │                   │                  │
-  │                   │                   │─ idempotency     │                   │                   │                  │
-  │                   │                   │  check (Redis)  │                   │                   │                  │
-  │                   │                   │                  │                   │                   │                  │
-  │                   │                   │─ update_card() ─>│                   │                   │                  │
-  │                   │                   │                  │─── DB TXN ───────>│                   │                  │
-  │                   │                   │                  │   validate card   │                   │                  │
-  │                   │                   │                  │   mark played     │                   │                  │
-  │                   │                   │                  │   evaluate round  │                   │                  │
-  │                   │                   │                  │   process payment │                   │                  │
-  │                   │                   │                  │   cache state     │                   │                  │
-  │                   │                   │                  │<── commit ────────│                   │                  │
-  │                   │                   │                  │                   │                   │                  │
-  │                   │                   │                  │── publish ───────>│ CardPlayed        │                  │
-  │                   │                   │                  │   GameEvents      │ TurnChanged       │                  │
-  │                   │                   │                  │                   │                   │                  │
-  │                   │<── outcome ───────│                   │                   │                   │                  │
-  │<── 200 OK ───────│                   │                   │                   │                   │                  │
-  │                   │                   │                   │                   │                   │                  │
-  │                   │                   │─ schedule_if_next_bot()              │                   │                  │
-  │                   │                   │  ── publish AITask ─────────────────>│                   │                  │
-  │                   │                   │                   │                   │   ai_tasks queue  │                  │
-  │                   │                   │                   │                   │                   │─ consume() ──>│
-  │                   │                   │                   │                   │                   │                │
-  │                   │                   │                   │                   │                   │ compute move   │
-  │                   │                   │                   │                   │                   │ (strategy)     │
-  │                   │                   │                   │                   │                   │                │
-  │                   │                   │                   │                   │                   │─ update_card ─>│
-  │                   │                   │                   │<── process_bot ────────────────────────│                │
-  │                   │                   │                   │── publish ───────>│ CardPlayed etc.   │                │
-  │                   │                   │                   │                   │                   │                │
-  │                   │                   │                   │                   │── Redis Pub/Sub ─>│                │
-  │                   │                   │                   │                   │                   │─ event ───────>│
-  │                   │                   │                   │                   │                   │  (WebSocket)   │
-  │                   │                   │                   │                   │                   │                │
-  │                   │                   │                   │                   │                   │       Zustand  │
-  │                   │                   │                   │                   │                   │       store     │
-  │                   │                   │                   │                   │                   │       update   │
+  FE->>API: POST /play + Idempotency-Key header
+  API->>ORC: play_card()
+  ORC->>RB: idempotency check (Redis)
+  ORC->>GS: update_card()
+  GS->>RB: DB TXN (validate card, mark played, evaluate round, process payment, cache state)
+  GS->>RB: publish CardPlayed / TurnChanged (GameEvents)
+  API-->>FE: 200 OK (outcome)
+  ORC->>RB: schedule_if_next_bot() → publish AITask (ai_tasks queue)
+  RB->>AI: consume()
+  AI->>GS: process_bot_move → update_card
+  GS->>RB: publish CardPlayed etc.
+  RB->>WS: Redis Pub/Sub
+  WS->>FE: event (WebSocket) → Zustand store update
 ```
 
 ### 2.4 Multiplayer Game Lifecycle State Machine
 
-```
-                              ┌──────────────┐
-                              │              │
-       POST /games ──────────>│   pending    │
-                              │              │
-                              └──────┬───────┘
-                                     │
-                     invites sent / accepted
-                                     │
-                              ┌──────▼───────┐
-                     ┌───────│    ready     │
-                     │       └──────┬───────┘
-                     │  invite       │
-                     │  declined     │ POST /start (creator)
-                     │       ┌──────▼───────┐
-                     │  ┌───>│   active     │<────────┐
-                     │  │    └──────┬───────┘         │
-                     │  │           │                  │
-                     │  │      play / evaluate        │
-                     │  │           │                  │
-                     │  │    ┌──────▼───────┐         │
-                     │  │    │  round eval  │─────────┘
-                     │  │    └──────┬───────┘  (more rounds)
-                     │  │           │
-                     │  │    ┌──────▼───────┐
-           ┌─────────┘  │    │              │
-           │             └───>│  finished /  │
-           │      ┌──────────│  kora /      │
-           │      │  timeout │  double_kora │
-           │      │          │              │
-           │  ┌───▼──────┐   └──────────────┘
-           └─>│cancelled │
-              └──────────┘
+```mermaid
+stateDiagram-v2
+  [*] --> pending : POST /games
+  pending --> ready : invites accepted
+  pending --> cancelled : invite declined / timeout
+  ready --> active : POST /start (creator)
+  ready --> cancelled : invite declined
+  active --> active : play / evaluate (more rounds)
+  active --> finished : kora / double_kora / all rounds
+  active --> cancelled : timeout
+  finished --> [*]
+  cancelled --> [*]
 ```
 
 ### 2.5 Game Run Lifecycle (Rooms)
 
+```mermaid
+stateDiagram-v2
+  [*] --> pending : Create Run
+  pending --> waiting : join
+  pending --> cancelled : all leave
+  waiting --> running : start
+  waiting --> pending : leave
+  waiting --> cancelled : all leave
+  running --> running : current_game_index advances (game 1 → N)
+  running --> finished : all done
+  running --> cancelled : canceled
+  finished --> [*]
+  cancelled --> [*]
 ```
-  Create Run          Join Phase          Playing Phase         Completion
-      │                   │                    │                    │
-  ┌───▼───┐          ┌───▼───┐           ┌───▼───┐           ┌───▼───┐
-  │pending│──join──> │waiting│──start──>  │running│──all done→│finished│
-  └───────┘  ┌──────>│       │           │       │           └───────┘
-             │ leave  └───────┘           │       │
-             │                            │       │──canceled──> cancelled
-             │                            │       │
-             │                            │       ├─ current_game_index advances
-             │                            │       │  (game 1 → game 2 → ... → game N)
-             │                            │       │
-             │                            └───────┘
-             │
-             └── if all leave → cancelled
+
+### 2.6 Backend Service Composition
+
+At startup `bootstrap.rs` builds the `AppState` services injected into every
+handler via Actix `web::Data`. This graph shows each service, the repositories
+it owns, and the external systems it reaches.
+
+```mermaid
+graph LR
+  subgraph services["AppState services (bootstrap.rs)"]
+    authsvc["AuthService (AuthServiceTrait)"]
+    dashsvc["DashboardService (DashboardServiceTrait)"]
+    gamesvc["GameService (GameServiceTrait / GamePlay / Invite / Lifecycle / Benchmark)"]
+    roomsvc["RoomService (RoomServiceTrait)"]
+    cashoutsvc["CashoutService (CashoutServiceTrait)"]
+    paysvc["PaymentService (PaymentServiceTrait)"]
+    usercache["UserCache"]
+    mailer["Mailer / EmailQueue"]
+    wsman["WebSocketManager"]
+  end
+
+  subgraph repos["Repositories (jambo-db)"]
+    UserRepo["UserRepository"]
+    DashboardRepo["DashboardRepository"]
+    GameRepo["GameRepository"]
+    GameCardRepo["GameCardRepository"]
+    GameInviteRepo["GameInviteRepository"]
+    PlayerRepo["PlayerRepository"]
+    PlayerProfileRepo["PlayerProfileRepository"]
+    RoomRepo["RoomRepository"]
+    RoomMemberRepo["RoomMemberRepository"]
+    GameRunRepo["GameRunRepository"]
+    GameRunPlayerRepo["GameRunPlayerRepository"]
+    GameRunGameRepo["GameRunGameRepository"]
+    GameRunEventRepo["GameRunEventRepository"]
+    TopupRepo["TopupTransactionRepository"]
+    CashoutRepo["CashoutRepository"]
+  end
+
+  subgraph ext["External systems"]
+    pg[("PostgreSQL / SeaORM")]
+    redis[("Redis")]
+    rabbit[("RabbitMQ")]
+    paypal["PayPal HTTP"]
+    smtp["SMTP (lettre)"]
+  end
+
+  authsvc --> UserRepo
+  authsvc --> mailer
+
+  dashsvc --> DashboardRepo
+  dashsvc --> GameRepo
+  dashsvc --> GameCardRepo
+  dashsvc --> usercache
+
+  gamesvc --> pg
+  gamesvc --> redis
+  gamesvc --> mailer
+  gamesvc --> rabbit
+
+  roomsvc --> RoomRepo
+  roomsvc --> RoomMemberRepo
+  roomsvc --> GameRunRepo
+  roomsvc --> GameRunPlayerRepo
+  roomsvc --> GameRunGameRepo
+  roomsvc --> GameRunEventRepo
+  roomsvc --> PlayerProfileRepo
+  roomsvc --> redis
+  roomsvc --> mailer
+
+  cashoutsvc --> CashoutRepo
+  cashoutsvc --> mailer
+
+  paysvc --> paypal
+
+  usercache --> redis
+
+  mailer --> smtp
+
+  wsman --> redis
+  wsman --> pg
+
+  UserRepo --> pg
+  DashboardRepo --> pg
+  GameRepo --> pg
+  GameCardRepo --> pg
+  GameInviteRepo --> pg
+  PlayerRepo --> pg
+  PlayerProfileRepo --> pg
+  RoomRepo --> pg
+  RoomMemberRepo --> pg
+  GameRunRepo --> pg
+  GameRunPlayerRepo --> pg
+  GameRunGameRepo --> pg
+  GameRunEventRepo --> pg
+  TopupRepo --> pg
+  CashoutRepo --> pg
 ```
+
+> `GameService` is the single "orchestrator" struct that implements the
+> `GameServiceTrait`, `GamePlayService`, `InviteService`, `GameLifecycleService`
+> and `BenchmarkService` traits (see `jambo-domain/src/game/service/`). The
+> WebSocket layer publishes events to Redis; the manager only subscribes — it
+> never calls `GameService`/`RoomService` directly.
 
 ---
 
-## 3. Backend Module Roles
+## 3. Backend Crate Roles
 
-### 3.1 `src/api/` — HTTP Handler Layer (16 modules)
+The backend is a Cargo **workspace** (`backend/Cargo.toml`) split into 15 crates
+(see §2.2 for the dependency graph).
 
-| Module | Role |
-|--------|------|
-| `auth.rs` | Register, login, logout, forgot‑password, reset‑password, JWT‑protected `me` |
-| `dashboard.rs` | Authenticated user dashboard: profile, game CRUD, active game, invitations, game state |
-| `game.rs` | Legacy `POST /api/game/{id}/play` endpoint |
-| `quickie.rs` | Anonymous `POST /api/quickie` — creates solo game (1 human + 3 bots) |
-| `anonymous.rs` | `GET /api/anonymous` — public stats (games played, active players) |
-| `config.rs` | `GET /api/config` — client‑side configuration |
-| `contact.rs` | Contact form submission (rate‑limited, sends email) |
-| `leaderboard.rs` | `GET /api/me/leaderboard` — Redis sorted‑set leaderboard |
-| `room.rs` | Room CRUD, run management, join/leave, invitations, next‑game |
-| `topup.rs` | PayPal topup order creation & capture |
-| `unfreeze.rs` | PayPal unfreeze order creation & capture + PayPal return/cancel pages |
-| `benchmark.rs` | Benchmark‑mode only: create & clean up test multiplayer games |
-| `fallback.rs` | 404/405 JSON fallback handlers with `request_id` |
-| `middleware/` | **RateLimiter** (Redis‑backed sliding window), **Idempotency** (per‑player dedup), **IP_Forward** (`X-Forwarded-For`) |
-| `dto/` | `PlayCardRequest` (with `validate()`), `PlayCardResponse`, `QuickGameResponse`, auth DTOs, dashboard DTOs |
-| `services/` | `AuthService`, `DashboardService`, `RoomService` (with sub‑modules: games, runs, stall detection, tests) |
-
-### 3.2 `src/game/` — Core Domain Logic (13 modules)
+### 3.1 `jambo-api` — HTTP handlers, WebSocket, worker
 
 | Module | Role |
 |--------|------|
-| `orchestrator/` | **GameOrchestrator** — thin coordination façade between API handlers and domain services (see §10) |
-| `service/` | **GameService** — transactional game engine (~2000 lines) covering gameplay, evaluation, creation, lifecycle, recovery, caching, invites, AI tasks, events |
-| `bot_scheduler.rs` | **BotScheduler** — dispatches bot moves to RabbitMQ (or sync fallback chain); circuit breaker; semaphore‑gated sync chain |
-| `worker_core.rs` | `process_bot_move()` — shared AI logic usable by both the RabbitMQ consumer and the sync fallback |
-| `strategy.rs` | 6 bot AI strategies: `LongUp`, `LongDown`, `MidUp`, `MidDown`, `ShortUp`, `ShortDown` — zone‑based card ranking |
-| `bot.rs` | `execute_bot_move()` (DB‑querying), `execute_bot_move_from_task()` (pure computation from AITask) |
-| `card_mapping.rs` | `Card { index, suit, rank }` (0–31 → suit + rank + colour) |
-| `constants.rs` | `MAX_PLAYERS_IN_GAME=4`, `CARDS_PER_PLAYER=5`, `TOTAL_CARDS=32` |
-| `distribution.rs` | `distribute_cards()` — shuffle and deal 5 cards per player |
-| `turn_order.rs` | `next_player()` — cyclic turn advancement |
-| `round_evaluation.rs` | `evaluate_round()` — determines round winner, detects KORA |
-| `payment.rs` | `calculate_payment()` — computes bets, KORA multipliers, holds |
+| `api/` | Actix handlers (`auth`, `dashboard`, `game`, `quickie`, `room`, `topup`, `unfreeze`, `cashout`, `leaderboard`, `contact`, `benchmark`, `fallback`, `system`, `anonymous`, `config`) + `middleware/` (rate limiter, idempotency, ip-forward) + `services/` (`AuthService`, `DashboardService`, `CashoutService`, game-state builder) |
+| `auth/` | `AuthConfig`, JWT validation, `AuthMiddleware`, cookie + bearer extractors |
+| `websocket/` | WS endpoints (`/ws/{game_id}`, `/ws/room/{id}`, `/ws/me`), `manager/` (connection maps, sharded Redis subscriber, cleanup, spectators), message enums |
+| `worker/` | RabbitMQ consumer loop + metrics server (AI worker runtime) |
+
+### 3.2 `jambo-domain` — Core domain logic
+
+| Module | Role |
+|--------|------|
+| `game/` | `GameService` (transactional engine: gameplay, evaluation, creation, lifecycle, recovery, caching, invites, claims, card-play), `BotScheduler`, `worker_core`, `strategy`, `bot`, card mapping/constants/distribution/turn-order/round-evaluation |
+| `room/` | `RoomService` (rooms, members, game runs, start-next-game), `StartNextGameService` |
+| `messaging/` | `RedisClient` (pub/sub + cache), `RabbitMQClient` (circuit breaker, DLX/DLQ), `events` (`GameEvent`/`RoomEvent`/`UserEvent`), `AITask` |
+| `cache/` | `UserCache`, `leaderboard` (Redis sorted sets) |
+| `scheduler/` | `Scheduler` + 7 background tasks |
 
 #### Randomness & Card Dealing
 
@@ -332,69 +390,35 @@ Using OS entropy (rather than a hand‑picked "big seed number") is *stronger*: 
 cryptographically random per call, is not stored in code or config, and each invocation of
 `rand::rng()` draws fresh entropy without introducing predictable global state.
 
-### 3.3 `src/websocket/` — Real‑Time Communication
+### 3.3 `jambo-db` — Persistence layer
 
 | Module | Role |
 |--------|------|
-| `mod.rs` | `ws_handler()` — WebSocket upgrade endpoint; global WebSocketManager singleton; `scope()` registration |
-| `manager.rs` | **WebSocketManager** — `Arc<RwLock<HashMap<Uuid, Vec<TrackedConnection>>>>`; per‑game & per‑room connection maps; player identity tracking; graceful send with error handling |
-| `manager_redis.rs` | **Sharded Redis subscriber** — N = `min(cpus, 8)` parallel tokio tasks, each subscribing via `psubscribe` to `game:*` and `room:*`; consistent hashing by `game_id` bytes → shard assignment |
-| `manager_cleanup.rs` | Periodic stale‑connection cleanup (every 5 min, inactive > 10 min) |
-| `manager_tests.rs` | Integration tests for manager |
-| `messages.rs` | `IncomingMessage` (JoinGame, LeaveGame, Ping) & `OutgoingMessage` (GameJoined, Error, Pong) enums |
+| `lib.rs` | `create_connection()` (configurable pool), `run_migrations()` (embeds the `migration` crate) |
+| `models/` | SeaORM entities: `game`, `player`, `game_card`, `user`, `player_profile`, `game_invite`, `room`, `room_member`, `game_run`, `game_run_player`, `game_run_game`, `game_run_event`, `admin_key`, `cashout_request`, `topup_transaction` + enums |
+| `repositories/` | Concrete repos: `user`, `dashboard`, `game`, `game_card`, `game_invite`, `player`, `player_profile`, `room`, `game_run*`, `cashout`, `topup_transaction`, `admin_key`, `admin_report` |
+| `traits.rs` | Repository trait abstractions (e.g. `GameRepoTrait`, `PlayerRepoTrait`) for testability |
 
-### 3.4 `src/messaging/` — Async Message Brokers
+### 3.4 `jambo-core` — Cross-cutting infrastructure
 
 | Module | Role |
 |--------|------|
-| `mod.rs` | **RabbitMQClient** (549 lines) — connection management, `publish_with_retry()` (exponential backoff), circuit breaker (open after N consecutive failures, cooldown T), DLX (dead‑letter exchange), `ai_tasks` queue declaration |
-| `events.rs` | `GameEvent` enum (18 variants — see §6.3), `RoomEvent` enum (5 variants), `GameStartedPlayer` struct, `channel()` + `to_json()` methods |
-| `ai_task.rs` | `AITask` struct — comprehensive serialized game state for bot decisions |
-| `redis.rs` | **RedisClient** — `publish`, `subscribe`, `psubscribe`, `get`, `set_ex`, `set_nx_ex`, `del`, `mget`, `zadd`, `zrevrange`, `keys_pattern`, `scan_delete`, `ping`; all async, all fallback‑friendly |
+| `config.rs` | `Config` struct built from env vars (database, RabbitMQ, Redis, JWT, CORS, rate limits, game settings, PayPal, benchmarks) |
+| `i18n/` | `Lang` enum (En, Fr), `Translator`, `I18n` extractor, language endpoints (re-exports `jambo-i18n`) |
+| `observability/` | `CorrelationId`, correlation middleware, tracing init, `metrics` (re-exported from `jambo-metrics`) |
+| `payment/` | `PaymentService` wrapping the PayPal REST API (`/v2/checkout/orders`) |
+| `error/` | `AppError`, `GameError` (wraps `ValidationError`, `NotFound`, etc.) with `ResponseError` |
 
-### 3.5 `src/database/` — Persistence Layer
+### 3.5 Supporting crates
 
-| Module | Role |
-|--------|------|
-| `mod.rs` | `create_connection()` (configurable pool), `run_migrations()` (embedding migration crate) |
-| `models.rs` | SeaORM entities: `Game`, `Player`, `GameCard`, `GameInvite`, `User`, `PlayerProfile`, `Room`, `RoomMember`, `GameRun`, `GameRunPlayer`, `GameRunGame`, `GameRunEvent` + enums (`GameStatus`, `PlayerType`, `GameMode`, `InviteStatus`) |
-| `traits.rs` | Repository trait abstractions (e.g., `GameRepoTrait`, `PlayerRepoTrait`) for testability |
-| `repositories/` | Concrete implementations: `dashboard.rs`, `game.rs`, `game_card.rs`, `game_invite.rs`, `player.rs`, `player_profile.rs`, `room.rs`, `user.rs` |
-
-### 3.6 `src/scheduler/` — Background Tasks
-
-| Module | Role |
-|--------|------|
-| `mod.rs` | `Scheduler` struct — runs 7 periodic tasks via `tokio::task::JoinSet`; graceful shutdown via `watch` channel |
-| `tasks.rs` | 7 task implementations (see §8 for details) |
-
-### 3.7 `src/auth/` — Authentication
-
-| Module | Role |
-|--------|------|
-| `config.rs` | `AuthConfig` — JWT secret, expiry hours, IP hash pepper |
-| `jwt.rs` | `validate_token()` — JWT verification + decoding |
-| `middleware.rs` | `AuthMiddleware` — extracts `Authorization: Bearer <token>`, validates, injects `AuthenticatedUser` into request extensions; supports optional token revocation via Redis |
-
-### 3.8 `src/observability/` — Monitoring & Tracing
-
-| Module | Role |
-|--------|------|
-| `mod.rs` | `CorrelationId` newtype (`Uuid`), `current_correlation_id()` task‑local accessor |
-| `middleware.rs` | `CorrelationIdMiddleware` — extracts `X-Request-Id` / `X-Correlation-Id` header (or generates new UUID), injects into response headers, stores in task‑local |
-| `metrics.rs` | 40+ Prometheus metric families (see §14) |
-| `ws.rs` | WebSocket‑specific tracing span helpers |
-
-### 3.9 Other Modules
-
-| Module | Role |
-|--------|------|
-| `src/error/` | `AppError` (wrapping `GameError`, `ValidationError`, `InternalError`, `NotFound`) with `ResponseError` impl; maps to HTTP status codes |
-| `src/i18n/` | `Lang` enum (En, Fr), `Translator` (loads `en.json`/`fr.json` at compile time via `include_str!`), `I18n` extractor, `I18nMiddleware` (cookie → Accept‑Language → default), language endpoints |
-| `src/mailer/` | `Mailer` trait + `SmtpMailer` (Lettre) + `NoopMailer` (testing); Handlebars templates |
-| `src/payment/` | `PaymentService` wrapping PayPal REST API (`/v2/checkout/orders`) |
-| `src/cache/` | `UserCache` (Redis‑backed user lookup), `leaderboard.rs` (Redis sorted sets) |
-| `src/config.rs` | 68‑field `Config` struct from env vars (database, RabbitMQ, Redis, JWT, CORS, rate limits, game settings, PayPal, benchmarks) |
+| Crate | Role |
+|-------|------|
+| `jambo-mailer` | `Mailer` trait + `SmtpMailer` (Lettre) + `NoopMailer` (testing) + `EmailQueue` |
+| `jambo-metrics` | Prometheus metric families |
+| `jambo-i18n` | Translation resources (`en.json`/`fr.json`) |
+| `jambo-templates` | Handlebars email templates |
+| `jambo-types` | Shared DTOs, card/special-card types, constants |
+| `jambo-test-helpers` | Test fixtures/factories |
 
 ---
 
@@ -411,7 +435,7 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `GET` | `/api/anonymous` | — | Anonymous dashboard stats |
 | `POST` | `/api/quickie` | — | Create solo quick game |
 | `GET` | `/api/config` | — | Client‑side configuration |
-| `POST` | `/api/contact` | 1/5min | Contact form |
+| `POST` | `/api/contact` | 5/min | Contact form |
 | `POST` | `/api/lang` | — | Set language cookie |
 | `GET` | `/api/lang` | — | Get current language |
 | `GET` | `/api/languages` | — | List available languages |
@@ -421,7 +445,11 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `POST` | `/api/auth/forgot-password` | 3/hour | Send password reset email |
 | `POST` | `/api/auth/reset-password` | 10/min | Reset password with token |
 | `GET` | `/api/auth/me` | — | Current user info (requires JWT) |
-| `POST` | `/api/game/{id}/play` | — | Legacy play‑card endpoint |
+| `POST` | `/api/game/{id}/play` | — | Play a card (cookie JWT or one-time game token) |
+| `POST` | `/api/game/{id}/advance-bot` | — | Advance a bot move |
+| `POST` | `/api/game/{id}/evaluate-round` | — | Evaluate the round |
+| `POST` | `/api/game/{id}/claim-special` | — | Claim a special-card victory |
+| `POST` | `/api/game/{id}/decline-special` | — | Decline a special-card claim |
 
 ### 4.2 Authenticated Endpoints (`/api/me/`)
 
@@ -438,6 +466,8 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `POST` | `/unfreeze/capture` | Capture PayPal unfreeze order |
 | `POST` | `/topup` | Create PayPal topup order |
 | `POST` | `/topup/capture` | Capture PayPal topup order |
+| `POST` | `/cashout` | Request cashout |
+| `GET` | `/cashout` | List cashout requests |
 | `POST` | `/rooms` | Create room |
 | `GET` | `/rooms` | List user rooms |
 | `POST` | `/rooms/join` | Join room by invitation code |
@@ -461,6 +491,7 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `POST` | `/{game_id}/start` | Start multiplayer game |
 | `POST` | `/{game_id}/play` | Play a card (with idempotency key) |
 | `GET` | `/{game_id}/me` | Game state for authenticated player |
+| `POST` | `/{game_id}/spectate-token` | Mint a spectator token |
 
 ### 4.4 Other Authenticated Endpoints
 
@@ -474,8 +505,9 @@ cryptographically random per call, is not stored in code or config, and each inv
 
 | Path | Auth | Purpose |
 |------|------|---------|
-| `GET /ws/{game_id}` | JWT required | Game events (CardPlayed, RoundCompleted, etc.) |
+| `GET /ws/{game_id}` | JWT or one-time `?token=` | Game events (CardPlayed, RoundCompleted, etc.) |
 | `GET /ws/room/{room_id}` | JWT required | Room events (MemberJoined, RunCreated, etc.) |
+| `GET /ws/me` | JWT required | User-scoped events (InviteReceived, InviteRemoved) |
 
 ### 4.6 PayPal Endpoints
 
@@ -516,6 +548,195 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `GameStarted` | `room_id, run_id, game_id, game_index, total_games` | Next game in run starts |
 | `RunCompleted` | `room_id, run_id` | All games in run finished |
 
+### 4.9 Endpoint -> Service -> Repository Graphs
+
+Legend: each endpoint handler reads services from `web::Data` (`routes.rs`),
+the services call repositories (`jambo_db::repositories::*`), and repositories
+(or the handler directly) reach external systems (`Redis`, `RabbitMQ`,
+`PayPal`, `SMTP`).
+
+#### Auth (`/api/auth/*`)
+
+```mermaid
+graph TD
+  register["POST /auth/register"] --> AuthServiceTrait
+  login["POST /auth/login"] --> AuthServiceTrait
+  forgot["POST /auth/forgot-password"] --> AuthServiceTrait
+  reset["POST /auth/reset-password"] --> AuthServiceTrait
+  me["GET /auth/me"] --> AuthServiceTrait
+  logout["POST /auth/logout"] --> Redis
+
+  AuthServiceTrait --> UserRepository
+  AuthServiceTrait --> EmailQueue
+
+  UserRepository --> pg[("PostgreSQL")]
+  EmailQueue --> smtp[("SMTP")]
+  forgot --> EmailQueue
+```
+
+#### Public / misc
+
+```mermaid
+graph TD
+  contact["POST /contact"] --> EmailQueue
+  config["GET /config"] --> Config
+  anon["GET /anonymous"] --> None
+  health["GET /health"] --> None
+  metrics["GET /metrics"] --> Prometheus
+  lang["GET|POST /lang, GET /languages"] --> Translator
+  EmailQueue --> smtp[("SMTP")]
+```
+
+#### Dashboard & profile (`/api/me/*`)
+
+```mermaid
+graph TD
+  profile["GET /me/profile"] --> DashboardServiceTrait
+  listgames["GET /me/games"] --> DashboardServiceTrait
+  creategame["POST /me/games"] --> GameLifecycleService
+  getgame["GET /me/games/{id}"] --> DashboardServiceTrait
+  activegame["GET /me/active-game"] --> DashboardServiceTrait
+  invites["GET /me/invitations"] --> DashboardServiceTrait
+  leaderboard["GET /me/leaderboard"] --> LeaderboardRedis
+  search["GET /users/search"] --> DashboardServiceTrait
+
+  DashboardServiceTrait --> DashboardRepository
+  DashboardServiceTrait --> GameRepository
+  DashboardServiceTrait --> GameCardRepository
+  DashboardServiceTrait --> UserCache
+  UserCache --> redis[("Redis")]
+  leaderboard --> redis
+
+  creategame --> GameRepository
+  creategame --> PlayerRepository
+  creategame --> PlayerProfileRepository
+  creategame --> rabbit[("RabbitMQ (BotScheduler)")]
+```
+
+#### Game management (`/api/games/*`)
+
+```mermaid
+graph TD
+  sendinvites["POST /games/{id}/invites"] --> InviteService
+  sendinvites --> DashboardServiceTrait
+  respond["POST /games/{id}/respond"] --> InviteService
+  startgame["POST /games/{id}/start"] --> GameLifecycleService
+  startgame --> DashboardServiceTrait
+  playgame["POST /games/{id}/play"] --> GamePlayService
+  playgame --> DashboardServiceTrait
+  gamestate["GET /games/{id}/me"] --> DashboardServiceTrait
+  spectate["POST /games/{id}/spectate-token"] --> DashboardServiceTrait
+  spectate --> Redis
+
+  InviteService --> GameInviteRepository
+  InviteService --> PlayerRepository
+  InviteService --> redis[("Redis")]
+  InviteService --> EmailQueue
+
+  GameLifecycleService --> GameRepository
+  GameLifecycleService --> PlayerRepository
+  GameLifecycleService --> GameCardRepository
+
+  GamePlayService --> GameRepository
+  GamePlayService --> PlayerRepository
+  GamePlayService --> GameCardRepository
+  GamePlayService --> PlayerProfileRepository
+  GamePlayService --> redis
+  GamePlayService --> rabbit[("RabbitMQ (BotScheduler)")]
+
+  DashboardServiceTrait --> DashboardRepository
+  DashboardServiceTrait --> GameRepository
+  DashboardServiceTrait --> GameCardRepository
+```
+
+#### Payments (`/api/me/unfreeze`, `/api/me/topup`, `/api/me/cashout`)
+
+```mermaid
+graph TD
+  unfreeze["POST /me/unfreeze (+ /capture)"] --> PaymentServiceTrait
+  topup["POST /me/topup (+ /capture)"] --> PaymentServiceTrait
+  paypalret["GET /paypal/return, /paypal/topup/return"] --> PaymentServiceTrait
+  cashout["POST /me/cashout"] --> CashoutServiceTrait
+  listcashout["GET /me/cashout"] --> CashoutServiceTrait
+
+  PaymentServiceTrait --> paypal["PayPal HTTP"]
+  unfreeze --> PlayerProfileRepository
+  unfreeze --> TopupTransactionRepository
+  topup --> PlayerProfileRepository
+  topup --> TopupTransactionRepository
+  unfreeze --> Redis
+  topup --> Redis
+
+  CashoutServiceTrait --> CashoutRepository
+  cashout --> UserRepository
+  cashout --> EmailQueue
+```
+
+#### Rooms & runs (`/api/me/rooms`, `/api/me/runs`)
+
+```mermaid
+graph TD
+  rooms["13 room/run handlers"] --> RoomServiceTrait
+  RoomServiceTrait --> RoomRepository
+  RoomServiceTrait --> RoomMemberRepository
+  RoomServiceTrait --> GameRunRepository
+  RoomServiceTrait --> GameRunPlayerRepository
+  RoomServiceTrait --> GameRunGameRepository
+  RoomServiceTrait --> GameRunEventRepository
+  RoomServiceTrait --> PlayerProfileRepository
+  RoomServiceTrait --> UserRepository
+  RoomServiceTrait --> redis[("Redis")]
+  RoomServiceTrait --> EmailQueue
+```
+
+#### Game actions & quick game
+
+```mermaid
+graph TD
+  quickie["POST /quickie"] --> GameLifecycleService
+  playcard["POST /game/{id}/play"] --> GamePlayService
+  advance["POST /game/{id}/advance-bot"] --> GamePlayService
+  evaluate["POST /game/{id}/evaluate-round"] --> GamePlayService
+  claim["POST /game/{id}/claim-special"] --> GamePlayService
+  decline["POST /game/{id}/decline-special"] --> GamePlayService
+
+  GamePlayService --> GameRepository
+  GamePlayService --> PlayerRepository
+  GamePlayService --> GameCardRepository
+  GamePlayService --> PlayerProfileRepository
+  GamePlayService --> redis[("Redis")]
+  GamePlayService --> rabbit[("RabbitMQ (BotScheduler)")]
+
+  GameLifecycleService --> GameRepository
+  GameLifecycleService --> PlayerRepository
+  GameLifecycleService --> GameCardRepository
+```
+
+#### Benchmark (benchmark mode only)
+
+```mermaid
+graph TD
+  benchcreate["POST /benchmark/create-multiplayer-game"] --> BenchmarkService
+  benchcleanup["POST /benchmark/cleanup"] --> BenchmarkService
+  BenchmarkService --> pg[("PostgreSQL (raw entities)")]
+```
+
+#### WebSocket
+
+```mermaid
+graph TD
+  wsgame["GET /ws/{game_id}"] --> WebSocketManager
+  wsroom["GET /ws/room/{room_id}"] --> WebSocketManager
+  wsuser["GET /ws/me"] --> WebSocketManager
+  WebSocketManager --> redis[("Redis pub/sub")]
+  wsgame --> GameRepository
+  wsgame --> PlayerRepository
+  wsgame --> GameInviteRepository
+  wsgame --> GameCardRepository
+```
+
+*(Full WebSocket detail is in section 6.)*
+
 ---
 
 ## 5. Use Cases
@@ -528,7 +749,7 @@ cryptographically random per call, is not stored in code or config, and each inv
 ### UC2: Quick Solo Game
 1. User clicks "Start Game".
 2. Frontend calls `POST /api/quickie`.
-3. `GameOrchestrator::create_quick_game()`:
+3. `GameLifecycleService::create_quick_game()`:
    a. Creates `Game` (solo mode, pending → active).
    b. Creates 4 `Player` rows (1 human, 3 bots with random strategies).
    c. Distributes 5 cards to each player (20 GameCard rows).
@@ -540,7 +761,7 @@ cryptographically random per call, is not stored in code or config, and each inv
 ### UC3: Human Plays Card (Authenticated)
 1. User clicks a card in their hand.
 2. Frontend sends `POST /api/games/{game_id}/play` with `X-Idempotency-Key`.
-3. `GameOrchestrator::play_card()`:
+3. `GamePlayService::play_card()`:
    a. Checks idempotency in Redis (`idem:{player_id}:{key}`, TTL 300s).
    b. Validates: game active, player's turn, card owned, suit‑following rule.
    c. Calls `GameService::update_card_play()` (3‑retry optimistic lock transaction).
@@ -648,85 +869,270 @@ cryptographically random per call, is not stored in code or config, and each inv
 
 ## 6. WebSocket & Redis Pub/Sub
 
+Three WebSocket endpoints are mounted at `/ws`
+(`crates/jambo-api/src/websocket/mod.rs`):
+
+| Path | Auth | Purpose |
+|------|------|---------|
+| `GET /ws/{game_id}` | cookie JWT, or one-time `?token=` (game/spectate) | Game events + snapshots |
+| `GET /ws/room/{room_id}` | cookie JWT | Room events |
+| `GET /ws/me` | cookie JWT | User-scoped events (invitations) |
+
 ### 6.1 Architecture
 
+```mermaid
+graph TD
+  subgraph mgr["WebSocketManager (Arc<RwLock<Inner>>)"]
+    game["connections: HashMap<game_id, Vec<TrackedConnection>>"]
+    room["room_connections: HashMap<room_id, Vec<TrackedConnection>>"]
+    user["user_connections: HashMap<user_id, Vec<TrackedConnection>>"]
+    redisclient["redis_client: Option<RedisClient>"]
+    dbhandle["db: Option<DatabaseConnection>"]
+  end
+
+  subgraph subscribers["Redis psubscribe shards (N = num_cpus.clamp(1,8))"]
+    s0["Shard 0"]
+    s1["Shard 1"]
+    sn["Shard N-1"]
+  end
+
+  redis[(Redis)] -->|"game:* / room:* / user:*"| s0
+  redis -->|"game:* / room:* / user:*"| s1
+  redis -->|"game:* / room:* / user:*"| sn
+
+  s0 -->|"route_event / route_room_event / route_user_event"| mgr
+  s1 --> mgr
+  sn --> mgr
+
+  mgr -->|"broadcast/send (try_send)"| clients[(WebSocket clients)]
+  mgr -->|"snapshot queries"| dbhandle
 ```
- ┌─────────────────────────────────────────────────────────────────────────┐
- │                         WebSocketManager                                │
- │                                                                         │
- │  ┌──────────────────────────────┐    ┌──────────────────────────────┐  │
- │  │  game_connections            │    │  room_connections            │  │
- │  │  HashMap<Uuid(game_id),      │    │  HashMap<Uuid(room_id),      │  │
- │  │          Vec<TrackedConn>>   │    │          Vec<TrackedConn>>   │  │
- │  └──────────┬───────────────────┘    └──────────────┬───────────────┘  │
- │             │                                       │                  │
- │             └───────────────┬───────────────────────┘                  │
- │                             │                                          │
- │                    ┌────────▼────────┐                                 │
- │                    │  Redis Client   │                                 │
- │                    │  (psubscribe)    │                                 │
- │                    └────────┬────────┘                                 │
- └─────────────────────────────┼──────────────────────────────────────────┘
-                               │
-          ┌────────────────────┼────────────────────┐
-          │                    │                    │
-    ┌─────▼─────┐       ┌─────▼─────┐       ┌─────▼─────┐
-    │ Shard 0   │       │ Shard 1   │       │ Shard N   │
-    │ psubscribe│       │ psubscribe│  ...  │ psubscribe│
-    │ game:*    │       │ game:*    │       │ game:*    │
-    │ room:*    │       │ room:*    │       │ room:*    │
-    └───────────┘       └───────────┘       └───────────┘
-    N = min(num_cpus, 8)
-```
+
+`WebSocketManager` keeps three in-memory connection maps keyed by entity id, an
+optional `RedisClient` (pub/sub), and an optional DB handle (snapshots). It is
+constructed in `bootstrap.rs` as `WebSocketManager::new(redis_client, Some(db))`.
 
 ### 6.2 Connection Lifecycle
 
-1. **Upgrade**: `GET /ws/{game_id}` or `GET /ws/room/{room_id}` with JWT token.
-2. **Auth**: `AuthMiddleware` validates JWT, extracts user. If invalid → connection refused.
-3. **Registration**: `WebSocketManager::register()` adds `TrackedConnection { sender, player_id, connected_at, last_activity }` to game/room map.
-4. **Heartbeat**: Client sends `{"type":"Ping"}` → server replies `{"type":"Pong"}`.
-5. **Shard Assignment** (Redis subscriber): `hash(game_id_bytes) % N → shard_i`. Only shard_i subscribes to `game:{game_id}` and `room:{room_id}`.
-6. **Event Routing**:
-   - `CardsDealt` → sent to specific player only (private hand).
-   - `GameStarted` → personalized per player (rotated `display_position` so the human always sees themselves at position 0).
-   - All other events → broadcast to all connections for the game/room.
-7. **Disconnect**: Connection dropped → `PlayerDisconnected` event published.
-8. **Reconnect**: Same player opens new connection → `PlayerReconnected` event published.
-9. **Cleanup**: Every 5 minutes, connections inactive > 10 minutes are removed.
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant H as ws_handler
+  participant A as Auth (jwt + Redis)
+  participant M as WebSocketManager
+  participant DB as PostgreSQL
 
-### 6.3 Redis Channel Patterns
-
-```
-game:{game_id}       — All game events (CardPlayed, RoundCompleted, etc.)
-room:{room_id}        — All room events (MemberJoined, RunCreated, etc.)
-```
-
-### 6.4 Message Flow (Redis → WebSocket)
-
-```
-GameService                          Redis                         WebSocketManager                Client
-    │                                  │                                  │                          │
-    │── publish(CardPlayed) ──────────>│                                  │                          │
-    │   channel: "game:{game_id}"      │                                  │                          │
-    │                                  │── psubscribe "game:*" ──────────>│                          │
-    │                                  │   (sharded, N subscribers)       │                          │
-    │                                  │                                  │                          │
-    │                                  │   hash(game_id) → shard_i        │                          │
-    │                                  │   only shard_i receives event    │                          │
-    │                                  │                                  │                          │
-    │                                  │── msg ──────────────────────────>│                          │
-    │                                  │   (JSON GameEvent)               │                          │
-    │                                  │                                  │── deserialize event       │
-    │                                  │                                  │── route to game_id map    │
-    │                                  │                                  │── for each connection:    │
-    │                                  │                                  │     sender.send(msg)     │
-    │                                  │                                  │                          │── card_played event ──>│
-    │                                  │                                  │                          │   Zustand store update
+  C->>H: GET /ws/{game_id} (+ cookie or ?token=)
+  H->>A: validate_ws_token / validate_game_token / validate_spectate_token
+  alt cookie-authenticated
+    H->>DB: check_game_membership (creator / player / pending invitee)
+  end
+  H-->>C: welcome (game_joined) BEFORE registering
+  H->>M: add_connection(game_id, tx) -> ConnectionId
+  H->>M: set_connection_user(game_id, cid, user_id)
+  H->>M: spawn forward task (rx -> socket) + incoming task (socket -> handle_message)
+  C->>H: {"type":"join_game", player_id, player_position, spectator}
+  H->>DB: resolve_player_for_user (server-side identity)
+  H->>M: set_player_for_connection (single-session eviction)
+  H->>M: send_game_state_snapshot (personalized)
+  Note over C,M: on close/stream-end: remove_connection -> PlayerDisconnected
 ```
 
-### 6.5 Sharding Rationale
+1. **Upgrade** — Actix Web upgrades the request to an `actix_ws` session.
+2. **Auth** — cookie `Authorization` JWT (blacklist check) or one-time
+   `?token=` (game token, then spectate token). See section 6.3.
+3. **Membership** — cookie-auth connections must belong to the game (creator,
+   accepted player, or pending invitee); anonymous/spectator are exempt.
+4. **Welcome** — `game_joined` (or `room_joined`/`user_joined`) is sent *before*
+   registration, so a failed send never registers a dead connection.
+5. **Register** — `add_connection` inserts a `TrackedConnection` with a bounded
+   `mpsc` sender and records the authenticated identity.
+6. **Forward task** — drains the per-connection queue to the socket; on send
+   failure it `force_disconnect`s; on channel close it closes the sink so the
+   client's `onclose` fires and it can reconnect.
+7. **Incoming task** — parses `IncomingMessage` (or protocol Ping/Pong/Close).
+8. **Cleanup** — on stream end, `remove_connection` evicts the connection and
+   publishes `PlayerDisconnected`.
 
-Without sharding, a single Redis `psubscribe` task would become a bottleneck under high load (single‑threaded event loop processing all game events). With N shards (typically 4–8), events are load‑balanced by consistent hashing. Each shard handles 1/N of all games, dramatically reducing per‑subscriber overhead.
+### 6.3 Authentication & Tokens
+
+| Token | Purpose | Redis key | Validator |
+|-------|---------|-----------|-----------|
+| Cookie JWT (`Authorization`) | authenticated user | `token:blacklist:{jti}` (revocation) | `validate_ws_token` |
+| One-time game token (`?token=`) | anonymous player | `ws_token:{game_id}:{jti}` | `validate_game_token` |
+| Spectate token (`?token=`) | read-only stream view | `spectate_token:{game_id}:{jti}` | `validate_spectate_token` |
+
+- Game/spectate tokens are **not** consumed on use — they persist for their TTL
+  so anonymous users can reconnect after transient disconnections.
+- Anonymous and spectator identities are *deterministic* UUIDs derived from the
+  game id (`derive_anonymous_id`, `derive_spectate_id` in `websocket/auth.rs`).
+- All Redis lookups **fail-open**: JWT signature/expiry are already validated;
+  Redis is only an additional revocation/single-use check.
+
+### 6.4 Client -> Server Messages
+
+`IncomingMessage` (`websocket/messages.rs`), tagged by `"type"`:
+
+| Message | Fields | Effect |
+|---------|--------|--------|
+| `ping` | - | refresh `last_activity` + `last_pong`; reply `pong` |
+| `join_game` | `game_id, player_id?, player_position?, spectator?` | resolve identity, snapshot, single-session eviction |
+| `leave_game` | - | no-op (cleanup handled on close) |
+
+Plus protocol-level frames: `Ping` -> `pong`, `Pong` -> `update_pong`,
+`Close` -> cleanup. Legacy `{"command":"ping"}` is still accepted as fallback.
+
+### 6.5 Server -> Client Messages
+
+Welcome messages (sent before registration):
+
+- `game_joined {game_id}` (game endpoint)
+- `room_joined {room_id}` (room endpoint)
+- `user_joined {user_id}` (user endpoint)
+
+`OutgoingMessage` (`websocket/messages.rs`):
+
+| Message | Kind | Recipient |
+|---------|------|-----------|
+| `game_joined {game_id}` | Control | the connecting client |
+| `game_state_snapshot {...}` | Snapshot | a single player / all spectators (personalized, rotated seats) |
+| `pong` | Control | replying client |
+| `error {message, source}` | Control | a game / player |
+
+Forwarded domain events (`GameEvent` / `RoomEvent` / `UserEvent`, section 6.6)
+are routed and delivered as `Control` messages.
+
+### 6.6 Redis Pub/Sub & Event Catalog
+
+Channels follow `{prefix}:{id}`:
+
+| Channel | Event enum | Routed by |
+|---------|-----------|-----------|
+| `game:{game_id}` | `GameEvent` (19 variants) | `route_event` |
+| `room:{room_id}` | `RoomEvent` (5 variants) | `route_room_event` |
+| `user:{user_id}` | `UserEvent` (2 variants) | `route_user_event` |
+
+`GameEvent` variants: `card_played`, `round_completed`, `game_finished`,
+`turn_changed`, `player_joined`, `game_cancelled`, `game_ready`, `cards_dealt`,
+`game_started`, `player_disconnected`, `player_reconnected`, `staleness_warning`,
+`player_kicked`, `game_reshuffled`, `player_forfeit_win`, `claim_pending`,
+`claim_offered`, `claim_resolved`, `special_claim`.
+
+`RoomEvent` variants: `member_joined`, `member_left`, `run_created`,
+`game_started`, `run_completed`.
+
+`UserEvent` variants: `invite_received`, `invite_removed`.
+
+Personalization in `route_event` (`manager/redis.rs`):
+
+| Event | Delivery |
+|-------|----------|
+| `cards_dealt` | private - only the target player |
+| `claim_offered` | private - only the target player |
+| `game_started` | personalized - per player with rotated `display_position`; spectators + unidentified get the non-rotated event |
+| `player_kicked` | broadcast + evict the player's connections + resend snapshots |
+| everything else | broadcast to all game connections |
+
+**Publish side** (`jambo-domain/src/messaging/redis.rs`): `GameService` /
+`RoomService` call `publish_*_event_with_retry`, which retries with exponential
+backoff and, on exhaustion, buffers the event in a bounded queue
+(`buffer_max_size`) flushed by a background task every `flush_interval_secs`.
+
+### 6.7 Sharding
+
+```mermaid
+graph LR
+  pub["publish to game:{id}"] --> redis[(Redis)]
+  redis -->|"psubscribe game:*"| shard0["Shard 0"]
+  redis -->|"psubscribe game:*"| shard1["Shard 1"]
+  shard0 -->|"shard_for_id(id) == 0 ? deliver : DROP"| m0["route_event"]
+  shard1 -->|"shard_for_id(id) == 1 ? deliver : DROP"| m1["route_event"]
+```
+
+- `shard_for_id(id, N)` hashes the UUID bytes (`hash = hash*31 + byte`, `% N`) -
+  deterministic and stable across processes (`websocket/routing.rs`).
+- `N = num_cpus::get().clamp(1, 8)`.
+- **Every** shard `psubscribe`s all three patterns (`game:*`, `room:*`,
+  `user:*`), then drops any event whose `shard_for_id(id) != shard` so each
+  entity id is handled by exactly one shard.
+- On subscribe failure/disconnect, a shard retries with capped exponential
+  backoff (`1s..30s`).
+
+### 6.8 Backpressure
+
+Each connection has a bounded send queue (`WS_SEND_QUEUE_CAPACITY = 256`). On a
+full queue:
+
+| MessageKind | Policy |
+|-------------|--------|
+| `Snapshot` (idempotent, e.g. `game_state_snapshot`) | drop - the next snapshot supersedes it |
+| `Control` (stateful, e.g. `game_started`, `player_kicked`) | treat as dead client -> `force_disconnect` |
+
+`deliver()` uses non-blocking `try_send` outside the state lock, serializes each
+broadcast once (`Arc<str>`), and returns the slow-consumer ids to disconnect.
+
+### 6.9 Heartbeat & Cleanup
+
+- Application-level `ping`/`pong` refreshes both `last_activity` and
+  `last_pong`.
+- Protocol-level `Pong` refreshes `last_pong` (the server never initiates pings).
+- `start_connection_cleanup_task(5 min, 10 min idle, heartbeat_timeout)` sweeps
+  all three maps, evicts connections idle too long or missing pongs, and
+  publishes `PlayerDisconnected` for expired player connections.
+
+### 6.10 Disconnection & Reconnection in Games
+
+```mermaid
+stateDiagram-v2
+  [*] --> Connected
+  Connected --> Disconnected: clean close / stream error
+  Connected --> Disconnected: slow consumer (Control overflow)
+  Connected --> Disconnected: heartbeat timeout (cleanup sweep)
+  Disconnected --> Connected: client reopens /ws/{game_id}
+  Connected --> Evicted: same player opens 2nd socket
+  Evicted --> Connected: single-session eviction (reconnect)
+```
+
+**Disconnect** - three paths all end in `remove_connection`, which decrements
+`WS_CONNECTIONS_ACTIVE`, publishes `PlayerDisconnected`, and (if the map empties)
+removes the game entry:
+
+1. Clean close / stream error (`ws_handler` incoming task).
+2. Slow consumer: a `Control` message hit a full queue -> `force_disconnect`.
+3. Heartbeat timeout: cleanup sweep evicts stale/idle connections.
+
+**Reconnect** - the client reopens `GET /ws/{game_id}`:
+
+1. `join_game` resolves the player identity **server-side**
+   (`resolve_player_for_user`) so a client cannot spoof another player's
+   id/position.
+2. `set_player_for_connection` detects a prior connection for the same player or
+   authenticated user and **evicts** it (single live socket per player), then
+   broadcasts `PlayerReconnected`.
+3. The server sends a personalized `game_state_snapshot` (rotated seats,
+   private hand) to the rejoining player.
+4. Anonymous game tokens persist for their TTL, so anonymous players can
+   reconnect after transient disconnections.
+
+**Game-domain staleness -> kick** (scheduler, independent of the socket):
+
+- `check_human_staleness` (`recovery.rs`): a human whose game `updated_at` is
+  older than `game_human_staleness_alert_secs` (900s) gets a `StalenessWarning`
+  event + email; past `game_human_staleness_kick_secs` (1800s) they are
+  `kick_player_from_game`'d -> `PlayerKicked`.
+- `detect_and_recover_stalled_games`: stalled bot games (60s) are resumed via
+  `BotScheduler::run_sync_chain`.
+
+### 6.11 Spectators
+
+- `join_game {spectator: true}` -> `mark_spectator_for_connection` (clears any
+  player identity so a spectator never receives personalized events).
+- Spectators get a **public-only** snapshot: fixed seat orientation, no rotated
+  `display_position`, `claim_offered_to_position` instead of
+  `claim_offered_to_me`, and no `special_cards`.
+- `start_spectator_resync_task(interval)` periodically resends the public
+  snapshot to every game with spectators - self-healing any pub/sub gap, since
+  snapshots are authoritative full state.
 
 ---
 
@@ -734,51 +1140,16 @@ Without sharding, a single Redis `psubscribe` task would become a bottleneck und
 
 ### 7.1 Architecture
 
-```
- ┌───────────────────────────────────────────────────────────────┐
- │                     ai-worker binary                          │
- │                                                               │
- │  ┌─────────────────┐     ┌───────────────────────────────┐   │
- │  │ RabbitMQ        │     │  DB Pool                      │   │
- │  │ Consumer        │     │  (max 100 connections)         │   │
- │  │ ai_tasks queue  │     │                               │   │
- │  └────────┬────────┘     └───────────┬───────────────────┘   │
- │           │                          │                        │
- │           │  ┌───────────────────────┘                        │
- │           │  │                                                │
- │     ┌─────▼──▼────────┐                                       │
- │     │  Global          │                                      │
- │     │  Semaphore(50)   │  Max concurrent bot moves = 50       │
- │     └────────┬─────────┘                                      │
- │              │                                                │
- │     ┌────────▼─────────┐                                      │
- │     │  Per-Game Mutex  │                                      │
- │     │  HashMap<Uuid,   │  Only 1 bot move per game at a time  │
- │     │    Arc<Semaphore>>│                                     │
- │     └────────┬─────────┘                                      │
- │              │                                                │
- │     ┌────────▼──────────────────┐                             │
- │     │  process_bot_move()       │                             │
- │     │  (worker_core.rs)         │                             │
- │     │                           │                             │
- │     │  1. execute_bot_move_     │                             │
- │     │     from_task(task)       │  Pure computation            │
- │     │     → card_index          │  (no DB query needed)        │
- │     │                           │                             │
- │     │  2. GameService::         │                             │
- │     │     update_card_play()    │  DB transaction               │
- │     │                           │                             │
- │     │  3. if next_is_bot:       │                             │
- │     │     publish next AITask   │  Chain bot moves              │
- │     │     (or sync fallback)    │                             │
- │     └───────────────────────────┘                             │
- │                                                               │
- │  ┌──────────────────────────────┐                             │
- │  │  Metrics HTTP server         │  port+2000                   │
- │  │  /metrics                    │  ai_task_duration_seconds    │
- │  │  /health                     │  ai_tasks_in_flight          │
- │  └──────────────────────────────┘                             │
- └───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  A["RabbitMQ Consumer (ai_tasks queue)"] --> B["Global Semaphore(50)"]
+  B --> C["Per-Game Semaphore(1) — HashMap<Uuid, Arc<Semaphore>>"]
+  C --> D["process_bot_move() (worker_core.rs)"]
+  E["DB Pool (100 connections)"] --> D
+  D -->|"1"| F["execute_bot_move_from_task() (pure computation)"]
+  D -->|"2"| G["GameService::update_card_play() (DB transaction)"]
+  D -->|"3"| H["if next_is_bot: publish next AITask (or sync fallback)"]
+  I["Metrics HTTP server (port+2000) /metrics /health"]
 ```
 
 ### 7.2 Concurrency Control
@@ -791,12 +1162,12 @@ Without sharding, a single Redis `psubscribe` task would become a bottleneck und
 
 ### 7.3 Bot Strategy Selection
 
-6 zone‑based strategies, randomly assigned to bots at game creation:
+6 strategy variants; `random_high()` selects among 4 (`LongUp`/`LongDown`/`MidUp`/`MidDown`), re-picked per move (`ShortUp`/`ShortDown` are unused):
 
 | Strategy | Playstyle | Zone |
 |----------|-----------|------|
 | `LongUp` | Plays highest‑ranked cards first | Top half, ascending |
-| `LongDown` | Plays lowest‑ranked cards first | Bottom half, ascending |
+| `LongDown` | Plays highest‑ranked cards first (zone 3 → 1 → 2) | Bottom half, descending |
 | `MidUp` | Plays middle‑ranked cards first | Middle, ascending |
 | `MidDown` | Plays middle‑ranked cards first | Middle, descending |
 | `ShortUp` | Alternates high/low | Narrow band, ascending |
@@ -808,13 +1179,18 @@ Without sharding, a single Redis `psubscribe` task would become a bottleneck und
 struct AITask {
     game_id: Uuid,
     player_id: Uuid,
-    player_position: i32,
-    strategy: StrategyChoice,
-    unplayed_cards: Vec<i32>,        // Cards still in bot's hand
-    round_played_cards: Vec<i32>,    // Cards played this round
+    correlation_id: Option<Uuid>,
+    current_round: i32,
+    current_roll: i32,                  // current round number (1-5)
+    game_status: String,
+    current_player_turn: Option<Uuid>,
+    played_cards_this_round: Vec<i32>,  // played card indices this round
+    bot_hand_cards: Vec<i32>,           // bot's unplayed cards
+    players: Vec<PlayerInfo>,           // all players
     current_winning_card: Option<i32>,
-    played_cards_count: usize,
-    total_players: usize,            // Always 4
+    winning_player_position: Option<i32>,
+    bet: i32,
+    auto_mode: bool,
 }
 ```
 
@@ -822,15 +1198,15 @@ The `AITask` carries enough state for `execute_bot_move_from_task()` to compute 
 
 ### 7.5 Graceful Shutdown
 
-On SIGTERM:
+On Ctrl‑C (SIGINT):
 1. Stop accepting new messages from RabbitMQ.
 2. Wait for all in‑flight tasks to complete (drain `Semaphore`).
-3. Close DB pool.
+3. Drop the worker (releases the DB pool).
 4. Exit.
 
 ### 7.6 Queue Depth Monitoring
 
-Every 30 seconds, the worker logs queue statistics:
+Every 10 seconds (`AI_WORKER_QUEUE_DEPTH_INTERVAL_SECS`), the worker logs queue statistics:
 - **Warning** at 500+ messages queued
 - **Critical** at 1000+ messages queued
 - Exported as `rabbitmq_queue_length` gauge
@@ -843,28 +1219,17 @@ Every 30 seconds, the worker logs queue statistics:
 
 The `scheduler-worker` binary runs 7 periodic tasks via `tokio::task::JoinSet`, all governed by a `watch` channel for graceful shutdown.
 
-```
- ┌───────────────────────────────────────────────────────────────────┐
- │                    scheduler-worker binary                         │
- │                                                                   │
- │  JoinSet {                                                        │
- │    Task 1: cancel_expired_games     (30s interval, 15s timeout)   │
- │    Task 2: detect_stalled_games     (configurable, 30s timeout)   │
- │    Task 3: check_human_staleness    (configurable, 15s timeout)   │
- │    Task 4: check_expired_freezes    (60s interval, 30s timeout)   │
- │    Task 5: refresh_leaderboard      (5 min interval, 60s timeout) │
- │    Task 6: db_pool_metrics          (configurable interval)       │
- │    Task 7: check_stalled_runs       (120s interval, 30s timeout)  │
- │  }                                                                │
- │                                                                   │
- │  watch::Receiver<bool> ──> shutdown signal                         │
- │                                                                   │
- │  Metrics exported:                                                │
- │    scheduler_task_duration_seconds{task}                          │
- │    scheduler_task_timeouts_total{task}                            │
- │    scheduler_task_errors_total{task}                              │
- │    scheduler_last_run_timestamp_seconds{task}                     │
- └───────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  S["scheduler-worker binary"] --> JS["tokio::task::JoinSet (7 tasks)"]
+  SH["watch::Receiver<bool> shutdown signal"] --> JS
+  JS --> T1["cancel_expired_games (30s / 15s)"]
+  JS --> T2["detect_stalled_games (max(60s, staleness) / 30s) — also runs check_human_staleness"]
+  JS --> T3["check_expired_freezes (60s / 30s)"]
+  JS --> T4["refresh_leaderboard (5 min / 60s)"]
+  JS --> T5["db_pool_metrics (configurable)"]
+  JS --> T6["check_stalled_runs (120s / 30s)"]
+  JS --> T7["check_cashout_auto_reject (60s / 30s)"]
 ```
 
 ### 8.2 Task Details
@@ -872,40 +1237,21 @@ The `scheduler-worker` binary runs 7 periodic tasks via `tokio::task::JoinSet`, 
 | # | Task | Interval | Timeout | Description |
 |---|------|----------|---------|-------------|
 | 1 | `cancel_expired_games` | 30s | 15s | Cancels multiplayer `pending` games whose `invite_expires_at` has passed; refunds bets |
-| 2 | `detect_stalled_games` | Configurable (default 30s) | 30s | Finds active games with no card play in `game_staleness_threshold_secs`; auto‑plays bot moves to recover |
-| 3 | `check_human_staleness` | Same as above | 15s | Sends `StalenessWarning` events for inactive humans; kicks after `game_human_staleness_kick_secs` |
-| 4 | `check_expired_freezes` | 60s | 30s | Finds players with `frozen_until` in the past; unfreezes them, sends email notification |
-| 5 | `refresh_leaderboard` | 5 min | 60s | Queries `player_profiles` table, rebuilds Redis sorted sets (`leaderboard:wins`, `leaderboard:streak`) |
-| 6 | `db_pool_metrics` | Configurable | — | Reports `db_pool_size`, `db_pool_idle`, `db_pool_active` to Prometheus |
-| 7 | `check_stalled_runs` | 120s | 30s | Finds game runs where `next_game_auto_start_at` is in the past but no game is active; auto‑cancels the run |
+| 2 | `detect_stalled_games` | `max(60s, staleness)` | 30s | Finds active games with no card play in `game_staleness_threshold_secs`; auto-plays bot moves to recover. Also runs `check_human_staleness` (warning at alert threshold, kick at kick threshold) |
+| 3 | `check_expired_freezes` | 60s | 30s | Finds players with `frozen_until` in the past; unfreezes them, sends email notification |
+| 4 | `refresh_leaderboard` | 5 min | 60s | Queries `player_profiles`, rebuilds Redis sorted sets (`leaderboard:wins`, `leaderboard:streak`) |
+| 5 | `db_pool_metrics` | configurable | — | Reports `db_pool_size`, `db_pool_idle`, `db_pool_active` to Prometheus |
+| 6 | `check_stalled_runs` | 120s | 30s | Finds game runs whose `next_game_auto_start_at` is in the past but no game is active; auto-cancels the run |
+| 7 | `check_cashout_auto_reject` | 60s | 30s | Auto-rejects expired cashout requests and notifies user + admin |
 
 ### 8.3 Staleness Recovery Flow
 
-```
-scheduler tick
-    │
-    ▼
-┌───────────────────────────────────────┐
-│ detect_stalled_games()                │
-│  query: active games, updated_at <   │
-│         now - staleness_threshold    │
-└───────────────┬───────────────────────┘
-                │
-        ┌───────┴───────┐
-        │               │
-   current turn       current turn
-   is HUMAN           is BOT
-        │               │
-        ▼               ▼
-┌──────────────┐  ┌──────────────────────┐
-│check_human_  │  │auto-play bot move    │
-│staleness()   │  │process_bot_move()    │
-│              │  │                      │
-│ inactive <   │  │recover round,        │
-│ alert? → warn│  │advance game          │
-│ inactive >   │  │                      │
-│ kick? → kick │  └──────────────────────┘
-└──────────────┘
+```mermaid
+flowchart TD
+  A["scheduler tick"] --> B["detect_stalled_games() — query active games, updated_at < now - staleness_threshold"]
+  B --> C{"current turn?"}
+  C -->|"human"| D["check_human_staleness() — warn at alert threshold, kick at kick threshold"]
+  C -->|"bot"| E["auto-play bot move: process_bot_move() — recover round, advance game"]
 ```
 
 ---
@@ -914,46 +1260,42 @@ scheduler tick
 
 ### 9.1 Component Tree
 
-```
-App.tsx
-├── AuthModal.tsx              (login/register modal, triggered by any page)
-├── LanguageSwitcher.tsx       (toggle en/fr, synced with backend cookie)
-├── Toast.tsx                  (global toast notifications)
-├── Footer.tsx
-├── ContactForm.tsx
-├── PasswordReset.tsx
-│
-├── [Anonymous Dashboard]
-│   └── QuickGameButton → creates quick game via useGameStore
-│
-├── [Game View]
-│   ├── GameTable.tsx          (4-player layout: N/S/E/W positions)
-│   │   ├── PlayerSlot.tsx × 4 (each player's cards, name, score, turn indicator)
-│   │   │   └── CardFan.tsx    (fan-shaped display of opponent cards)
-│   │   └── Card.tsh            (single card: suit color, rank number)
-│   ├── DeckSlots.tsx          (centre area: played cards per round)
-│   ├── WinnerRing.tsx         (ring animation around round winner)
-│   ├── GameOverModal.tsx      (winner, scores, KORA status, new game button)
-│   └── GameLobby.tsx          (pre-game lobby: invites, player list, start button)
-│
-├── [User Dashboard] (authenticated)
-│   ├── UserDashboard.tsx      (profile summary, game list, credit display)
-│   ├── GameRules.tsx          (rules reference)
-│   ├── LeaderboardPanel.tsx
-│   │
-│   ├── [Room Management]
-│   │   ├── RoomDashboard.tsx
-│   │   ├── RoomList.tsx
-│   │   ├── CreateRoomModal.tsx
-│   │   ├── JoinRoomForm.tsx
-│   │   ├── CreateRunModal.tsx
-│   │   └── GameRunPanel.tsx   (run progress: game X of Y)
-│   │
-│   └── [Payment]
-│       ├── UnfreezePage       (PayPal checkout)
-│       └── TopupPage          (PayPal checkout)
-│
-└── LegalMentions.tsx
+```mermaid
+flowchart TD
+  App["App.tsx"]
+  App --> Auth["AuthModal.tsx"]
+  App --> Lang["LanguageSwitcher.tsx"]
+  App --> Toast["Toast.tsx"]
+  App --> Footer["Footer.tsx"]
+  App --> Contact["ContactForm.tsx"]
+  App --> Reset["PasswordReset.tsx"]
+  App --> Anon["Anonymous Dashboard — QuickGameButton → useGameStore"]
+  App --> Game["Game View"]
+  App --> Dash["User Dashboard (authenticated)"]
+  App --> Legal["LegalMentions.tsx"]
+
+  Game --> Table["GameTable.tsx (4-player N/S/E/W)"]
+  Table --> Slot["PlayerSlot.tsx × 4"]
+  Slot --> Fan["CardFan.tsx"]
+  Table --> Card["Card.tsx (suit color, rank number)"]
+  Game --> Deck["DeckSlots.tsx"]
+  Game --> Ring["WinnerRing.tsx"]
+  Game --> Over["GameOverModal.tsx"]
+  Game --> Lobby["GameLobby.tsx"]
+
+  Dash --> UD["UserDashboard.tsx"]
+  Dash --> Rules["GameRules.tsx"]
+  Dash --> Leader["LeaderboardPanel.tsx"]
+  Dash --> RoomMgmt["Room Management"]
+  RoomMgmt --> RD["RoomDashboard.tsx"]
+  RoomMgmt --> RL["RoomList.tsx"]
+  RoomMgmt --> CRM["CreateRoomModal.tsx"]
+  RoomMgmt --> JR["JoinRoomForm.tsx"]
+  RoomMgmt --> CRun["CreateRunModal.tsx"]
+  RoomMgmt --> GRP["GameRunPanel.tsx"]
+  Dash --> Pay["Payment"]
+  Pay --> Unfreeze["UnfreezePage (PayPal)"]
+  Pay --> Topup["TopupPage (PayPal)"]
 ```
 
 ### 9.2 Zustand Stores
@@ -1023,32 +1365,23 @@ interface RoomState {
 
 ### 9.3 Hooks & WebSocket Wiring
 
-```
-useWebSocket.ts (low-level)
-    │
-    ├── Singleton WebSocketManager per gameId/roomId
-    │   • Auto-reconnect (exponential backoff)
-    │   • Pub/sub pattern: subscribe(callback), unsubscribe(callback)
-    │   • JSON message parsing
-    │   • Ping/Pong heartbeat
-    │
-    ├── useGameWebSocket.ts (game events)
-    │   • Subscribes to game events
-    │   • card_played    → useGameStore.applyCardPlayed()
-    │   • round_completed → useGameStore.setRoundWinner() + clearDeckSlots()
-    │   • game_finished   → useGameStore.setGameOver()
-    │   • turn_changed    → useGameStore.setCurrentTurn()
-    │   • game_started    → useGameStore.setGame()
-    │   • cards_dealt     → useGameStore.updatePlayerCards()
-    │   • player_kicked   → useGameStore (reshuffle)
-    │   • staleness_warning → Toast
-    │
-    └── useRoomWebSocket.ts (room events)
-        • member_joined  → useRoomStore update
-        • member_left    → useRoomStore update
-        • run_created    → useRoomStore update
-        • game_started   → navigate to game
-        • run_completed  → useRoomStore update
+```mermaid
+flowchart TD
+  UWS["useWebSocket.ts (low-level)"] --> Mgr["Singleton WebSocketManager per gameId/roomId — auto-reconnect, pub/sub, JSON parsing, ping/pong"]
+  UWS --> GameWS["useGameWebSocket.ts (game events)"]
+  UWS --> RoomWS["useRoomWebSocket.ts (room events)"]
+
+  GameWS -->|card_played| G1["useGameStore.applyCardPlayed()"]
+  GameWS -->|round_completed| G2["useGameStore.setRoundWinner() + clearDeckSlots()"]
+  GameWS -->|game_finished| G3["useGameStore.setGameOver()"]
+  GameWS -->|turn_changed| G4["useGameStore.setCurrentTurn()"]
+  GameWS -->|game_started| G5["useGameStore.setGame()"]
+  GameWS -->|cards_dealt| G6["useGameStore.updatePlayerCards()"]
+  GameWS -->|player_kicked| G7["useGameStore (reshuffle)"]
+  GameWS -->|staleness_warning| G8["Toast"]
+
+  RoomWS -->|member_joined / member_left / run_created / run_completed| R1["useRoomStore update"]
+  RoomWS -->|game_started| R2["navigate to game"]
 ```
 
 ### 9.4 Data Flow: User Clicks Card
@@ -1076,73 +1409,75 @@ useWebSocket.ts (low-level)
 
 ---
 
-## 10. The GameOrchestrator
+## 10. Game Service Layer
+
+The game domain exposes a trait-based facade
+(`jambo-domain/src/game/service/types.rs`). A single `GameService` struct
+implements four narrowly-scoped service traits that together compose
+`GameServiceTrait`.
+
+```mermaid
+flowchart TD
+  GS["GameService (jambo-domain/src/game/service)"] --> Gp["GamePlayService"]
+  GS --> Inv["InviteService"]
+  GS --> Lc["GameLifecycleService"]
+  GS --> Bn["BenchmarkService"]
+  Gp --> T["GameServiceTrait"]
+  Inv --> T
+  Lc --> T
+  Bn --> T
+```
 
 ### 10.1 Role
 
-The `GameOrchestrator` is the **thin coordination façade** between API handlers and domain services. It sits at `backend/src/game/orchestrator/mod.rs` (371 lines) and implements `GameOrchestratorTrait` for testability.
-
-API handlers never touch repositories, `GameService`, or `BotScheduler` directly. They call the orchestrator, which:
-
-1. **Coordinates cross‑cutting concerns**: idempotency, event publishing, bot scheduling.
-2. **Delegates to `GameService`** for all transactional operations.
-3. **Delegates to `BotScheduler`** for async bot move dispatch.
-4. **Returns domain‑agnostic outcomes** (`PlayCardOutcome`, `QuickGameOutcome`).
+API handlers never touch repositories or `GameService` internals directly. They
+receive `web::Data<Arc<dyn GamePlayService>>` (etc.) injected at bootstrap
+(`jambo-server/src/bootstrap.rs`) and call the trait methods.
 
 ### 10.2 Operations
 
-| Method | Input | Output | Flow |
-|--------|-------|--------|------|
-| `play_card()` | `player_id, card_index, idempotency_key?` | `PlayCardOutcome` | Idempotency check → `GameService::update_card_play()` → `BotScheduler::schedule_if_next_bot()` |
-| `create_quick_game()` | IP hash | `QuickGameOutcome` | Create 1 human + 3 bots, deal cards, start, schedule bot if needed |
-| `create_quick_game_for_user()` | `user_id` | `QuickGameOutcome` | Same but for authenticated user |
-| `create_multiplayer_game()` | `creator_id, bet, max_players, config` | `Game` | Credit check, freeze, insert game, insert creator as player |
-| `start_game()` | `game_id, user_id` | `GameStarted` outcome | Validate, deal cards, mark active, publish events |
-| `send_invites()` | `game_id, user_ids` | Invite result | Validate, insert `GameInvite` rows, send emails |
-| `accept_invite()` | `game_id, user_id` | — | Accept, add to players, check if ready |
-| `decline_invite()` | `game_id, user_id` | — | Mark invite declined |
-| `cancel_game()` | `game_id, user_id` | — | Cancel pending game, refund bets |
+| Trait | Method | Purpose |
+|-------|--------|---------|
+| `GamePlayService` | `play_card(game_id, player_id, card_index, correlation_id, idempotency_key)` | Validate + persist card play, evaluate round, publish events, schedule bot |
+| `GamePlayService` | `advance_bot(game_id, human_player_id)` | Advance a bot move synchronously |
+| `GamePlayService` | `evaluate_round(game_id, human_player_id, idempotency_key)` | Evaluate the current round |
+| `GamePlayService` | `verify_player_ownership(game_id, player_id, user_id)` | Check a user owns a player |
+| `GamePlayService` | `claim_special_victory(...)` / `decline_special_claim(...)` | Resolve special-card claims |
+| `InviteService` | `send_invites(game_id, creator_user_id, invited_user_ids)` | Insert invites, send emails, publish `InviteReceived` |
+| `InviteService` | `accept_invite(game_id, user_id, pseudo)` / `decline_invite(game_id, user_id)` | Accept/decline a multiplayer invite |
+| `GameLifecycleService` | `create_quick_game(...)` / `create_quick_game_for_user_with_step_by_step(...)` | Create a solo quick game |
+| `GameLifecycleService` | `create_multiplayer_game(user_id, pseudo, bet, max_players)` | Create a pending multiplayer game |
+| `GameLifecycleService` | `start_game(game_id, user_id)` | Start a multiplayer game |
+| `BenchmarkService` | `create_benchmark_multiplayer_game(...)` / `cleanup_benchmark_data()` | Benchmark-mode helpers |
 
 ### 10.3 Idempotency Implementation
 
-```
-play_card(player_id, card_index, maybe_idempotency_key)
-    │
-    ├─ key exists? ──No──> skip idempotency
-    │
-    └─ key exists ──> Redis:
-         │
-         │  SET NX EX "idem:{player_id}:{key}" "pending" 300s
-         │
-         ├─ OK (key didn't exist) ──> proceed with play
-         │                               │
-         │                               ▼
-         │                          play succeeds:
-         │                            SET "idem:..." "ok:{outcome_json}" EX 300
-         │                          play fails:
-         │                            DEL "idem:..."
-         │
-         └─ FAIL (key exists) ──> GET "idem:..."
-               │
-               ├─ "pending" ──> return GameError::IdempotencyInProgress
-               ├─ "ok:{...}" ──> return cached outcome
-               └─ else ──> proceed normally (stale entry)
+```mermaid
+flowchart TD
+  A["play_card(player_id, card_index, maybe_idempotency_key)"] --> B{"key exists?"}
+  B -->|No| Z["skip idempotency"]
+  B -->|Yes| C["Redis SET NX EX idem:{player_id}:{key} = 'pending' 300s"]
+  C -->|"OK (key didn't exist)"| D["proceed with play"]
+  D -->|"play succeeds"| E["SET idem:... = 'ok:{outcome_json}' EX 300"]
+  D -->|"play fails"| F["DEL idem:..."]
+  C -->|"FAIL (key exists)"| G["GET idem:..."]
+  G -->|"'pending'"| H["return GameError::IdempotencyInProgress"]
+  G -->|"'ok:{...}'"| I["return cached outcome"]
+  G -->|"else"| J["proceed normally (stale entry)"]
 ```
 
-### 10.4 Trait Abstraction
+### 10.4 Trait Abstraction & Testing
 
 ```rust
 #[async_trait]
-pub trait GameOrchestratorTrait: Send + Sync {
-    async fn play_card(...) -> Result<PlayCardOutcome, AppError>;
-    async fn create_quick_game(...) -> Result<QuickGameOutcome, AppError>;
-    async fn create_multiplayer_game(...) -> Result<Game, AppError>;
-    async fn start_game(...) -> Result<(), AppError>;
-    // ... etc
+pub trait GameServiceTrait:
+    GamePlayService + InviteService + GameLifecycleService + BenchmarkService
+{
 }
 ```
 
-`MockGameOrchestrator` implements this trait for integration testing, returning pre‑configured outcomes without touching the database.
+A `mock` module (`#[cfg(any(test, feature = "testing"))] pub mod mock`) provides
+in-memory implementations of the service traits for integration tests.
 
 ---
 
@@ -1150,49 +1485,16 @@ pub trait GameOrchestratorTrait: Send + Sync {
 
 ### 11.1 Cache Layers Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Redis (optional)                      │
-│                                                              │
-│  ┌───────────────────┐  ┌───────────────────────────────┐   │
-│  │ UserCache         │  │ GameState Cache               │   │
-│  │                   │  │                               │   │
-│  │ user:uuid:{uuid}  │  │ game:state:{game_id}          │   │
-│  │   → {pseudo,email}│  │   → CachedGameState JSON      │   │
-│  │   TTL: 15 min     │  │   TTL: 5 min                  │   │
-│  │                   │  │                               │   │
-│  │ user:pseudo:{name}│  │ Created: after each card play │   │
-│  │   → uuid          │  │ Invalidated: game finished    │   │
-│  │   TTL: 15 min     │  │                               │   │
-│  └───────────────────┘  └───────────────────────────────┘   │
-│                                                              │
-│  ┌───────────────────┐  ┌───────────────────────────────┐   │
-│  │ Leaderboard       │  │ Dashboard Cache               │   │
-│  │                   │  │                               │   │
-│  │ leaderboard:wins  │  │ dashboard:profile:{user_id}   │   │
-│  │  Sorted Set       │  │ dashboard:games:{user_id}:*   │   │
-│  │  Refresh: 5 min   │  │                               │   │
-│  │                   │  │ Invalidated: on game complete │   │
-│  │ leaderboard:streak│  │                               │   │
-│  │  Sorted Set       │  └───────────────────────────────┘   │
-│  └───────────────────┘                                      │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐   │
-│  │ Idempotency Cache                                     │   │
-│  │                                                       │   │
-│  │ idem:{player_id}:{key}                                │   │
-│  │   → "pending" | "ok:{outcome_json}"                   │   │
-│  │   TTL: 300s (5 min)                                   │   │
-│  └───────────────────────────────────────────────────────┘   │
-│                                                              │
-│  ┌───────────────────────────────────────────────────────┐   │
-│  │ Rate Limiter Cache                                    │   │
-│  │                                                       │   │
-│  │ ratelimit:{path}:{user_id}                            │   │
-│  │   → counter (sliding window)                          │   │
-│  │   TTL: window_seconds                                 │   │
-│  └───────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  subgraph redis["Redis (optional)"]
+    UC["UserCache — user:uuid:{uuid} / user:pseudo:{name} (TTL 15 min)"]
+    GC["GameState Cache — game:state:{game_id} (TTL 5 min)"]
+    LB["Leaderboard — leaderboard:wins / leaderboard:streak sorted sets (refresh 5 min)"]
+    DC["Dashboard Cache — dashboard:profile:{user_id} (5 min) / dashboard:games:{user_id}:* (30 s)"]
+    IC["Idempotency Cache — idem:{player_id}:{key} (TTL 300 s)"]
+    RC["Rate Limiter Cache — ratelimit:{path}:{user_id} (TTL window_seconds)"]
+  end
 ```
 
 ### 11.2 UserCache
@@ -1266,7 +1568,7 @@ ZADD leaderboard:streak {score} {user_id}
 **Insertion**: On dashboard load (`GET /api/me/profile`, `GET /api/me/games`):
 ```
 SETEX dashboard:profile:{user_id} {profile_json} 300
-SETEX dashboard:games:{user_id}:{page} {games_json} 120
+SETEX dashboard:games:{user_id}:{page} {games_json} 30
 ```
 
 **Invalidation**: On game completion, cancellation, profile update → `DEL dashboard:*:{user_id}:*` (pattern delete: `SCAN` + `DEL`).
@@ -1309,7 +1611,7 @@ ratelimit:{path}:{user_id}  → counter
 
 **Problem**: A single `psubscribe` task handling all `game:*` events would be a bottleneck under load (serial JSON deserialization + routing).
 
-**Solution**: N = `min(num_cpus, 8)` parallel subscriber tasks, each subscribing to `game:*` and `room:*`. Consistent hashing (`hash(game_id_bytes) % N`) assigns each game to exactly one shard.
+**Solution**: N = `num_cpus::get().clamp(1, 8)` parallel subscriber tasks, each subscribing to `game:*`, `room:*` and `user:*`. A deterministic hash (`hash(id_bytes) % N`, `websocket/routing.rs`) assigns each game/room/user id to exactly one shard.
 
 **Benefit**: ~N× throughput increase for event distribution.
 
@@ -1330,7 +1632,7 @@ ratelimit:{path}:{user_id}  → counter
 loop retry ≤ 3:
   UPDATE games SET ... WHERE id = $1 AND updated_at = $2
   if rows_affected == 0:
-    sleep(exponential_backoff: 10ms, 20ms, 40ms)
+    sleep(backoff: 20ms, 40ms)
     re-read game state
     retry
   else:
@@ -1341,7 +1643,7 @@ This eliminates the need for row‑level locks in PostgreSQL while preserving co
 
 ### 12.4 Bot Chain Throttling
 
-**Problem**: In sync fallback mode, a single game's bot chain could recursively process all 3 bot moves serially, consuming a DB connection for an extended period.
+**Problem**: In sync fallback mode, a single game's bot chain could iteratively process all 3 bot moves serially, consuming a DB connection for an extended period.
 
 **Solution**: Global `Semaphore(10)` limits the number of concurrent sync chains. If all 10 slots are occupied, additional games wait asynchronously without blocking threads.
 
@@ -1354,7 +1656,7 @@ This eliminates the need for row‑level locks in PostgreSQL while preserving co
 ### 12.6 Connection Pool Configuration
 
 ```rust
-db_pool_max_connections: u32,         // default: varies by binary
+db_pool_max_connections: u32,         // default 100 (server & scheduler); AI worker uses AI_WORKER_DB_POOL_SIZE (default 100)
 db_pool_min_connections: u32,         // keep warm
 db_pool_connect_timeout_secs: u64,    // fail fast on startup
 db_pool_acquire_timeout_secs: u64,    // propagate contention errors
@@ -1385,7 +1687,7 @@ Multiple `ai-worker` processes can be deployed behind a single RabbitMQ queue. R
 | **User cache** | Redis `GET` / `MGET` | Returns `None` → DB fallback | Redis unavailable |
 | **Idempotency** | Redis `SET NX EX` | Skip idempotency (log warning) | Redis unavailable |
 | **Rate limiting** | Redis `INCR` + `EXPIRE` | Local in‑memory counter | Redis unavailable |
-| **Optimistic lock** | Retry 3× with backoff (10/20/40ms) | Return `GameError::ConcurrentModification` | 3rd retry also fails |
+| **Optimistic lock** | Retry with backoff (20/40ms) | Return `GameError::internal("Optimistic lock conflict after max retries")` | retries exhausted |
 | **Circuit breaker** | Normal publish | `open`: skip publish, `half-open`: probe publish | 5 consecutive RabbitMQ failures |
 | **Leaderboard fetch** | `ZREVRANGE leaderboard:wins` | `SELECT ... ORDER BY wins DESC LIMIT 10` | Redis unavailable |
 | **API 404** | Route matched | `fallback::not_found()` JSON with `request_id` | No route matched |
@@ -1393,18 +1695,13 @@ Multiple `ai-worker` processes can be deployed behind a single RabbitMQ queue. R
 
 ### 13.2 Circuit Breaker State Machine
 
-```
-       ┌──────────┐
-       │  CLOSED  │──── failure_count >= threshold ────> ┌─────────┐
-       │ (normal) │                                      │  OPEN   │
-       └──────────┘ <──── probe succeeds ─────────────── └────┬────┘
-              ▲                                                │
-              │                              cooldown expires  │
-              │                                                │
-              └──────── probe fails ──────── ┌─────────────┐   │
-                                             │ HALF_OPEN   │<──┘
-                                             │ (probe)     │
-                                             └─────────────┘
+```mermaid
+stateDiagram-v2
+  [*] --> CLOSED
+  CLOSED --> OPEN : failure_count >= threshold (5)
+  OPEN --> HALF_OPEN : cooldown expires (30s)
+  HALF_OPEN --> CLOSED : probe succeeds
+  HALF_OPEN --> OPEN : probe fails
 ```
 
 - **Threshold**: 5 consecutive failures (`circuit_breaker_failure_threshold`)
@@ -1413,33 +1710,21 @@ Multiple `ai-worker` processes can be deployed behind a single RabbitMQ queue. R
 
 ### 13.3 Sync Chain Fallback Flow
 
-```
-BotScheduler::schedule_if_next_bot(next_player)
-    │
-    ├─ next player is HUMAN ──> return (nothing to do)
-    │
-    └─ next player is BOT:
-         │
-         ├─ build_ai_task() ── succeeds ──> publish to RabbitMQ
-         │                                       │
-         │                                  publish succeeds → return
-         │                                  publish fails ────┐
-         │                                                    │
-         ├─ build_ai_task() fails OR publish fails ──────────┘
-         │                                                    │
-         └────────────────────────────────────────────────────┘
-              │
-              ▼
-         BotScheduler::run_sync_chain(game_id)
-              │
-              ├─ acquire Semaphore(10) permit
-              ├─ read game state from DB
-              ├─ execute_bot_move() → card_index
-              ├─ GameService::update_card_play(card_index)
-              ├─ if next player is also BOT:
-              │    recursive call to run_sync_chain()
-              ├─ release Semaphore permit
-              └─ return
+```mermaid
+flowchart TD
+  A["BotScheduler::schedule_if_next_bot(next_player)"] --> B{"next player?"}
+  B -->|"HUMAN"| Z["return (nothing to do)"]
+  B -->|"BOT"| C["build_ai_task()"]
+  C -->|"succeeds"| D["publish to RabbitMQ"]
+  D -->|"succeeds"| R["return"]
+  D -->|"fails"| F["run_sync_chain(game_id)"]
+  C -->|"fails"| F
+  F --> G["acquire Semaphore(10) permit"]
+  G --> H["read game state from DB"]
+  H --> I["execute_one_bot_move() → update_card_play()"]
+  I --> J{"next player also BOT?"}
+  J -->|"yes"| I
+  J -->|"no"| K["release permit, return"]
 ```
 
 ### 13.4 Graceful Degradation Without Redis
@@ -1462,109 +1747,128 @@ When Redis is completely unavailable:
 
 ## 14. Metrics
 
-### 14.1 Prometheus Metric Families (40+)
+### 14.1 Prometheus Metric Families
 
 #### RabbitMQ
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `rabbitmq_publish_total` | CounterVec | `queue` | Messages published |
-| `rabbitmq_publish_errors_total` | CounterVec | `queue` | Failed publish attempts |
-| `rabbitmq_consume_total` | Counter | — | Consumer starts |
-| `rabbitmq_healthy` | Gauge | — | 1=healthy, 0=unhealthy |
-| `rabbitmq_queue_length` | Gauge | — | Messages in `ai_tasks` queue |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `rabbitmq_publish_total` | CounterVec | `queue` |
+| `rabbitmq_publish_errors_total` | CounterVec | `queue` |
+| `rabbitmq_consume_total` | Counter | — |
+| `rabbitmq_healthy` | Gauge | — |
+| `rabbitmq_queue_length` | Gauge | — |
 
 #### WebSocket
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `ws_messages_sent_total` | Counter | — | Messages sent to clients |
-| `ws_connections_active` | Gauge | — | Current active connections |
-| `ws_disconnects_total` | Counter | — | Client disconnections |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `ws_messages_sent_total` | Counter | — |
+| `ws_messages_dropped_total` | Counter | — |
+| `ws_connections_active` | Gauge | — |
+| `ws_disconnects_total` | Counter | — |
+| `ws_heartbeat_timeouts_total` | Counter | — |
+| `ws_spectators_per_game` | GaugeVec | `game_id` |
+| `ws_send_failed_total` | Counter | — |
+| `ws_slow_consumer_disconnects_total` | Counter | — |
+| `ws_send_queue_depth` | Gauge | — |
+| `ws_auth_blacklist_redis_errors_total` | Counter | — |
+| `ws_token_validation_redis_errors_total` | Counter | — |
 
 #### HTTP
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `http_requests_total` | CounterVec | `method, path, status` | Total HTTP requests |
-| `http_request_duration_seconds` | HistogramVec | `method, path` | Request latency (5ms–10s buckets) |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `http_requests_total` | CounterVec | `method, path, status` |
+| `http_request_duration_seconds` | HistogramVec | `method, path` |
 
 #### Game
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `games_finished_total` | CounterVec | `status` (finished/kora/double_kora) | Completed games |
-| `active_games` | Gauge | — | Currently active games |
-| `game_creation_duration_seconds` | Histogram | — | Time to create a game |
-| `game_duration_seconds` | Histogram | — | Total game lifetime |
-| `card_play_duration_seconds` | Histogram | — | Card play endpoint latency |
-| `round_eval_duration_seconds` | Histogram | — | Round evaluation time |
-| `games_stalled_total` | Counter | — | Games recovered by staleness detection |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `games_finished_total` | CounterVec | `status` (finished/kora/double_kora) |
+| `active_games` | Gauge | — |
+| `game_creation_duration_seconds` | HistogramVec | `game_mode` |
+| `game_duration_seconds` | HistogramVec | `game_mode` |
+| `card_play_duration_seconds` | HistogramVec | `operation` |
+| `round_eval_duration_seconds` | HistogramVec | — |
+| `games_stalled_total` | Counter | — |
+| `game_state_cache_write_errors_total` | Counter | — |
 
 #### Bot / AI Worker
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `ai_task_duration_seconds` | Histogram | — | AI task processing time |
-| `ai_tasks_in_flight` | Gauge | — | Currently processing tasks |
-| `bot_move_duration_seconds` | Histogram | — | Bot move computation time |
-| `bot_errors_total` | Counter | — | Bot move failures |
-| `bot_chain_fallback_total` | Counter | — | Sync chain fallback activations |
-| `bot_chain_publish_failures_total` | Counter | — | Publish failures in chain |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `ai_task_duration_seconds` | HistogramVec | `execution_method` |
+| `ai_tasks_in_flight` | Gauge | — |
+| `bot_move_duration_seconds` | HistogramVec | `execution_method` |
+| `bot_errors_total` | CounterVec | `error_type` |
+| `bot_chain_fallback_total` | Counter | — |
+| `bot_chain_publish_failures_total` | Counter | — |
+| `bot_chain_retries_total` | Counter | — |
+| `bot_chain_breaks_total` | Counter | — |
 
 #### Database
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `db_pool_size` | Gauge | — | Total pool connections |
-| `db_pool_idle` | Gauge | — | Idle connections |
-| `db_pool_active` | Gauge | — | Active connections |
-| `db_query_duration_seconds` | Histogram | `entity` | Query latency |
-| `db_transaction_duration_seconds` | Histogram | — | Transaction lifetime |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `db_pool_size` | GaugeVec | `process` |
+| `db_pool_idle` | GaugeVec | `process` |
+| `db_pool_active` | GaugeVec | `process` |
+| `db_query_duration_seconds` | HistogramVec | `query_type` |
+| `db_transaction_duration_seconds` | HistogramVec | `operation` |
 
 #### Redis
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `redis_publish_duration_seconds` | Histogram | — | Redis publish latency |
-| `redis_cache_hit_ratio` | Gauge | `cache` (user/game) | Cache hit ratio |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `redis_publish_duration_seconds` | HistogramVec | — |
+| `redis_publish_retries_total` | CounterVec | `channel` |
+| `redis_publish_failures_total` | CounterVec | `channel` |
+| `redis_buffer_overflow_total` | Counter | — |
+| `redis_cache_hits_total` | Counter | — |
+| `redis_cache_misses_total` | Counter | — |
+| `redis_cache_hit_ratio` | Gauge | — |
+| `redis_subscriber_shards_active` | Gauge | — |
 
 #### Payment
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `payment_topup_total` | CounterVec | `status` (created/captured/failed) | Top-up payment operations |
-| `payment_unfreeze_total` | CounterVec | `status` (created/captured/failed) | Unfreeze payment operations |
-| `payment_topup_duration_seconds` | HistogramVec | `operation` (create_order/capture_order) | PayPal top-up call latency |
-| `payment_unfreeze_duration_seconds` | HistogramVec | `operation` (create_order/capture_order) | PayPal unfreeze call latency |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `payment_topup_total` | CounterVec | `status` |
+| `payment_unfreeze_total` | CounterVec | `status` |
+| `payment_topup_duration_seconds` | HistogramVec | `operation` |
+| `payment_unfreeze_duration_seconds` | HistogramVec | `operation` |
 
 #### Rate Limiting
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `rate_limit_hits_total` | Counter | `path` | Rate limit rejections |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `rate_limit_hits_total` | Counter | — |
 
 #### Circuit Breaker
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `circuit_breaker_state` | Gauge | — | 0=closed, 1=open, 2=half-open |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `circuit_breaker_state` | Gauge | — |
 
 #### Scheduler
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `scheduler_task_duration_seconds` | HistogramVec | `task` | Task execution time |
-| `scheduler_task_timeouts_total` | CounterVec | `task` | Tasks exceeding timeout |
-| `scheduler_task_errors_total` | CounterVec | `task` | Task failures |
-| `scheduler_last_run_timestamp_seconds` | GaugeVec | `task` | Last successful run timestamp |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `scheduler_task_duration_seconds` | HistogramVec | `task` |
+| `scheduler_task_timeouts_total` | CounterVec | `task` |
+| `scheduler_task_errors_total` | CounterVec | `task` |
+| `scheduler_last_run_timestamp_seconds` | GaugeVec | `task` |
 
-#### System
+#### System & Misc
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `memory_usage_bytes` | Gauge | — | Process memory (RSS) |
-| `cpu_usage_percent` | Gauge | — | Process CPU usage |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `memory_usage_bytes` | GaugeVec | `process` |
+| `cpu_usage_percent` | GaugeVec | `process` |
+| `run_completion_errors_total` | Counter | — |
+| `email_send_errors_total` | CounterVec | `kind` |
 
 ### 14.2 Metrics Endpoint
 
@@ -1572,7 +1876,7 @@ When Redis is completely unavailable:
 GET /metrics  →  Prometheus text format (Content-Type: text/plain; version=0.0.4)
 ```
 
-Available on both `jambo-backend` and `ai-worker` (the worker exposes its own HTTP server on `port + 2000`).
+Available on `jambo-server` (`/metrics`), `ai-worker` (own HTTP server on `port + 2000`), and `scheduler-worker` (own HTTP server on `port + 1000`).
 
 ---
 
@@ -1580,55 +1884,19 @@ Available on both `jambo-backend` and `ai-worker` (the worker exposes its own HT
 
 ### 15.1 Architecture
 
-```
-┌─────────────────────────────────────────────┐
-│                Language Detection           │
-│                                             │
-│  1. Cookie "lang" (set via POST /api/lang)  │
-│  2. Accept-Language header                  │
-│  3. Default: English ("en")                 │
-└─────────────────────┬───────────────────────┘
-                      │
-          ┌───────────▼───────────┐
-          │    I18nMiddleware      │
-          │  (extracts/attaches    │
-          │   Lang to request)     │
-          └───────────┬───────────┘
-                      │
-          ┌───────────▼───────────┐
-          │     Translator        │
-          │                       │
-          │  en.json  ────> HashMap<String, String>
-          │  fr.json  ────> HashMap<String, String>
-          │                       │
-          │  tr("auth.password_   │
-          │     too_short") → "Password must be   │
-          │                   at least 8 characters"│
-          │                       │
-          │  t("auth.password_    │
-          │    too_short", lang)  │
-          │  (parameterized)      │
-          └───────────┬───────────┘
-                      │
-          ┌───────────▼───────────┐
-          │  API Endpoints        │
-          │                       │
-          │  POST /api/lang       │
-          │    { "lang": "fr" }   │
-          │    → Set-Cookie:      │
-          │      lang=fr          │
-          │                       │
-          │  GET  /api/lang       │
-          │    → { "lang": "en" } │
-          │                       │
-          │  GET  /api/languages  │
-          │    → ["en", "fr"]     │
-          └───────────────────────┘
+```mermaid
+flowchart TD
+  A["Language Detection — 1. cookie 'lang', 2. Accept-Language header, 3. default 'en'"] --> B["I18nMiddleware (attaches Lang to request)"]
+  B --> C["Translator (en.json / fr.json → HashMap)"]
+  C --> D["API Endpoints"]
+  D --> D1["POST /api/lang {lang} → Set-Cookie lang"]
+  D --> D2["GET /api/lang → {lang}"]
+  D --> D3["GET /api/languages → ['en','fr']"]
 ```
 
 ### 15.2 Translation File Structure
 
-`backend/src/i18n/translations/en.json` and `fr.json` contain ~120 keys organized by domain:
+`crates/jambo-i18n/src/translations/en.json` and `fr.json` contain ~120 keys organized by domain:
 
 ```
 auth.*          — Registration, login, logout, password reset
@@ -1664,30 +1932,22 @@ Uses `i18next` + `react-i18next` + `i18next-browser-languagedetector`:
 
 | Layer | Technology | Configuration |
 |-------|-----------|---------------|
-| Structured logs | `tracing` + `tracing-subscriber` | JSON format, `log_level` from config |
-| HTTP spans | `tracing-actix-web` | Auto‑span per request with method, path, status |
+| Structured logs | `tracing` + `tracing-subscriber` | JSON format, level from `RUST_LOG` (default `info`) |
+| HTTP spans | custom `CorrelationIdMiddleware` | Span per request (`http.method`, `http.path`, `http.status_code`) |
 | WebSocket spans | Custom `ws.rs` helpers | Span per connection, per event type |
 | Correlation | `CorrelationId` (UUID) | Propagated via task‑local storage |
 
 ### 16.2 CorrelationId Propagation
 
-```
-Frontend (X-Correlation-Id header)
-    │
-    ▼
-CorrelationIdMiddleware
-    ├─ extracts or generates UUID
-    ├─ stores in task-local: CORRELATION_ID.with(...)
-    ├─ injects into response: X-Request-Id header
-    │
-    ├─ GameOrchestrator::play_card()
-    │   └─ correlation_id included in GameEvent
-    │
-    ├─ Redis publish: correlation_id in event JSON
-    │
-    ├─ RabbitMQ AITask: correlation_id in task struct
-    │
-    └─ WebSocket outgoing message: correlation_id in event JSON
+```mermaid
+flowchart TD
+  A["Frontend (X-Request-Id, fallback X-Correlation-Id header)"] --> B["CorrelationIdMiddleware"]
+  B --> C["extract or generate UUID → task-local CORRELATION_ID"]
+  B --> D["inject X-Request-Id response header"]
+  C --> E["GameService::play_card() → correlation_id in GameEvent"]
+  C --> F["Redis publish → correlation_id in event JSON"]
+  C --> G["RabbitMQ AITask → correlation_id in task"]
+  C --> H["WebSocket outgoing → correlation_id in event JSON"]
 ```
 
 ### 16.3 Log Levels
@@ -1711,17 +1971,10 @@ CorrelationIdMiddleware
 
 ### 16.5 Span Hierarchy (Example)
 
-```
-http_request {method=POST, path=/api/games/{id}/play, correlation_id=...}
-  ├── play_card {game_id=..., player_id=...}
-  │   ├── idempotency_check {key=...}
-  │   ├── update_card_play {round=..., card_index=...}
-  │   │   ├── db_transaction {entity=GameCard}
-  │   │   └── evaluate_round {round=...}
-  │   │       └── process_payment {amount=...}
-  │   ├── publish_event {event=CardPlayed}
-  │   └── schedule_bot {bot_player_id=...}
-  └── response {status=200, duration_ms=...}
+```mermaid
+flowchart TD
+  A["http_request (http.method, http.path, http.status_code, correlation_id)"] --> B["card_play (game_id, player_id)"]
+  B --> C["round_eval"]
 ```
 
 ---
@@ -1730,93 +1983,201 @@ http_request {method=POST, path=/api/games/{id}/play, correlation_id=...}
 
 ### 17.1 Entity‑Relationship Diagram
 
-```
-┌──────────┐       ┌─────────────┐       ┌──────────────┐
-│   User   │       │PlayerProfile│       │  GameInvite  │
-├──────────┤       ├─────────────┤       ├──────────────┤
-│ id       │──┐    │ id          │       │ id           │
-│ pseudo   │  │    │ user_id (FK)│       │ game_id (FK) │
-│ email    │  ├───<│ player_type │       │ invited_user  │
-│ password │  │    │ credit      │       │   _id (FK)   │
-│ lang     │  │    │ games_played│       │ status       │
-│ created  │  │    │ wins        │       └──────────────┘
-│ updated  │  │    │ kora_wins   │
-└──────────┘  │    │ streak      │
-              │    │ frozen_until│
-              │    │ geo fields  │
-              │    └─────────────┘
-              │
-              │    ┌──────────┐       ┌──────────────┐
-              │    │   Game   │       │   Player     │
-              │    ├──────────┤       ├──────────────┤
-              │    │ id       │──┐    │ id           │
-              │    │ status   │  │    │ game_id (FK) │
-              │    │ bet      │  ├──< │ player_type  │
-              │    │ roll     │  │    │ name         │
-              │    │ rank     │  │    │ position     │
-              │    │ auto     │  │    │ credits      │
-              │    │ winner_id│  │    │ user_id (FK) │──┐
-              │    │ creator  │──┤    │ kicked       │  │
-              │    │   _id(FK)│  │    └──────────────┘  │
-              │    │ positions│  │                       │
-              │    │ game_mode│  │    ┌──────────────┐   │
-              │    │ max_play │  │    │  GameCard    │   │
-              │    │ run_id   │  │    ├──────────────┤   │
-              │    │ created  │  │    │ id           │   │
-              │    │ updated  │  ├──< │ game_id (FK) │   │
-              │    │ finished │  │    │ player_id(FK)│   │
-              │    └──────────┘  │    │ card_index   │   │
-              │                  │    │ played       │   │
-              │                  │    │ round        │   │
-              │                  │    └──────────────┘   │
-              │                  │                       │
-              │                  │    ┌──────────────┐   │
-              │                  │    │  GameRunGame │   │
-              │                  │    ├──────────────┤   │
-              │                  │    │ game_id (FK) │   │
-              │                  │    │ run_id (FK)  │   │
-              │                  │    └──────┬───────┘   │
-              │                  │           │           │
-              │                  │    ┌──────▼───────┐   │
-              │                  │    │   GameRun    │   │
-              │                  │    ├──────────────┤   │
-              │                  │    │ id           │   │
-              │                  │    │ room_id (FK) │   │
-              │                  │    │ num_games    │   │
-              │                  │    │ bet_per_game │   │
-              │                  │    │ current_idx  │   │
-              │                  │    │ status       │   │
-              │                  │    │ created_by   │───┘
-              │                  │    │ auto_start   │
-              │                  │    │ stall fields │
-              │                  │    └──────┬───────┘
-              │                  │           │
-              │                  │    ┌──────▼───────┐
-              │                  │    │GameRunPlayer │
-              │                  │    ├──────────────┤
-              │                  │    │ run_id (FK)  │
-              │                  │    │ user_id (FK) │──┘
-              │                  │    │ position     │
-              │                  │    │ credits      │
-              │                  │    └──────────────┘
-              │                  │
-              │                  │    ┌──────────────┐
-              │                  │    │    Room      │
-              │                  │    ├──────────────┤
-              │                  │    │ id           │
-              │                  │    │ name         │
-              │                  │    │ creator_id   │──┐
-              │                  │    │ invite_code  │  │
-              │                  │    └──────┬───────┘  │
-              │                  │           │          │
-              │                  │    ┌──────▼───────┐  │
-              │                  │    │ RoomMember   │  │
-              │                  │    ├──────────────┤  │
-              │                  └───<│ room_id (FK) │  │
-              │                       │ user_id (FK) │──┘
-              │                       └──────────────┘
-              │
-              └──────────────────────────┘
+```mermaid
+erDiagram
+  USER ||--o| PLAYER_PROFILE : has
+  USER ||--o{ PLAYER : plays
+  USER ||--o{ GAME_INVITE : invited
+  USER ||--o{ GAME : creates
+  USER ||--o{ ROOM : creates
+  USER ||--o{ ROOM_MEMBER : member
+  USER ||--o{ GAME_RUN : creates
+  USER ||--o{ GAME_RUN_PLAYER : joins
+  USER ||--o{ CASHOUT_REQUEST : requests
+  USER ||--o{ TOPUP_TRANSACTION : transacts
+
+  GAME ||--o{ PLAYER : has
+  GAME ||--o{ GAME_CARD : deals
+  GAME ||--o{ GAME_INVITE : sends
+  GAME ||--o| PLAYER : winner
+  GAME ||--o{ GAME_RUN_GAME : in_run
+
+  PLAYER ||--o{ GAME_CARD : holds
+
+  ROOM ||--o{ ROOM_MEMBER : has
+  ROOM ||--o{ GAME_RUN : runs
+
+  GAME_RUN ||--o{ GAME_RUN_PLAYER : has
+  GAME_RUN ||--o{ GAME_RUN_GAME : includes
+  GAME_RUN ||--o{ GAME_RUN_EVENT : logs
+
+  GAME_RUN_GAME ||--o| GAME : references
+
+  USER {
+    uuid id PK
+    string pseudo
+    string email
+    string password_hash
+    string last_ip_hash
+    string language
+    datetime created_at
+    datetime updated_at
+  }
+  PLAYER_PROFILE {
+    uuid id PK
+    uuid user_id FK
+    string player_type
+    int credit
+    int game_played
+    int wins
+    int kora_wins
+    int winning_streak
+    float latitude
+    float longitude
+    string country_code
+    string city
+    datetime frozen_until
+    boolean cashout_locked
+    datetime created_at
+    datetime updated_at
+  }
+  GAME {
+    uuid id PK
+    string status
+    int bet
+    datetime created_at
+    datetime updated_at
+    datetime finished_at
+    int rank
+    int roll
+    boolean auto
+    uuid winner_id FK
+    string player_positions
+    int current_winning_card
+    int current_winning_player_position
+    uuid creator_id FK
+    string game_mode
+    int max_players
+    datetime invite_expires_at
+    datetime stall_warning_sent_at
+    uuid game_run_id FK
+    boolean step_by_step
+    string kicked_players
+    uuid pending_claim_player_id
+  }
+  PLAYER {
+    uuid id PK
+    uuid game_id FK
+    string player_type
+    string name
+    int position
+    int credits
+    datetime created_at
+    uuid user_id FK
+    boolean kicked
+    datetime kicked_at
+  }
+  GAME_CARD {
+    uuid id PK
+    uuid game_id FK
+    uuid player_id FK
+    int card_index
+    boolean played
+    datetime played_at
+    int round
+    datetime created_at
+  }
+  GAME_INVITE {
+    uuid id PK
+    uuid game_id FK
+    uuid invited_user_id FK
+    string status
+    datetime created_at
+  }
+  ROOM {
+    uuid id PK
+    string name
+    uuid creator_id FK
+    string invitation_code
+    datetime created_at
+    datetime updated_at
+  }
+  ROOM_MEMBER {
+    uuid id PK
+    uuid room_id FK
+    uuid user_id FK
+    datetime joined_at
+  }
+  GAME_RUN {
+    uuid id PK
+    uuid room_id FK
+    int num_games
+    int bet_per_game
+    int num_players
+    int current_game_index
+    string status
+    uuid created_by FK
+    datetime next_game_auto_start_at
+    datetime stall_warning_sent_at
+    datetime stall_cancelled_at
+    datetime created_at
+    datetime updated_at
+  }
+  GAME_RUN_PLAYER {
+    uuid id PK
+    uuid game_run_id FK
+    uuid user_id FK
+    int position
+    int provisioned_credits
+    boolean kicked
+    datetime joined_at
+  }
+  GAME_RUN_GAME {
+    uuid id PK
+    uuid game_run_id FK
+    uuid game_id FK
+    int game_index
+    string status
+    datetime created_at
+  }
+  GAME_RUN_EVENT {
+    uuid id PK
+    uuid game_run_id FK
+    uuid user_id FK
+    string event_type
+    string data
+    datetime created_at
+  }
+  ADMIN_KEY {
+    uuid id PK
+    string label
+    string key_hash
+    datetime created_at
+    datetime revoked_at
+  }
+  CASHOUT_REQUEST {
+    uuid id PK
+    uuid user_id FK
+    int credits
+    int amount_eur_cents
+    string status
+    string paypal_email
+    string paypal_payout_batch_id
+    string admin_note
+    uuid processed_by
+    datetime created_at
+    datetime updated_at
+    datetime processed_at
+  }
+  TOPUP_TRANSACTION {
+    uuid id PK
+    uuid user_id FK
+    string kind
+    int amount_eur_cents
+    int credits
+    string order_id
+    datetime created_at
+  }
 ```
 
 ### 17.2 Enums
@@ -1827,20 +2188,34 @@ http_request {method=POST, path=/api/games/{id}/play, correlation_id=...}
 | `PlayerType` | `human`, `bot` | `players.player_type`, `player_profiles.player_type` |
 | `GameMode` | `solo`, `multiplayer` | `games.game_mode` |
 | `InviteStatus` | `pending`, `accepted`, `declined` | `game_invites.status` |
+| `RunStatus` | `active`, `cancelled`, `completed` | `game_runs.status`, `game_run_games.status` |
+| `CashoutStatus` | `requested`, `approved`, `rejected`, `paid` | `cashout_requests.status` |
+| `TopupTransactionKind` | `topup`, `unfreeze` | `topup_transactions.kind` |
 
 ### 17.3 Key Relationships
 
+- `User` 1:1 `PlayerProfile` (via `user_id`)
+- `User` 1:N `Player` (via `user_id`, optional)
+- `User` 1:N `Game` (via `creator_id`)
+- `User` 1:N `GameInvite` (via `invited_user_id`)
+- `User` 1:N `Room` (via `creator_id`)
+- `User` 1:N `RoomMember` (via `user_id`)
+- `User` 1:N `GameRun` (via `created_by`)
+- `User` 1:N `GameRunPlayer` (via `user_id`)
+- `User` 1:N `CashoutRequest` (via `user_id`)
+- `User` 1:N `TopupTransaction` (via `user_id`)
 - `Game` 1:N `Player` (via `game_id`)
-- `Player` 1:N `GameCard` (via `player_id`)
 - `Game` 1:N `GameCard` (via `game_id`)
+- `Game` N:1 `Player` (via `winner_id`)
 - `Game` 1:N `GameInvite` (via `game_id`)
-- `User` 1:1 `PlayerProfile` (via `user_id`, unique)
+- `Game` 1:N `GameRunGame` (via `game_id`)
+- `Player` 1:N `GameCard` (via `player_id`, optional)
 - `Room` 1:N `RoomMember` (via `room_id`)
 - `Room` 1:N `GameRun` (via `room_id`)
-- `GameRun` 1:N `GameRunPlayer` (via `run_id`)
-- `GameRun` 1:N `GameRunGame` (via `run_id`)
-- `GameRun` 1:N `GameRunEvent` (via `run_id`)
-- `GameRunGame` 1:1 `Game` (via `game_id`)
+- `GameRun` 1:N `GameRunPlayer` (via `game_run_id`)
+- `GameRun` 1:N `GameRunGame` (via `game_run_id`)
+- `GameRun` 1:N `GameRunEvent` (via `game_run_id`)
+- `GameRunGame` N:1 `Game` (via `game_id`)
 
 ---
 
@@ -1866,7 +2241,7 @@ http_request {method=POST, path=/api/games/{id}/play, correlation_id=...}
 | Concurrent WebSocket connections | 1000 per instance |
 | AI worker throughput | 50 concurrent bot moves |
 | Games per minute | ~100 (quick games) |
-| DB pool size | 100 (AI worker), 32 (HTTP server) |
+| DB pool size | 100 (AI worker), 100 (HTTP server & scheduler) |
 | Redis subscriber shards | 4–8 (depending on CPU count) |
 
 ---

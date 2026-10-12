@@ -34,6 +34,7 @@ impl WebSocketManager {
                 disconnected: false,
                 last_pong: Instant::now(),
                 spectator: false,
+                user_id: None,
             });
 
         metrics::WS_CONNECTIONS_ACTIVE.inc();

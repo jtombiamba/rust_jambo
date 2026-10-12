@@ -47,6 +47,61 @@ pub async fn play_card(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // Authenticate the caller (cookie session or one-time game token) and verify
+    // they own the player they are acting as. Mirrors advance_bot/evaluate_round.
+    let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
+    let redis_client = req
+        .app_data::<web::Data<Option<RedisClient>>>()
+        .cloned()
+        .and_then(|r| r.get_ref().clone());
+
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+    let mut auth_user_id =
+        crate::websocket::validate_ws_token(token, auth_config.clone(), redis_client.clone()).await;
+    let mut is_game_token_auth = false;
+
+    if auth_user_id.is_none() {
+        let game_token = req
+            .query_string()
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(k, _)| *k == "token")
+            .map(|(_, v)| v.to_string());
+        if let Some(ref gt) = game_token {
+            auth_user_id = crate::websocket::validate_game_token(
+                gt,
+                game_id,
+                auth_config.clone(),
+                redis_client,
+            )
+            .await;
+            if auth_user_id.is_some() {
+                is_game_token_auth = true;
+            }
+        }
+    }
+
+    // For a real user session, verify the caller owns the player_id. Game-token
+    // auth (anonymous solo) is authorized by possession of the token itself.
+    match auth_user_id {
+        Some(user_id) if !is_game_token_auth => {
+            match orchestrator
+                .verify_player_ownership(game_id, payload.player_id, user_id)
+                .await
+            {
+                Ok(false) | Err(_) => {
+                    return AppError::from(jambo_core::error::GameError::NotYourTurn)
+                        .error_response();
+                }
+                Ok(true) => {}
+            }
+        }
+        Some(_) => {}
+        None => {
+            return AppError::from(jambo_core::error::GameError::NotYourTurn).error_response();
+        }
+    }
+
     match orchestrator
         .play_card(
             game_id,

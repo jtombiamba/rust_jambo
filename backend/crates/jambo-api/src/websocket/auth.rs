@@ -1,4 +1,4 @@
-use actix_web::web;
+use actix_web::{web, HttpRequest};
 use uuid::Uuid;
 
 use crate::auth::config::AuthConfig;
@@ -22,6 +22,75 @@ pub(crate) fn derive_anonymous_id(game_id: Uuid) -> Uuid {
 /// Derive a deterministic spectator id for a game.
 pub(crate) fn derive_spectate_id(game_id: Uuid) -> Uuid {
     Uuid::from_u128(game_id.as_u128() ^ SPECTATE_NAMESPACE)
+}
+
+/// Result of authenticating a game WebSocket connection attempt.
+pub(super) struct AuthContext {
+    pub(super) user_id: Option<Uuid>,
+    /// Whether the identity came from the `Authorization` cookie. Cookie-auth
+    /// connections must pass the participant check; anonymous game-token and
+    /// spectator connections are exempt.
+    pub(super) is_cookie_auth: bool,
+}
+
+/// Authenticate a game WebSocket connection: try the auth cookie first, then
+/// fall back to a one-time game token or spectator token in the query string.
+pub(super) async fn authenticate_ws_request(
+    req: &HttpRequest,
+    game_id: Uuid,
+    auth_config: Option<web::Data<AuthConfig>>,
+    redis_client: Option<RedisClient>,
+) -> AuthContext {
+    let token = req.cookie("Authorization").map(|c| c.value().to_string());
+
+    if let Some(token) = token {
+        tracing::info!(
+            "[DEBUG] WebSocket connection via token cookie for game {}",
+            game_id
+        );
+        return AuthContext {
+            user_id: validate_ws_token(Some(token), auth_config, redis_client).await,
+            is_cookie_auth: true,
+        };
+    }
+
+    tracing::info!(
+        "[DEBUG] WebSocket connection via token query params for game {}",
+        game_id
+    );
+    // Check for one-time game token in query parameter
+    let game_token = req
+        .query_string()
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(k, _)| *k == "token")
+        .map(|(_, v)| v.to_string());
+
+    let user_id = if let Some(ref gt) = game_token {
+        tracing::info!("[DEBUG] WebSocket validating token for game {}", game_id);
+        let game_id_auth =
+            validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await;
+        if game_id_auth.is_some() {
+            game_id_auth
+        } else {
+            tracing::info!(
+                "[DEBUG] WebSocket validating spectator token for game {}",
+                game_id
+            );
+            validate_spectate_token(gt, game_id, auth_config, redis_client).await
+        }
+    } else {
+        tracing::warn!(
+            "[WARN] WebSocket connection via token: no query params for game {}",
+            game_id
+        );
+        None
+    };
+
+    AuthContext {
+        user_id,
+        is_cookie_auth: false,
+    }
 }
 
 pub async fn validate_ws_token(

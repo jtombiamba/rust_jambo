@@ -2,6 +2,7 @@ use super::WebSocketManager;
 use crate::websocket::connection::{MessageKind, WsMessage, WS_SEND_QUEUE_CAPACITY};
 use jambo_core::observability::CorrelationId;
 use jambo_domain::messaging::events::{GameEvent, GameStartedPlayer, UserEvent};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -592,4 +593,169 @@ async fn test_player_identity_clears_spectator_flag() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&received[0]).unwrap();
     assert_eq!(parsed["type"], "cards_dealt");
+}
+
+#[tokio::test]
+async fn test_cleanup_keeps_connection_refreshed_by_ping() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+    let player_id = Uuid::new_v4();
+    let other_id = Uuid::new_v4();
+
+    let (tx_alive, mut rx_alive) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let conn_alive = manager
+        .add_connection(game_id, tx_alive, CorrelationId::default())
+        .await;
+    manager
+        .set_player_for_connection(game_id, conn_alive, player_id, 0)
+        .await;
+
+    let (tx_stale, mut rx_stale) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let conn_stale = manager
+        .add_connection(game_id, tx_stale, CorrelationId::default())
+        .await;
+    manager
+        .set_player_for_connection(game_id, conn_stale, other_id, 1)
+        .await;
+
+    // Backdate both connections' heartbeat tracks beyond the timeout.
+    {
+        let mut inner = manager.inner.write().await;
+        let stale = Instant::now() - Duration::from_secs(120);
+        for conn in inner.connections.get_mut(&game_id).unwrap().iter_mut() {
+            conn.last_activity = stale;
+            conn.last_pong = stale;
+        }
+    }
+
+    // Simulate the client's application-level ping reaching the handler: both
+    // tracks are refreshed for the alive connection only.
+    manager.update_activity(game_id, conn_alive).await;
+    manager.update_pong(game_id, conn_alive).await;
+
+    let removed = manager
+        .cleanup_stale_connections(Duration::from_secs(600), Duration::from_secs(90))
+        .await;
+
+    assert_eq!(
+        removed, 1,
+        "only the un-refreshed connection should be culled"
+    );
+    assert_eq!(manager.connection_count(game_id).await, 1);
+    assert!(
+        manager.is_player_connected(game_id, player_id).await,
+        "the connection refreshed by a ping must survive cleanup"
+    );
+    assert!(
+        !manager.is_player_connected(game_id, other_id).await,
+        "the connection without a recent ping must be culled"
+    );
+
+    // The culled player's disconnect is broadcast to the surviving connection.
+    let alive_events = drain_receiver(&mut rx_alive);
+    assert!(
+        alive_events
+            .iter()
+            .any(|e| e.contains("\"type\":\"player_disconnected\"")),
+        "surviving player should observe the culled player's disconnect"
+    );
+    let _ = drain_receiver(&mut rx_stale);
+}
+
+#[tokio::test]
+async fn test_set_player_for_connection_evicts_previous_connection() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+    let player_id = Uuid::new_v4();
+
+    let (tx_old, mut rx_old) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let old_conn = manager
+        .add_connection(game_id, tx_old, CorrelationId::default())
+        .await;
+    manager
+        .set_player_for_connection(game_id, old_conn, player_id, 0)
+        .await;
+
+    // The same player reconnects on a fresh socket.
+    let (tx_new, mut rx_new) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let new_conn = manager
+        .add_connection(game_id, tx_new, CorrelationId::default())
+        .await;
+    manager
+        .set_player_for_connection(game_id, new_conn, player_id, 0)
+        .await;
+
+    assert_eq!(
+        manager.connection_count(game_id).await,
+        1,
+        "only one live socket per player should remain after a reconnect"
+    );
+    assert!(manager.is_player_connected(game_id, player_id).await);
+
+    // The evicted connection's sender is dropped, closing its receiver.
+    assert!(
+        rx_old.recv().await.is_none(),
+        "the evicted connection must be closed"
+    );
+
+    // The surviving connection still receives personalized events.
+    let event = GameEvent::CardsDealt {
+        game_id,
+        player_id,
+        cards: vec![1, 2, 3],
+        special_cards: jambo_types::cards::SpecialCards {
+            check_triple_seven: false,
+            check_sum_value_under_21: false,
+            check_a_square: false,
+        },
+    };
+    manager.route_event(game_id, event).await;
+    let events = drain_receiver(&mut rx_new);
+    // The surviving socket receives the reconnect broadcast followed by the
+    // personalized cards_dealt event.
+    assert!(
+        events
+            .iter()
+            .any(|e| e.contains("\"type\":\"cards_dealt\"")),
+        "surviving connection should still receive personalized events: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_set_player_for_connection_evicts_same_user_connection() {
+    let manager = make_manager();
+    let game_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let player_a = Uuid::new_v4();
+    let player_b = Uuid::new_v4();
+
+    let (tx_a, mut rx_a) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let conn_a = manager
+        .add_connection(game_id, tx_a, CorrelationId::default())
+        .await;
+    manager.set_connection_user(game_id, conn_a, user_id).await;
+    manager
+        .set_player_for_connection(game_id, conn_a, player_a, 0)
+        .await;
+
+    // A second browser page authenticates as the same user and joins.
+    let (tx_b, mut rx_b) = mpsc::channel(WS_SEND_QUEUE_CAPACITY);
+    let conn_b = manager
+        .add_connection(game_id, tx_b, CorrelationId::default())
+        .await;
+    manager.set_connection_user(game_id, conn_b, user_id).await;
+    manager
+        .set_player_for_connection(game_id, conn_b, player_b, 1)
+        .await;
+
+    assert_eq!(
+        manager.connection_count(game_id).await,
+        1,
+        "a second connection for the same authenticated user must evict the first"
+    );
+    assert!(
+        rx_a.recv().await.is_none(),
+        "the previous connection for the same user must be closed"
+    );
+    let _ = drain_receiver(&mut rx_b);
 }

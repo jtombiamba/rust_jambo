@@ -62,6 +62,17 @@ impl Default for ConnectionId {
     }
 }
 
+/// Coordination data shared by the per-connection forwarding and incoming
+/// tasks. Everything here is cheap to copy so both spawned tasks can hold an
+/// owned copy while `session` and `stream` are split between them.
+#[derive(Clone, Copy)]
+pub(crate) struct ConnectionContext {
+    pub(crate) game_id: Uuid,
+    pub(crate) connection_id: ConnectionId,
+    pub(crate) correlation_id: CorrelationId,
+    pub(crate) user_id: Option<Uuid>,
+}
+
 /// Represents a tracked WebSocket connection.
 pub(crate) struct TrackedConnection {
     pub(crate) sender: WsSender,
@@ -74,6 +85,9 @@ pub(crate) struct TrackedConnection {
     pub(crate) disconnected: bool,
     pub(crate) last_pong: Instant,
     pub(crate) spectator: bool,
+    /// Authenticated user identity (cookie auth). `None` for anonymous game-token
+    /// or spectator connections. Used to enforce single-session and ownership.
+    pub(crate) user_id: Option<Uuid>,
 }
 
 #[cfg(test)]

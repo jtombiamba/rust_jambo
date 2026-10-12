@@ -91,7 +91,7 @@ repos:
             max=600
             for f in "$@"; do
             case "$f" in
-              *config.rs|*_tests.rs|*/tests/*|*test_helpers.rs) continue ;;
+              *config.rs|*tests.rs|*_tests.rs|*/tests/*|*test_helpers.rs) continue ;;
             esac
               lines=$(wc -l < "$f")
               if [ "$lines" -gt "$max" ]; then

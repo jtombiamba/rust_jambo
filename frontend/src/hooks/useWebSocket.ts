@@ -232,8 +232,14 @@ class WebSocketManager {
         log('WebSocket already connecting or open for game', this.gameId, 'state:', state);
         return;
       }
-      // If WebSocket is CLOSING or CLOSED, we need a new one
+      // If WebSocket is CLOSING or CLOSED, we need a new one. Always tear down
+      // the stale socket first so a reconnect never opens a second live socket.
       log('WebSocket exists but in state', state, 'for game', this.gameId, 'creating new connection');
+      try {
+        this.ws.close();
+      } catch {
+        // Ignore: the socket is already dead or closing.
+      }
       this.ws = null;
     }
 
@@ -286,11 +292,15 @@ class WebSocketManager {
       log(`WebSocket closed for game ${this.gameId}`, event.code, event.reason);
       this.closeSubscribers.forEach(callback => callback(event));
 
-      // Clear the WebSocket reference
-      this.ws = null;
+      // Only tear down this socket's reference if it is still the active one. A
+      // stale socket closing after a reconnect must not clobber the newer socket.
+      const isCurrent = this.ws === ws;
+      if (isCurrent) {
+        this.ws = null;
+      }
 
       // Schedule reconnect if there are still subscribers
-      if (this.subscribers.size > 0) {
+      if (isCurrent && this.subscribers.size > 0) {
         const reconnectInterval = 5000; // Minimum 5 seconds
         log(`Scheduling reconnect in ${reconnectInterval}ms`);
         this.reconnectTimer = setTimeout(() => {
@@ -454,8 +464,12 @@ export function useWebSocket({
         manager.setPlayerIdentity(playerId, playerPosition);
       }
 
-      // Mark this connection as a read-only spectator when requested.
-      manager.setSpectator(spectator === true);
+      // Mark this connection as a read-only spectator only when the caller
+      // explicitly opts in. Identity-less subscribers (e.g. App.tsx) pass
+      // `spectator === undefined` and must not flip the shared manager's flag.
+      if (spectator !== undefined) {
+        manager.setSpectator(spectator);
+      }
 
       unsubscribeRef.current = manager.subscribe(
         wrappedOnMessage,

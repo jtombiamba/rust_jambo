@@ -45,6 +45,7 @@ impl WebSocketManager {
                 disconnected: false,
                 last_pong: Instant::now(),
                 spectator: false,
+                user_id: None,
             });
         tracing::info!(
             "New WebSocket connection {} for game {} (correlation_id={})",
@@ -68,7 +69,10 @@ impl WebSocketManager {
     }
 
     /// Associate a player ID and position with a connection.
-    /// If a previous connection for this player_id exists, it's a reconnect.
+    /// If a previous connection for this player_id exists, it's a reconnect and
+    /// the stale connection(s) are evicted so only one live socket per player
+    /// remains (the evicted sender is dropped, which causes its forwarding task
+    /// to close the client socket).
     pub async fn set_player_for_connection(
         &self,
         game_id: Uuid,
@@ -76,31 +80,56 @@ impl WebSocketManager {
         player_id: Uuid,
         player_position: i32,
     ) {
-        let mut inner = self.inner.write().await;
-        let was_previously_connected = if let Some(connections) = inner.connections.get(&game_id) {
-            connections
-                .iter()
-                .any(|c| c.player_id == Some(player_id) && c.id != connection_id)
-        } else {
-            false
-        };
+        let was_previously_connected = {
+            let mut inner = self.inner.write().await;
+            let was_previously_connected =
+                if let Some(connections) = inner.connections.get(&game_id) {
+                    connections
+                        .iter()
+                        .any(|c| c.player_id == Some(player_id) && c.id != connection_id)
+                } else {
+                    false
+                };
 
-        if let Some(connections) = inner.connections.get_mut(&game_id) {
-            for conn in connections.iter_mut() {
-                if conn.id == connection_id {
-                    conn.player_id = Some(player_id);
-                    conn.player_position = Some(player_position);
-                    // A player identity always wins over a spectator flag. Without
-                    // this, a connection first marked spectator (or a stale render)
-                    // would keep receiving public-only snapshots and stop receiving
-                    // its personalized hand/deck.
-                    conn.spectator = false;
-                    break;
+            let mut conn_user_id: Option<Uuid> = None;
+            if let Some(connections) = inner.connections.get_mut(&game_id) {
+                for conn in connections.iter_mut() {
+                    if conn.id == connection_id {
+                        conn.player_id = Some(player_id);
+                        conn.player_position = Some(player_position);
+                        // A player identity always wins over a spectator flag. Without
+                        // this, a connection first marked spectator (or a stale render)
+                        // would keep receiving public-only snapshots and stop receiving
+                        // its personalized hand/deck.
+                        conn.spectator = false;
+                        conn_user_id = conn.user_id;
+                        break;
+                    }
+                }
+
+                // Evict any other live connection for this player or authenticated
+                // identity so a player never has two sockets racing for personalized
+                // events (e.g. two browser pages for the same user).
+                let before = connections.len();
+                connections.retain(|c| {
+                    c.id == connection_id
+                        || (c.player_id != Some(player_id)
+                            && !(conn_user_id.is_some() && c.user_id == conn_user_id))
+                });
+                let evicted = before - connections.len();
+                if evicted > 0 {
+                    metrics::WS_CONNECTIONS_ACTIVE.sub(evicted as f64);
+                    tracing::info!(
+                        "Evicted {} stale connection(s) for player {} in game {}",
+                        evicted,
+                        player_id,
+                        game_id
+                    );
                 }
             }
-        }
 
-        drop(inner);
+            was_previously_connected
+        };
 
         if was_previously_connected {
             let event = GameEvent::PlayerReconnected {
@@ -121,7 +150,6 @@ impl WebSocketManager {
     }
 
     /// Update the last activity time for a connection.
-    #[allow(dead_code)]
     pub async fn update_activity(&self, game_id: Uuid, connection_id: ConnectionId) {
         let mut inner = self.inner.write().await;
         if let Some(connections) = inner.connections.get_mut(&game_id) {
@@ -144,6 +172,39 @@ impl WebSocketManager {
                 }
             }
         }
+    }
+
+    /// Record the authenticated user identity on a connection (cookie auth). Used
+    /// to verify player ownership on `join_game` and to enforce single-session.
+    pub async fn set_connection_user(
+        &self,
+        game_id: Uuid,
+        connection_id: ConnectionId,
+        user_id: Uuid,
+    ) {
+        let mut inner = self.inner.write().await;
+        if let Some(connections) = inner.connections.get_mut(&game_id) {
+            for connection in connections.iter_mut() {
+                if connection.id == connection_id {
+                    connection.user_id = Some(user_id);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Return the authenticated user identity recorded on a connection, if any.
+    pub async fn connection_user(
+        &self,
+        game_id: Uuid,
+        connection_id: ConnectionId,
+    ) -> Option<Uuid> {
+        let inner = self.inner.read().await;
+        inner
+            .connections
+            .get(&game_id)
+            .and_then(|conns| conns.iter().find(|c| c.id == connection_id))
+            .and_then(|c| c.user_id)
     }
 
     /// Force-disconnect a connection, always publishing PlayerDisconnected if player
