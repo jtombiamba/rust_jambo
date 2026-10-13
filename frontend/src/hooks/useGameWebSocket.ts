@@ -30,7 +30,7 @@ export function useGameWebSocket(gameId: string | null, wsToken?: string | null)
   } = useGameStore();
 
   const { showToast } = useToast();
-  const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const roundWinnerTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const isConnectedRef = useRef(false);
   const pendingSnapshotRef = useRef<{ slots: (number | null)[]; delayMs: number } | null>(null);
 
