@@ -18,6 +18,12 @@ variable "vpc_cidr" {
   default = "10.0.0.0/16"
 }
 
+variable "additional_public_access_cidrs" {
+  description = "Extra CIDR blocks (e.g. office/VPN) allowed to reach the public EKS API endpoint, in addition to GitHub Actions runner IPs."
+  type        = list(string)
+  default     = []
+}
+
 variable "instance_types" {
   type    = list(string)
   default = ["t3.medium"]

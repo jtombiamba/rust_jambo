@@ -41,6 +41,8 @@ module "eks" {
 
   cluster_endpoint_public_access = true
 
+  cluster_endpoint_public_access_cidrs = var.cluster_endpoint_public_access_cidrs
+
   cluster_addons = var.cluster_addons
 
   eks_managed_node_groups = {

@@ -17,17 +17,18 @@ module "eks" {
   source = "../eks-cluster"
   count  = var.cloud == "eks" ? 1 : 0
 
-  cluster_name       = var.cluster_name
-  region             = var.region
-  kubernetes_version = var.kubernetes_version
-  vpc_cidr           = var.eks.vpc_cidr
-  instance_types     = var.eks.instance_types
-  min_size           = var.eks.min_size
-  max_size           = var.eks.max_size
-  desired_size       = var.eks.desired_size
-  cluster_addons     = var.eks.cluster_addons
-  availability_zones = var.eks.availability_zones
-  tags               = var.tags
+  cluster_name                         = var.cluster_name
+  region                               = var.region
+  kubernetes_version                   = var.kubernetes_version
+  vpc_cidr                             = var.eks.vpc_cidr
+  instance_types                       = var.eks.instance_types
+  min_size                             = var.eks.min_size
+  max_size                             = var.eks.max_size
+  desired_size                         = var.eks.desired_size
+  cluster_addons                       = var.eks.cluster_addons
+  availability_zones                   = var.eks.availability_zones
+  cluster_endpoint_public_access_cidrs = var.eks.cluster_endpoint_public_access_cidrs
+  tags                                 = var.tags
 }
 
 locals {
