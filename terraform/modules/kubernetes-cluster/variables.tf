@@ -40,13 +40,14 @@ variable "doks" {
 variable "eks" {
   description = "EKS-specific options (ignored when provider == doks)."
   type = object({
-    vpc_cidr           = optional(string, "10.0.0.0/16")
-    instance_types     = optional(list(string), ["t3.medium"])
-    min_size           = optional(number, 1)
-    max_size           = optional(number, 3)
-    desired_size       = optional(number, 1)
-    cluster_addons     = optional(map(object({ version = string })), {})
-    availability_zones = optional(list(string), [])
+    vpc_cidr                             = optional(string, "10.0.0.0/16")
+    instance_types                       = optional(list(string), ["t3.medium"])
+    min_size                             = optional(number, 1)
+    max_size                             = optional(number, 3)
+    desired_size                         = optional(number, 1)
+    cluster_addons                       = optional(map(object({ version = string })), {})
+    availability_zones                   = optional(list(string), [])
+    cluster_endpoint_public_access_cidrs = optional(list(string), [])
   })
   default = {}
 }

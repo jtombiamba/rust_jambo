@@ -16,7 +16,7 @@ spec:
       containers:
         - name: backend
           image: jambo-backend:local
-          args: ["jambo-backend"]
+          args: ["jambo-server"]
           ports:
             - containerPort: 5000
           envFrom:
