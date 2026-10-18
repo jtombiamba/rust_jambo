@@ -21,23 +21,29 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
     let redis = state.redis.get_ref().clone();
     let translator = state.translator.get_ref().clone();
     let configs = &state.rate_limit_configs;
+    let benchmark_mode = state.config.benchmark_mode;
 
     let contact_limiter =
-        RateLimiterMiddleware::new(redis.clone(), configs.contact.clone(), translator.clone());
+        RateLimiterMiddleware::new(redis.clone(), configs.contact.clone(), translator.clone())
+            .with_benchmark_mode(benchmark_mode);
     let register_limiter =
-        RateLimiterMiddleware::new(redis.clone(), configs.register.clone(), translator.clone());
+        RateLimiterMiddleware::new(redis.clone(), configs.register.clone(), translator.clone())
+            .with_benchmark_mode(benchmark_mode);
     let login_limiter =
-        RateLimiterMiddleware::new(redis.clone(), configs.login.clone(), translator.clone());
+        RateLimiterMiddleware::new(redis.clone(), configs.login.clone(), translator.clone())
+            .with_benchmark_mode(benchmark_mode);
     let forgot_pw_limiter = RateLimiterMiddleware::new(
         redis.clone(),
         configs.forgot_password.clone(),
         translator.clone(),
-    );
+    )
+    .with_benchmark_mode(benchmark_mode);
     let reset_pw_limiter = RateLimiterMiddleware::new(
         redis.clone(),
         configs.reset_password.clone(),
         translator.clone(),
-    );
+    )
+    .with_benchmark_mode(benchmark_mode);
     // let default_limiter =
     //     RateLimiterMiddleware::new(redis.clone(), configs.default.clone(), translator.clone());
 

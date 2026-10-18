@@ -42,6 +42,10 @@
 #   --ws-timeout MS       Per-request client timeout in ms (default: 5000).
 #   --ws-spectators N     Spectator WS connections per game (default: 100).
 #
+#   Run only a subset:
+#   --skip-http          Do NOT run the HTTP load test.
+#   --skip-ws            Do NOT run the WS load test.
+#
 #   -h, --help         Show this help message.
 #
 # Examples:
@@ -85,6 +89,9 @@ WS_BET=10
 WS_TIMEOUT=5000
 WS_SPECTATORS=100
 
+SKIP_HTTP=false
+SKIP_WS=false
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -94,7 +101,7 @@ warn() { printf '\033[1;33m[load-test]\033[0m %s\n' "$*" >&2; }
 err()  { printf '\033[1;31m[load-test]\033[0m %s\n' "$*" >&2; }
 
 usage() {
-    sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,56p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
@@ -126,6 +133,10 @@ while [[ $# -gt 0 ]]; do
         --ws-bet)         WS_BET="$2"; shift 2 ;;
         --ws-timeout)     WS_TIMEOUT="$2"; shift 2 ;;
         --ws-spectators)  WS_SPECTATORS="$2"; shift 2 ;;
+
+        # Run only a subset of the load tests
+        --skip-http)    SKIP_HTTP=true; shift ;;
+        --skip-ws)      SKIP_WS=true; shift ;;
 
         -h|--help)     usage ;;
         *) err "Unknown option: $1"; usage ;;
@@ -171,16 +182,16 @@ FROM rust:1.94-bookworm AS builder
 WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY templates ./templates
+COPY crates ./crates
 COPY migration ./migration
-# Build the service + load-test binaries (feature-gated behind "load-tests")
-RUN cargo build --release --features load-tests \
-    --bin jambo-backend \
-    --bin ai-worker \
-    --bin scheduler-worker \
-    --bin http-load-test \
-    --bin ws-load-test
+# Build the service binaries first, then the load-test binaries. The load-test
+# binaries are feature-gated behind the "load-tests" feature of the
+# jambo-load-tests crate, so they are built with `-p jambo-load-tests`.
+RUN cargo build --release \
+    -p jambo-server \
+    -p jambo-ai-worker \
+    -p jambo-scheduler-worker
+RUN cargo build --release -p jambo-load-tests --features load-tests
 
 FROM debian:bookworm-slim
 
@@ -199,7 +210,7 @@ RUN groupadd -r -g "${GROUP_ID}" jambo \
     && useradd -r -u "${USER_ID}" -g jambo -s /sbin/nologin jambo
 
 WORKDIR /app
-COPY --from=builder /usr/src/app/target/release/jambo-backend /usr/local/bin/jambo-backend
+COPY --from=builder /usr/src/app/target/release/jambo-server /usr/local/bin/jambo-server
 COPY --from=builder /usr/src/app/target/release/ai-worker /usr/local/bin/ai-worker
 COPY --from=builder /usr/src/app/target/release/scheduler-worker /usr/local/bin/scheduler-worker
 COPY --from=builder /usr/src/app/target/release/http-load-test /usr/local/bin/http-load-test
@@ -218,7 +229,7 @@ STOPSIGNAL SIGTERM
 
 USER jambo
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["jambo-backend"]
+CMD ["jambo-server"]
 EOF
     ok "Backend image built: jambo-backend:load-test"
 else
@@ -269,38 +280,46 @@ ok "Backend is healthy."
 # of the hardcoded `command:` in the compose file. `--no-deps` avoids restarting
 # the already-running backend.
 
-log "Running HTTP load test (${HTTP_GAMES} games, ${HTTP_CONCURRENCY} concurrent, ${HTTP_WARMUP} warm-up, ${HTTP_DURATION}s)..."
-# NOTE: `docker compose run SERVICE [COMMAND] [ARGS...]` treats the first
-# positional after the service name as the COMMAND (the executable). We must
-# repeat the binary name ("http-load-test") as the command, then pass its args.
-docker compose -f "${COMPOSE_FILE}" --profile benchmark run --rm --no-deps \
-    -e BENCHMARK_API_TOKEN="${BENCHMARK_TOKEN}" \
-    http-load-test http-load-test \
-    --target-url=http://backend:5000 \
-    --concurrent-games="${HTTP_CONCURRENCY}" \
-    --total-games="${HTTP_GAMES}" \
-    --warm-up-games="${HTTP_WARMUP}" \
-    --ramp-up-secs="${HTTP_RAMPUP}" \
-    --duration-secs="${HTTP_DURATION}" \
-    --think-time-ms="${HTTP_THINK_TIME}" \
-    --bet="${HTTP_BET}" \
-    --client-timeout-ms="${HTTP_TIMEOUT}" \
-    --output=/app/benchmark-results/http-benchmark.json
-ok "HTTP load test finished."
+if [[ "${SKIP_HTTP}" != true ]]; then
+    log "Running HTTP load test (${HTTP_GAMES} games, ${HTTP_CONCURRENCY} concurrent, ${HTTP_WARMUP} warm-up, ${HTTP_DURATION}s)..."
+    # NOTE: `docker compose run SERVICE [COMMAND] [ARGS...]` treats the first
+    # positional after the service name as the COMMAND (the executable). We must
+    # repeat the binary name ("http-load-test") as the command, then pass its args.
+    docker compose -f "${COMPOSE_FILE}" --profile benchmark run --rm --no-deps \
+        -e BENCHMARK_API_TOKEN="${BENCHMARK_TOKEN}" \
+        http-load-test http-load-test \
+        --target-url=http://backend:5000 \
+        --concurrent-games="${HTTP_CONCURRENCY}" \
+        --total-games="${HTTP_GAMES}" \
+        --warm-up-games="${HTTP_WARMUP}" \
+        --ramp-up-secs="${HTTP_RAMPUP}" \
+        --duration-secs="${HTTP_DURATION}" \
+        --think-time-ms="${HTTP_THINK_TIME}" \
+        --bet="${HTTP_BET}" \
+        --client-timeout-ms="${HTTP_TIMEOUT}" \
+        --output=/app/benchmark-results/http-benchmark.json
+    ok "HTTP load test finished."
+else
+    warn "--skip-http: skipping the HTTP load test."
+fi
 
-log "Running WS load test (${WS_GAMES} games, ${WS_CONCURRENCY} concurrent, ${WS_SPECTATORS} spectators/game, ${WS_DURATION}s)..."
-docker compose -f "${COMPOSE_FILE}" --profile benchmark run --rm --no-deps \
-    -e BENCHMARK_API_TOKEN="${BENCHMARK_TOKEN}" \
-    ws-load-test ws-load-test \
-    --target-url=http://backend:5000 \
-    --concurrent-games="${WS_CONCURRENCY}" \
-    --total-games="${WS_GAMES}" \
-    --duration-secs="${WS_DURATION}" \
-    --spectators-per-game="${WS_SPECTATORS}" \
-    --bet="${WS_BET}" \
-    --client-timeout-ms="${WS_TIMEOUT}" \
-    --output=/app/benchmark-results/ws-benchmark.json
-ok "WS load test finished."
+if [[ "${SKIP_WS}" != true ]]; then
+    log "Running WS load test (${WS_GAMES} games, ${WS_CONCURRENCY} concurrent, ${WS_SPECTATORS} spectators/game, ${WS_DURATION}s)..."
+    docker compose -f "${COMPOSE_FILE}" --profile benchmark run --rm --no-deps \
+        -e BENCHMARK_API_TOKEN="${BENCHMARK_TOKEN}" \
+        ws-load-test ws-load-test \
+        --target-url=http://backend:5000 \
+        --concurrent-games="${WS_CONCURRENCY}" \
+        --total-games="${WS_GAMES}" \
+        --duration-secs="${WS_DURATION}" \
+        --spectators-per-game="${WS_SPECTATORS}" \
+        --bet="${WS_BET}" \
+        --client-timeout-ms="${WS_TIMEOUT}" \
+        --output=/app/benchmark-results/ws-benchmark.json
+    ok "WS load test finished."
+else
+    warn "--skip-ws: skipping the WS load test."
+fi
 
 # ---------------------------------------------------------------------------
 # Step 5 — Fetch and display the JSON reports
