@@ -1,3 +1,26 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --font-pixel: "Press Start 2P", monospace;
+
+  --animate-fade-in-out: fade-in-out 3s ease-in-out forwards;
+
+  @keyframes fade-in-out {
+    0% {
+      opacity: 0;
+      transform: translate(-50%, 1rem);
+    }
+    10% {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    80% {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -0.5rem);
+    }
+  }
+}

@@ -2,6 +2,16 @@ provider "aws" {
   region = var.region
 }
 
+# GitHub-hosted runners' egress IP ranges, used to restrict access to the EKS
+# public API server endpoint. Fetched dynamically because GitHub rotates them.
+data "http" "github_actions_meta" {
+  url = "https://api.github.com/meta"
+}
+
+locals {
+  github_actions_cidrs = jsondecode(data.http.github_actions_meta.response_body).actions
+}
+
 module "cluster" {
   source = "../../../modules/kubernetes-cluster"
   cloud  = "eks"
@@ -21,6 +31,7 @@ module "cluster" {
       kube-proxy         = { version = var.kube_proxy_version }
       coredns            = { version = var.coredns_version }
     }
+    cluster_endpoint_public_access_cidrs = concat(local.github_actions_cidrs, var.additional_public_access_cidrs)
   }
   tags = local.common_tags
 }

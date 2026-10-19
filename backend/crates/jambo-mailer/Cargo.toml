@@ -20,4 +20,4 @@ serde = { version = "1.0", features = ["derive"] }
 tracing = { version = "0.1", features = ["log"] }
 
 [dev-dependencies]
-serial_test = "3"
+serial_test = "4"

@@ -54,6 +54,12 @@ variable "cluster_addons" {
   default = {}
 }
 
+variable "cluster_endpoint_public_access_cidrs" {
+  description = "CIDR blocks allowed to access the public EKS API server endpoint."
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

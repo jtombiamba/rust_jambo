@@ -1,0 +1,6 @@
+# EKS public API endpoint must stay enabled so GitHub-hosted runners
+# (terraform kubernetes/helm providers) can reach the cluster during CI/CD.
+AVD-AWS-0040
+
+# EKS worker nodes need unrestricted internet egress to pull container images.
+AVD-AWS-0104

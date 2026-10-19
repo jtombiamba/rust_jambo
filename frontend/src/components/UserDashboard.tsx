@@ -134,7 +134,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [freezeRemainingSec, setFreezeRemainingSec] = useState(0)
   const [unfreezing, setUnfreezing] = useState(false)
   const [toppingUp, setToppingUp] = useState(false)
-  const freezeTimerRef = useRef<ReturnType<typeof setInterval>>()
+  const freezeTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
 
   const [cashoutConfig, setCashoutConfig] = useState<CashoutConfig | null>(null)
   const [cashoutOpen, setCashoutOpen] = useState(false)
@@ -150,7 +150,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [sortField, setSortField] = useState<SortField>(null)
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [perPage, setPerPage] = useState(10)
-  const toastTimer = useRef<ReturnType<typeof setTimeout>>()
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const showToast = (msg: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current)
