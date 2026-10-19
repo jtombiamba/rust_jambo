@@ -21,7 +21,7 @@ impl GameService {
         correlation_id: Option<Uuid>,
     ) -> Result<CardPlayResult, GameError> {
         let _timer = CardPlayTimer(Instant::now());
-        let span = tracing::info_span!(
+        let span = tracing::debug_span!(
             "card_play",
             correlation_id = %correlation_id.map(|id| id.to_string()).unwrap_or_default(),
             game_id = %game_id,

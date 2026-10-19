@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr,
-    EntityTrait, QueryFilter, QueryOrder, Set,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -70,6 +70,30 @@ impl PlayerRepository {
             .filter(player::Column::GameId.eq(game_id))
             .order_by_asc(player::Column::Position)
             .all(&self.connection)
+            .await
+    }
+
+    /// Count non-kicked players in a game.
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn count_active(&self, game_id: Uuid) -> Result<u64, DbErr> {
+        player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .filter(player::Column::Kicked.eq(false))
+            .count(&self.connection)
+            .await
+    }
+
+    /// Count non-kicked players in a game inside a transaction.
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn count_active_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+    ) -> Result<u64, DbErr> {
+        player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .filter(player::Column::Kicked.eq(false))
+            .count(txn)
             .await
     }
 

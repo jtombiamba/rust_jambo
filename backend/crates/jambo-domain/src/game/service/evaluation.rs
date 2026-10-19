@@ -108,25 +108,18 @@ impl GameService {
         game_id: Uuid,
         round: i32,
     ) -> Result<bool, GameError> {
-        let players = player::Entity::find()
-            .filter(player::Column::GameId.eq(game_id))
-            .all(txn)
+        // A round is complete when every non-kicked player has played a card in
+        // it. Count active players and played cards for the round in two single
+        // aggregate queries instead of the previous N+1 (one card query per
+        // player). `idx_game_cards_game_round` (game_id, round) backs the second.
+        let active_count = PlayerRepository::new(self.db.clone())
+            .count_active_in_txn(txn, game_id)
+            .await?;
+        let played_in_round = GameCardRepository::new(self.db.clone())
+            .count_played_in_round_in_txn(txn, game_id, round)
             .await?;
 
-        for player_model in &players {
-            if player_model.kicked {
-                continue;
-            }
-            let cards = game_card::Entity::find()
-                .filter(game_card::Column::PlayerId.eq(player_model.id))
-                .all(txn)
-                .await?;
-            let played_in_round = cards.iter().any(|c| c.played && c.round == Some(round));
-            if !played_in_round {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(played_in_round >= active_count)
     }
 
     /// Evaluate a completed round inside an active transaction.
@@ -139,7 +132,7 @@ impl GameService {
         round: i32,
     ) -> Result<RoundEvaluationResult, GameError> {
         let _timer = RoundEvalTimer(Instant::now());
-        let span = tracing::info_span!(
+        let span = tracing::debug_span!(
             "round_eval",
             game_id = %game_id,
             round = round,

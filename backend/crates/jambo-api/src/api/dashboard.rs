@@ -431,20 +431,15 @@ pub async fn play_game(
         return AppError::from(e).error_response();
     }
 
-    let game = match service.get_game(auth_user.user_id, game_id).await {
-        Ok(g) => g,
+    // Resolve the player id with a single lookup rather than building the full
+    // game-state response; the play path re-validates turn/ownership/status.
+    let player_id = match service.get_player_id(auth_user.user_id, game_id).await {
+        Ok(id) => id,
         Err(e) => return e.error_response(),
     };
 
-    let player = match game.players.iter().find(|p| p.is_current_user) {
-        Some(p) => p,
-        None => {
-            return AppError::Forbidden("game.not_player").error_response();
-        }
-    };
-
     match orchestrator
-        .play_card(game_id, player.id, payload.card_index, correlation_id, None)
+        .play_card(game_id, player_id, payload.card_index, correlation_id, None)
         .await
     {
         Ok(outcome) => {
