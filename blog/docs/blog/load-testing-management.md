@@ -18,19 +18,6 @@ events fan out over Redis Pub/Sub to WebSocket clients, and bot moves are
 dispatched through RabbitMQ. None of that contention shows up in `cargo test`.
 It shows up when you simulate a crowd.
 
-<!-- We've already been burned by this. `SCALABILITY_FIXES.md` documents six phases of
-fixes that only ever surfaced under concurrent load:
-
-1. Replacing `std::sync::Mutex` with `tokio::sync::Mutex` in the circuit breaker — a blocking mutex stalls an entire OS worker thread under contention.
-2. Optimistic locking via `updated_at` with retry, to stop two concurrent plays from silently overwriting each other.
-3. Per-player idempotency keys, so a retried request can't double-play a card.
-4. A global semaphore capping bot sync chains at 10.
-5. Decoupling the AI worker DB pool from its concurrency limit.
-6. Sharding the Redis subscriber across N workers.
-
-Every one of those was discovered the hard way. The goal of this article is to
-make "the hard way" a repeatable, on-demand process instead of a fire drill. -->
-
 ---
 
 ## The Toolkit
@@ -40,70 +27,24 @@ first-class crate in the workspace — `backend/crates/jambo-load-tests` — tha
 compiles **three separate binaries**, each modelling a different slice of real
 traffic.
 
-| Binary | What it simulates | Key metrics |
-|--------|-------------------|-------------|
-| `load-test` | Bot-only solo games, driven in-process against the orchestrator | Game creation/duration percentiles, DB pool, RSS, CPU |
-| `http-load-test` | 4-human multiplayer over plain HTTP: register → create game → play cards | Registration, game-creation and card-play latency; completion rate |
-| `ws-load-test` | WebSocket players + spectators, measuring real-time fan-out | WS connect latency, first-event latency, connection success rate |
+| Binary | What it simulates |
+|--------|-------------------|
+| `load-test` | Bot-only solo games, driven in-process against the orchestrator |
+| `http-load-test` | 4-human multiplayer over plain HTTP: register → create game → play cards |
+| `ws-load-test` | WebSocket players + spectators, measuring real-time fan-out |
 
 Two properties matter here. First, the binaries are **feature-gated** behind the
-`load-tests` cargo feature in `jambo-load-tests/Cargo.toml`:
-
-```toml
-[[bin]]
-name = "http-load-test"
-path = "src/bin/http_load_test.rs"
-required-features = ["load-tests"]
-```
-
-That's a deliberate choice: the production `backend/Dockerfile` builds only
-`jambo-server`, `ai-worker`, `scheduler-worker` and `admin-cli`. The load-test
-binaries never ship to production.
-
-Second, there's a **benchmark API surface** that only exists when the server runs
-with `BENCHMARK_MODE=true`. `jambo-server/src/routes.rs` registers it
-conditionally:
-
-```rust
-if state.config.benchmark_mode {
-    cfg.service(web::scope("/benchmark")
-        .service(web::resource("/create-multiplayer-game") ... )
-        .service(web::resource("/cleanup") ... ));
-}
-```
-
-`POST /api/benchmark/create-multiplayer-game` takes four `user_ids` and a bet and
-returns the full game state — every player's dealt cards, positions, and whose
-turn it is — so the HTTP load test can drive an entire game without knowing any
-game internals. `POST /api/benchmark/cleanup` deletes every user/game tagged
-`@benchmark.local`. Both are guarded by an `X-Benchmark-Token` header.
+`load-tests` cargo feature, so the production image never ships them. Second,
+there's a **benchmark API surface** that only exists when the server runs with
+`BENCHMARK_MODE=true` — endpoints to create a fully-dealt multiplayer game and to
+clean up `@benchmark.local` data, both guarded by an `X-Benchmark-Token` header.
 
 The whole thing is orchestrated by `infra/scripts/run-load-test.sh`, which builds
-an image containing the load-test binaries, boots the full stack from
-`infra/docker-compose.benchmark.yml` (Postgres, RabbitMQ, Redis, MailHog, the
-backend in benchmark mode, two AI workers, Prometheus, node_exporter), waits for
-health, runs the tests, prints the JSON reports, and tears everything down.
-
-```
-┌───────────────────────────────────────────────────────────────┐
-│                      run-load-test.sh                          │
-│   build image ─► compose up ─► wait healthy ─► run ─► report   │
-└──────────────────────────────┬────────────────────────────────┘
-                               │
-        ┌──────────────────────┼───────────────────────────┐
-        ▼                      ▼                            ▼
-  http-load-test          ws-load-test                Prometheus
-   (4 players/game)      (players + spectators)        /metrics
-        │                      │
-        └──────────► backend (Actix-Web) ◄─────────────┘
-                       │         │         │
-                   Postgres    Redis    RabbitMQ
-```
-
-Each binary emits a JSON report with the same shape: a `config` block (so every
-number is tied to the exact parameters that produced it), a `summary`
-(games created/completed, error counts, throughput), and percentile latency —
-`p50`, `p95`, `p99` — for the operations that matter.
+an image containing the load-test binaries, boots the full stack, waits for
+health, runs the tests, prints the JSON reports, and tears everything down. Each
+binary emits a JSON report with the same shape: a `config` block (so every number
+is tied to the exact parameters that produced it), a `summary`, and percentile
+latency — `p50`, `p95`, `p99` — for the operations that matter.
 
 ---
 
@@ -111,42 +52,28 @@ number is tied to the exact parameters that produced it), a `summary`
 
 Before you can load test gameplay, you have to *create users*. The HTTP and WS
 binaries register `total_games × 4` users sequentially. That phase runs straight
-into production's rate limiter: registration is capped at **3 requests per hour
-per IP** (`rate_limit_register_max_requests` in `jambo-core/src/config.rs`), and
-every virtual user shares the load-test container's single IP.
+into production's rate limiter: registration is capped at a few requests per hour
+per IP, and every virtual user shares the load-test container's single IP.
 
 The fix is to make the rate limiter benchmark-aware, not to loosen production.
-`RateLimiterMiddleware` now short-circuits when the server is in benchmark mode:
-
-```rust
-fn call(&self, req: ServiceRequest) -> Self::Future {
-    if self.limiter.benchmark_mode {
-        let fut = self.service.call(req);
-        return Box::pin(async move { fut.await.map(|res| res.map_into_left_body()) });
-    }
-    // ... normal rate-limit check
-}
-```
-
-and `routes.rs` opts each limiter in with
-`.with_benchmark_mode(state.config.benchmark_mode)`. Production semantics are
-untouched; the benchmark environment simply stops throttling its own synthetic
-signups. This is worth calling out in the article because it's the kind of
+`RateLimiterMiddleware` now short-circuits when the server is in benchmark mode,
+and `routes.rs` opts each limiter in with `.with_benchmark_mode(...)`. Production
+semantics are untouched; the benchmark environment simply stops throttling its
+own synthetic signups. This is worth calling out because it's the kind of
 "obvious once you hit it" hurdle that would otherwise eat an afternoon.
 
 ---
 
-## What the Load Test Actually Reveals
+## What Repeated Load Testing Actually Surfaced
 
 With the signup hurdle cleared, the interesting question is: **where does
 gameplay actually break?** The answer is not "somewhere exotic." It's card play
 — and it breaks much earlier than a developer machine would suggest.
 
-A crucial detail first: the numbers below were measured with the backend pinned
-to **2 CPUs and 2 Actix workers**, matching `infra/docker-compose.benchmark.yml`'s
-`deploy.resources.limits` (`cpus: '2.0'`, `memory: 1G`). That's the environment
-the CI workflow runs in. On an unconstrained laptop the same workload
-looks far healthier — the point of constraining it is that production and CI are
+That last point matters more than it looks. The numbers below were measured with
+the backend pinned to **2 CPUs and 2 Actix workers**, matching the environment
+the CI workflow runs in. On an unconstrained laptop the same workload looks far
+healthier — the point of constraining it is that production and CI are
 constrained, and the developer box isn't.
 
 The HTTP benchmark plays real games: four players take turns playing cards
@@ -161,11 +88,10 @@ to approximate human pacing. Ramping the number of concurrent games gives:
 | 38 | 303 ms | 1344 ms | **1837 ms** | 27 | **stack overflow** |
 | 40 | 374 ms | 1606 ms | **2394 ms** | 33 | **stack overflow** |
 
-Two things jump out. First, the p99 curve is steep: 277 ms at 30 concurrent
-games, 719 ms at 35. The 500 ms line is crossed somewhere between 30 and 35.
-Second — and far more important — the backend doesn't just get slow past that
-point. It **crashes**. Every run at 35+ concurrent games ended with the backend
-dead:
+Two things jump out. First, the p99 curve is steep: the 500 ms line is crossed
+somewhere between 30 and 35 concurrent games. Second — and far more important —
+the backend doesn't just get slow past that point. It **crashes**. Every run at
+35+ concurrent games ended with the backend dead:
 
 ```
 thread 'actix-rt|system:0|arbiter:1' (14) has overflowed its stack
@@ -173,97 +99,121 @@ fatal runtime error: stack overflow, aborting
 ```
 
 A stack overflow in an Actix worker thread that only manifests under a 2-core
-cap. On the development machine it never happened, even at 100 concurrent games —
-the load just spread across more workers. This is load testing doing its actual
-job: it surfaced a failure mode the developer box could not reproduce.
+cap. On the development machine it never happened — the load just spread across
+more workers. This is load testing doing its actual job: surfacing a failure mode
+the developer box could not reproduce.
 
-Notice what's *not* degrading as fast: game creation stays under ~850 ms p99 even
-as the play path collapses. The bottleneck is the play transaction — the path
-that reads game state, validates the move, applies optimistic locking, and
-publishes the event. That's the hot path to profile, and exactly where previous
-work (optimistic locking, idempotency, DB pool sizing) has
-already been applied once.
+### The crash wasn't game logic — it was telemetry
 
-The WebSocket side is a different shape of failure. At a modest 20 games with 10
-spectators each, everything connects, but the handshake is already ~10× slower
-than on an unconstrained host (p99 ≈ 1.8 s vs ~150 ms). Crank it to the default
-`--spectators-per-game 100` at 50 games and admission collapses:
+The instinct when the backend crashes is to blame the hot path. The actual cause
+was the observability layer: the OTLP span exporter was built unconditionally at
+startup, and in the benchmark stack — where there is no collector — its bounded
+queue filled up and the export path blocked the Actix workers, stalling and
+eventually crashing the server. Telemetry is now opt-in: the exporter is only
+created when `OTEL_EXPORTER_OTLP_ENDPOINT` is explicitly set.
 
-| Scenario | WS connect p99 | player WS | spectator WS | success |
-|----------|---------------:|----------:|-------------:|--------:|
-| 20 games × 10 spectators | 1,830 ms | 120 / 120 | 300 / 300 | 100% |
-| 50 games × 100 spectators | **26,545 ms** | 100 / 232 | 500 / 1500 | 43% / 33% |
+The lesson: **load testing a system also stress-tests its instrumentation.** A
+metrics or tracing path that looks harmless on a laptop can be the very thing
+that kills the server under a CPU cap.
 
-Once connected, event delivery stays fast (first-event p99 ≈ 12 ms). The
-bottleneck is the *handshake storm*, not the fan-out: under 2 CPUs, only a third
-of the 1,500 spectators actually get a socket. The sharded subscriber handles
-delivery fine; the admission path is what needs revisiting if thousands of
-spectators are a real goal.
+### The bottleneck is one path, not the app
 
-This is the whole thesis in two tables: **load testing doesn't tell you "your app
-is slow"; it tells you *which line in which path* dies first, and at what
-concurrency — and only when you test in the same constrained environment you
-deploy to.**
+Notice what's *not* degrading as fast: game creation stays roughly flat even as
+the play path collapses. The bottleneck is the play transaction — the path that
+reads game state, validates the move, applies optimistic locking, and publishes
+the event. Cross-referencing the two paths is what localizes the problem: if
+everything slowed down together, the cause would be systemic; because only card
+play blew up, the cause is in that specific transaction.
+
+The fixes were largely query hygiene, and they were found *because* the load
+surfaced them. The clearest case was an N+1 query in the round-completion check
+— invisible at low concurrency, impossible to miss under contention — which was
+collapsed into aggregate counts. Another moved a cache rebuild off the response
+path, so the reply returns as soon as the move commits and publishes instead of
+waiting on work the client doesn't need. Tightening that path moved the ceiling.
+The same 2-CPU sweep, re-run after the fixes:
+
+| Concurrent games | card-play p99 (after) | backend |
+|---:|---:|---|
+| 30 | 172 ms | healthy |
+| 40 | 235 ms | healthy |
+| 50 | **486 ms** | healthy |
+| 75 | 1914 ms | healthy |
+| 100 | 2385 ms | healthy |
+
+The crash is gone at every level, and the ceiling moved from ~35 to **50
+concurrent games at p99 under 500 ms**. Beyond 50 the p99 climbs again — that's
+the genuine 2-CPU ceiling, not a defect. The next lever there is more compute,
+not more code.
 
 ---
 
-## Running It on Demand in CI
+## The WebSocket Side: Serialization, Not Fan-Out
 
-None of this belongs on every merge. Load tests are slow — the CI run has to
-compile the entire backend in release mode inside Docker, then boot a full
-infrastructure stack. They're also non-deterministic on shared runners, and their
-results are only meaningful when a human is reading them. So the workflow is
-`workflow_dispatch` only: `.github/workflows/load-test.yml`.
+The WebSocket load test models a different slice: players connect to their game,
+and a crowd of spectators connects to watch. Under load, a distinct failure shape
+appeared — and it wasn't the one anyone expected.
 
-The ordinary CI (`ci.yml`) still *builds* the load-test binaries on every PR to
-catch bit-rot, but it never *runs* them. The new workflow is what runs them, on
-demand, parameterized:
+The expected failure was *fan-out*: thousands of spectators each receiving every
+event. That part held up fine — once connected, event delivery stays fast. What
+collapsed was *admission*: the handshake itself, under a storm of simultaneous
+connections, queued so badly that a large share of spectators never got a socket
+at all.
 
-```yaml
-on:
-  workflow_dispatch:
-    inputs:
-      mode:            { type: choice, options: [http, ws, both], default: http }
-      total_games:     { type: number, default: 300 }
-      concurrency:     { type: number, default: 50 }
-      warm_up_games:   { type: number, default: 5 }
-      ramp_up_secs:    { type: number, default: 10 }
-      duration_secs:   { type: number, default: 60 }
-      think_time_ms:   { type: number, default: 200 }
-      bet:             { type: number, default: 10 }
-      spectators_per_game: { type: number, default: 100 }
-```
+This is the first lesson the WebSocket side teaches: **latency degradation and
+capacity failure are different problems.** A slow p99 on card play is one thing;
+a connection success rate that collapses is another, and they point at different
+subsystems. The admission storm was a *serialization* problem, not a delivery
+problem.
 
-The job maps those inputs onto the exact same `run-load-test.sh` flags a local
-run would use — single source of truth, no duplicated logic in YAML — then
-uploads the JSON reports as an artifact:
+Digging into admission surfaced a small set of shared choke points, all of the
+same shape — one thing everyone has to wait on:
 
-```yaml
-      - name: Run benchmarks
-        env:
-          BENCHMARK_API_TOKEN: ${{ secrets.BENCHMARK_API_TOKEN || 'aiusutzfzdv6529jhz' }}
-        run: |
-          args=( --http-games "${{ github.event.inputs.total_games }}" ... )
-          case "${{ github.event.inputs.mode }}" in
-            http) args+=(--skip-ws) ;;
-            ws)   args+=(--skip-http) ;;
-          esac
-          bash infra/scripts/run-load-test.sh "${args[@]}"
+- **A single global connection registry.** Every connection registered under one
+  write lock. It's now sharded by game id, mirroring the Redis subscriber
+  sharding, with the expensive handles hoisted out of the lock.
+- **A single Redis socket.** All token lookups shared one multiplexed connection.
+  It's now a connection pool, so the checks run in parallel.
+- **Redundant token and membership checks.** Each spectator re-decoded its token
+  and re-validated membership on every connection. Both are now cached in-process
+  with a short TTL.
+- **Order of operations.** The welcome message was sent before the connection was
+  registered. Registration now happens first, and the welcome message doubles as
+  the admission signal.
 
-      - name: Upload benchmark reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-results-${{ github.run_id }}
-          path: infra/benchmark-results/*.json
-          if-no-files-found: warn
-```
+The last piece is about the harness itself, and it's worth its own heading.
 
-Two details are worth pointing out. The workflow's `concurrency.group` includes
-the mode, so two manual runs can't stomp on each other. And the `mode` input maps
-to the script's `--skip-http` / `--skip-ws` flags, so "just the HTTP curve" is
-one dropdown away — which is how you'd reproduce the table above for a new
-concurrency value.
+### The harness has to be honest
+
+`ws_load_test.rs` models the spectator flow by minting a spectate token and
+handing it to every spectator. The key question is *how many* tokens it mints.
+Production mints **one token per game** — the "copy stream URL" flow, where the
+token is baked into a shared link every spectator opens. The harness mirrors that
+exactly: one token per game, reused by all its spectators.
+
+Why this matters: if the harness minted a distinct token per spectator, the
+server would see many different keys, and the in-process token cache would be
+measuring the wrong thing. By mirroring the real shared-token path, the benchmark
+exercises what production actually does — and the server-side fixes (the Redis
+pool for parallel capacity, the cache for the shared-token burst) can no longer
+hide behind an artifact. A harness that takes shortcuts doesn't just produce
+unrealistic numbers; it silently changes which problems the test can see.
+
+### The scaling signal is memory, not CPU
+
+With a realistic harness and PgBouncer in front of Postgres, the picture at
+increasing spectator counts is consistent: CPU is *not* the bottleneck — the
+backend sits below saturation even in the largest runs. Memory, though, grows
+roughly linearly with the number of connected spectators, at a steady
+per-spectator cost. That's the useful alert: if you want to know when spectator
+count will hurt you, watch memory, not CPU.
+
+Two infrastructure details rounded out the picture. PgBouncer (transaction mode)
+absorbed the connection storm that otherwise surfaces as `too many clients`;
+log rotation (with per-event logs demoted to `debug`) kept the backend's disk
+footprint flat; and a raised memory ceiling on RabbitMQ stopped the broker from
+being OOM-killed mid-run. All three are the kind of thing load testing surfaces
+that profiling never would.
 
 ---
 
@@ -290,72 +240,42 @@ two views together usually narrow a regression to a single subsystem.
 
 ---
 
-## Conclusion
+## Running It on Demand in CI
 
-Load testing a real-time backend isn't a task you schedule once before launch.
-It's a management loop: build the harness, make the harness realistic (which
-sometimes means teaching it to disable production throttles in benchmark mode),
-run it at increasing concurrency, and read the report to find the *specific*
-path that breaks first.
+None of this belongs on every merge. Load tests are slow — the CI run has to
+compile the entire backend in release mode inside Docker, then boot a full
+infrastructure stack. They're also non-deterministic on shared runners, and their
+results are only meaningful when a human is reading them. So the workflow is
+`workflow_dispatch` only: `.github/workflows/load-test.yml`.
 
-For Jambo, that path is card play, and under the 2-CPU cap the ceiling is only
-about **35 concurrent games** before p99 crosses 500 ms — and the backend
-**stack-overflows** shortly after. The WebSocket fan-out survives delivery but not
-admission under thousands of spectators. Both are findings we can now act on
-deliberately, with the evidence in hand — and both are reproducible with one
-button in GitHub Actions, at whatever concurrency the next question requires.
+The ordinary CI (`ci.yml`) still *builds* the load-test binaries on every PR to
+catch bit-rot, but it never *runs* them. The new workflow is what runs them, on
+demand, parameterized — the inputs map directly onto the same `run-load-test.sh`
+flags a local run would use, so there's a single source of truth. "Just the HTTP
+curve" is one dropdown away, which is how you'd reproduce the table above for a
+new concurrency value.
 
 ---
 
-## Follow-up: what changed after the first run
+## The Loop
 
-Since the numbers above were captured, we went back and fixed the hot path. The
-results moved the ceiling from ~35 to **50 concurrent games at p99 486 ms**, and
-the backend now survives 100 concurrent games without crashing.
+Load testing a real-time backend isn't a task you schedule once before launch.
+It's a management loop: build the harness, make the harness realistic (which
+sometimes means teaching it to disable production throttles in benchmark mode,
+and sometimes means making it mint tokens the way production does), run it at
+increasing concurrency, and read the report to find the *specific* path that
+breaks first.
 
-The stack overflow turned out to be two compounding problems rather than one game
-bug:
+The findings this article describes came out of exactly that loop, run several
+times over. Each pass surfaced something the previous one couldn't see: first the
+stack overflow under a CPU cap, then the telemetry that was causing it, then the
+single hot path, then — on the WebSocket side — a serialization problem hiding
+behind a harness artifact. Each fix moved the ceiling, and the next run measured
+the new one.
 
-1. **The OTLP exporter was blocking the worker threads.** `init_tracing` always
-   built an OTLP span exporter pointed at Tempo. In the benchmark stack (no
-   collector), the `BatchSpanProcessor`'s bounded queue filled up and its `on_end`
-   blocked the actix workers, stalling and eventually crashing the server. The
-   fix: telemetry is now opt-in — the exporter is only created when
-   `OTEL_EXPORTER_OTLP_ENDPOINT` is explicitly set.
-2. **Info-level span serialization.** The card-play path emitted four nested
-   `info` spans per request (`http_request` → `play_card` → `card_play` →
-   `round_eval`), each of which re-serialized its full parent chain to JSON on
-   close. Those three inner spans are now `debug` level.
-
-On top of the crash fix, the hot path was tightened:
-
-| Change | Effect |
-|--------|--------|
-| Offload `cache_game_state` to a spawned task | Response returns after commit + publish, not after an 8-query cache rebuild |
-| Replace the `is_round_complete` N+1 with two aggregate `COUNT`s (moved into repositories) | 5 queries → 2 per play |
-| Drop the redundant full `get_game` in the play handler | Removes a full game-state read per play |
-| Reuse the transaction's player list for the cache write | Fewer off-path reads |
-| `rabbitmq` benchmark limit `512M → 1G` | RabbitMQ 4.x was OOM-killing at 512M |
-
-Re-running the same 2-CPU sweep (`BENCHMARK_MODE=true`, think-time 200 ms):
-
-| Concurrent games | card-play p99 (after) | backend |
-|---:|---:|---|
-| 30 | 172 ms | healthy |
-| 40 | 235 ms | healthy |
-| 50 | **486 ms** | healthy |
-| 75 | 1914 ms | healthy |
-| 100 | 2385 ms | healthy |
-
-The crash is gone at every level. Beyond 50 the p99 climbs again — that's the
-genuine 2-CPU ceiling (a 2-core Postgres plus a 2-worker backend), not a defect.
-The next lever there is more compute, not more code.
-
-A quick look at the WebSocket handshake storm (50 games × 100 spectators) points
-at the same class of serialization problems, left as future work: the manager
-registers every connection under one global `RwLock` write lock, every spectator
-token check hits the same single Redis `ConnectionManager`, and the load test
-shares one token across 100 spectators — so 100 redundant Redis lookups per game.
-Likely fixes, in order: a sharded/lock-free connection registry, a Redis
-connection pool, an in-process token-validation cache, and sending the welcome
-message after (not before) registration.
+That's the real point of the harness. It doesn't tell you "your app is slow." It
+tells you *which line in which path dies first, and at what concurrency* — but
+only if you test in the same constrained environment you deploy to, with a
+harness honest enough to reproduce production's actual traffic shape, and only if
+you keep re-running it after every fix. The numbers are just bookkeeping; the
+process is the product.

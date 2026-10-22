@@ -16,6 +16,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -56,6 +61,34 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  pgbouncer:
+    build:
+      context: ./pgbouncer
+      dockerfile: Dockerfile
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432", "-U", "postgres", "-d", "jambo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
   mailhog:
     image: mailhog/mailhog:v1.0.1
     ports:
@@ -72,7 +105,7 @@ services:
       context: ../backend
       dockerfile: Dockerfile
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -81,7 +114,7 @@ services:
       mailhog:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      DATABASE_URL: postgres://postgres:postgres@pgbouncer:6432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
@@ -102,6 +135,7 @@ services:
       DB_POOL_IDLE_TIMEOUT_SECS: 300
       DB_POOL_MAX_LIFETIME_SECS: 1800
       DB_POOL_METRICS_INTERVAL_SECS: 5
+      PROCESS_METRICS_INTERVAL_SECS: 5
       BENCHMARK_MODE: "true"
       BENCHMARK_API_TOKEN: ${BENCHMARK_API_TOKEN:-aiusutzfzdv6529jhz}
       BENCHMARK_BOT_DELAY_MS: "100"
@@ -138,6 +172,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -150,14 +189,14 @@ services:
       dockerfile: Dockerfile
     command: ["ai-worker"]
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      DATABASE_URL: postgres://postgres:postgres@pgbouncer:6432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: info
@@ -192,6 +231,11 @@ services:
       SMTP_FROM_NAME: "Jambo Game"
     volumes:
       - ../backend/migrations:/app/migrations:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
@@ -204,14 +248,14 @@ services:
       dockerfile: Dockerfile
     command: ["ai-worker"]
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      DATABASE_URL: postgres://postgres:postgres@pgbouncer:6432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: info
@@ -246,6 +290,11 @@ services:
       SMTP_FROM_NAME: "Jambo Game"
     volumes:
       - ../backend/migrations:/app/migrations:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:

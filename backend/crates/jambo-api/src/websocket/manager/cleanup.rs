@@ -4,7 +4,6 @@ use uuid::Uuid;
 
 use super::WebSocketManager;
 use crate::websocket::connection::MessageKind;
-use jambo_core::observability::metrics;
 
 impl WebSocketManager {
     /// Clean up stale connections that haven't had activity for more than `max_idle_duration`
@@ -15,99 +14,103 @@ impl WebSocketManager {
         max_idle_duration: Duration,
         heartbeat_timeout: Duration,
     ) -> usize {
-        let mut inner = self.inner.write().await;
         let mut total_removed = 0;
         let now = Instant::now();
         let mut expired_players: Vec<(Uuid, Uuid, i32)> = Vec::new();
         let mut changed_games: Vec<Uuid> = Vec::new();
 
-        inner.connections.retain(|game_id, connections| {
-            let before = connections.len();
-            let expired: Vec<(Uuid, Uuid, i32)> = connections
-                .iter()
-                .filter(|conn| {
+        for shard in self.shards.iter() {
+            let mut shard = shard.write().await;
+
+            shard.connections.retain(|game_id, connections| {
+                let before = connections.len();
+                let expired: Vec<(Uuid, Uuid, i32)> = connections
+                    .iter()
+                    .filter(|conn| {
+                        let idle = now.duration_since(conn.last_activity);
+                        let pong_age = now.duration_since(conn.last_pong);
+                        idle > max_idle_duration || pong_age > heartbeat_timeout
+                    })
+                    .filter_map(|conn| {
+                        conn.player_id
+                            .zip(conn.player_position)
+                            .map(|(pid, pos)| (*game_id, pid, pos))
+                    })
+                    .collect();
+                expired_players.extend(expired);
+                connections.retain(|conn| {
                     let idle = now.duration_since(conn.last_activity);
                     let pong_age = now.duration_since(conn.last_pong);
-                    idle > max_idle_duration || pong_age > heartbeat_timeout
-                })
-                .filter_map(|conn| {
-                    conn.player_id
-                        .zip(conn.player_position)
-                        .map(|(pid, pos)| (*game_id, pid, pos))
-                })
-                .collect();
-            expired_players.extend(expired);
-            connections.retain(|conn| {
-                let idle = now.duration_since(conn.last_activity);
-                let pong_age = now.duration_since(conn.last_pong);
-                idle <= max_idle_duration && pong_age <= heartbeat_timeout
+                    idle <= max_idle_duration && pong_age <= heartbeat_timeout
+                });
+                let removed = before - connections.len();
+                total_removed += removed;
+
+                if removed > 0 {
+                    changed_games.push(*game_id);
+                    tracing::info!(
+                        "Cleaned up {} stale/heartbeat connections for game {}",
+                        removed,
+                        game_id
+                    );
+                }
+
+                !connections.is_empty()
             });
-            let removed = before - connections.len();
-            total_removed += removed;
 
-            if removed > 0 {
-                changed_games.push(*game_id);
-                tracing::info!(
-                    "Cleaned up {} stale/heartbeat connections for game {}",
-                    removed,
-                    game_id
-                );
-            }
+            shard.room_connections.retain(|room_id, connections| {
+                let before = connections.len();
+                connections.retain(|conn| {
+                    let idle = now.duration_since(conn.last_activity);
+                    let pong_age = now.duration_since(conn.last_pong);
+                    idle <= max_idle_duration && pong_age <= heartbeat_timeout
+                });
+                let removed = before - connections.len();
+                total_removed += removed;
 
-            !connections.is_empty()
-        });
+                if removed > 0 {
+                    tracing::info!(
+                        "Cleaned up {} stale/heartbeat connections for room {}",
+                        removed,
+                        room_id
+                    );
+                }
 
-        inner.room_connections.retain(|room_id, connections| {
-            let before = connections.len();
-            connections.retain(|conn| {
-                let idle = now.duration_since(conn.last_activity);
-                let pong_age = now.duration_since(conn.last_pong);
-                idle <= max_idle_duration && pong_age <= heartbeat_timeout
+                !connections.is_empty()
             });
-            let removed = before - connections.len();
-            total_removed += removed;
 
-            if removed > 0 {
-                tracing::info!(
-                    "Cleaned up {} stale/heartbeat connections for room {}",
-                    removed,
-                    room_id
-                );
-            }
+            shard.user_connections.retain(|user_id, connections| {
+                let before = connections.len();
+                connections.retain(|conn| {
+                    let idle = now.duration_since(conn.last_activity);
+                    let pong_age = now.duration_since(conn.last_pong);
+                    idle <= max_idle_duration && pong_age <= heartbeat_timeout
+                });
+                let removed = before - connections.len();
+                total_removed += removed;
 
-            !connections.is_empty()
-        });
+                if removed > 0 {
+                    tracing::info!(
+                        "Cleaned up {} stale/heartbeat connections for user {}",
+                        removed,
+                        user_id
+                    );
+                }
 
-        inner.user_connections.retain(|user_id, connections| {
-            let before = connections.len();
-            connections.retain(|conn| {
-                let idle = now.duration_since(conn.last_activity);
-                let pong_age = now.duration_since(conn.last_pong);
-                idle <= max_idle_duration && pong_age <= heartbeat_timeout
+                !connections.is_empty()
             });
-            let removed = before - connections.len();
-            total_removed += removed;
-
-            if removed > 0 {
-                tracing::info!(
-                    "Cleaned up {} stale/heartbeat connections for user {}",
-                    removed,
-                    user_id
-                );
-            }
-
-            !connections.is_empty()
-        });
+        }
 
         if total_removed > 0 {
             tracing::info!("Total stale connections cleaned up: {}", total_removed);
-            metrics::WS_HEARTBEAT_TIMEOUTS_TOTAL.inc_by(total_removed as f64);
+            jambo_core::observability::metrics::WS_HEARTBEAT_TIMEOUTS_TOTAL
+                .inc_by(total_removed as f64);
         }
-        metrics::WS_CONNECTIONS_ACTIVE.sub(total_removed as f64);
+        jambo_core::observability::metrics::WS_CONNECTIONS_ACTIVE.sub(total_removed as f64);
 
-        // Publish PlayerDisconnected events for expired game connections
+        // Publish PlayerDisconnected events for expired game connections. No shard
+        // lock is held here: the expired list was already collected above.
         for (game_id, player_id, position) in expired_players {
-            drop(inner);
             tracing::info!(
                 "Player {} (position {}) disconnected from game {} (stale/heartbeat timeout)",
                 player_id,
@@ -122,9 +125,7 @@ impl WebSocketManager {
             };
             self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
                 .await;
-            inner = self.inner.write().await;
         }
-        drop(inner);
 
         // Refresh the per-game spectator gauge for every game that lost a
         // connection during this sweep (spectators have no player_id and are

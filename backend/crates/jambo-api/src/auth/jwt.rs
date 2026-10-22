@@ -99,18 +99,30 @@ pub fn validate_game_token(
     token: &str,
     config: &AuthConfig,
 ) -> Result<GameTokenClaims, jsonwebtoken::errors::Error> {
+    let claims = decode_game_token(token, config)?;
+    // Verify purpose field
+    if claims.purpose != "ws:game" {
+        return Err(jsonwebtoken::errors::Error::from(
+            jsonwebtoken::errors::ErrorKind::InvalidSubject,
+        ));
+    }
+    Ok(claims)
+}
+
+/// Decode a game/spectate token into its claims without asserting a purpose.
+/// Callers that must accept either token kind (game or spectator) decode once
+/// here and then branch on `claims.purpose` instead of paying a second HMAC
+/// verification to discover the purpose was wrong.
+pub fn decode_game_token(
+    token: &str,
+    config: &AuthConfig,
+) -> Result<GameTokenClaims, jsonwebtoken::errors::Error> {
     let validation = Validation::default();
     let token_data = decode::<GameTokenClaims>(
         token,
         &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
         &validation,
     )?;
-    // Verify purpose field
-    if token_data.claims.purpose != "ws:game" {
-        return Err(jsonwebtoken::errors::Error::from(
-            jsonwebtoken::errors::ErrorKind::InvalidSubject,
-        ));
-    }
     Ok(token_data.claims)
 }
 
@@ -142,18 +154,13 @@ pub fn validate_spectate_token(
     token: &str,
     config: &AuthConfig,
 ) -> Result<GameTokenClaims, jsonwebtoken::errors::Error> {
-    let validation = Validation::default();
-    let token_data = decode::<GameTokenClaims>(
-        token,
-        &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
-        &validation,
-    )?;
-    if token_data.claims.purpose != "ws:spectate" {
+    let claims = decode_game_token(token, config)?;
+    if claims.purpose != "ws:spectate" {
         return Err(jsonwebtoken::errors::Error::from(
             jsonwebtoken::errors::ErrorKind::InvalidSubject,
         ));
     }
-    Ok(token_data.claims)
+    Ok(claims)
 }
 
 pub fn generate_reset_token(

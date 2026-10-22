@@ -16,6 +16,34 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  pgbouncer:
+    build:
+      context: ./pgbouncer
+      dockerfile: Dockerfile
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432", "-U", "postgres", "-d", "jambo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   rabbitmq:
     image: rabbitmq:4.3-management-alpine
@@ -53,7 +81,7 @@ services:
       context: ../backend
       dockerfile: Dockerfile
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -62,7 +90,7 @@ services:
       mailhog:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      DATABASE_URL: postgres://postgres:postgres@pgbouncer:6432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
@@ -88,6 +116,7 @@ services:
       IP_HASH_PEPPER: ip-pepper-change-me-1234567890abcdef
       FRONTEND_URL: http://localhost:3000
       CORS_ALLOWED_ORIGINS: http://localhost:3000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       RATE_LIMIT_DEFAULT_MAX_REQUESTS: "120"
       RATE_LIMIT_DEFAULT_WINDOW_SECONDS: "3600"
       RATE_LIMIT_CONTACT_MAX_REQUESTS: "5"
@@ -115,6 +144,7 @@ services:
       PAYPAL_TOPUP_AMOUNT_EUR: "1.00"
       PAYPAL_SANDBOX_URL: https://api-m.sandbox.paypal.com
       PAYPAL_LIVE_URL: https://api-m.paypal.com
+      PAYPAL_DONATE_URL: https://www.paypal.me/jtombi/1
       TOPUP_CREDIT_AMOUNT: "250"
       TOPUP_MONTHLY_LIMIT_EUR_CENTS: "10000"
     ports:
@@ -130,6 +160,11 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build:
@@ -156,7 +191,7 @@ services:
       dockerfile: Dockerfile
     command: ["ai-worker"]
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -165,7 +200,7 @@ services:
       mailhog:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      DATABASE_URL: postgres://postgres:postgres@pgbouncer:6432/jambo
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
@@ -176,6 +211,7 @@ services:
       RABBITMQ_PUBLISH_MAX_RETRIES: 3
       RABBITMQ_PUBLISH_INITIAL_RETRY_DELAY_MS: 100
       RABBITMQ_PUBLISH_MAX_RETRY_DELAY_MS: 5000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
       CIRCUIT_BREAKER_COOLDOWN_SECS: 30
       GAME_STALENESS_THRESHOLD_SECS: 60
@@ -214,6 +250,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   scheduler-worker:
     build:
@@ -221,7 +262,7 @@ services:
       dockerfile: Dockerfile
     command: ["scheduler-worker"]
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -230,8 +271,9 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 5000
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+      DATABASE_URL: postgres://postgres:postgres@pgbouncer:6432/jambo
       REDIS_URL: redis://redis:6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       RUST_LOG: info
       GAME_STALENESS_THRESHOLD_SECS: 60
       GAME_HUMAN_STALENESS_ALERT_SECS: 120
@@ -266,6 +308,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # # ── DB Backup ────────────────────────────────────────────────
   # # Dumps the postgres database daily and uploads it to an S3-compatible
@@ -278,7 +325,7 @@ services:
   #     postgres:
   #       condition: service_healthy
   #   environment:
-  #     DATABASE_URL: postgres://postgres:postgres@postgres:5432/jambo
+  #     DATABASE_URL: postgres://postgres:postgres@pgbouncer:6432/jambo
   #     S3_ENDPOINT: ${S3_ENDPOINT:-https://s3.amazonaws.com}
   #     S3_BUCKET: ${S3_BUCKET:-jambo-backups}
   #     S3_PREFIX: ${S3_PREFIX:-jambo/}
@@ -360,6 +407,7 @@ services:
       - ./grafana/alerting:/etc/grafana/provisioning/alerting
       - grafana_data:/var/lib/grafana
     environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://tempo:4317
       GF_SERVER_HTTP_PORT: 3000
       GF_SERVER_ROOT_URL: ${GRAFANA_SERVER_ROOT_URL:-http://localhost:8888/grafana}
       GF_SERVER_SERVE_FROM_SUB_PATH: true

@@ -43,11 +43,32 @@ services:
     #   - internal
     restart: unless-stopped
 
+  pgbouncer:
+    image: ghcr.io/jtombiamba/rust_jambo-pgbouncer:${IMAGE_TAG:-latest}
+    pull_policy: always
+    environment:
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432", "-U", "postgres", "-d", "jambo"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
   backend:
     image: ghcr.io/jtombiamba/rust_jambo-backend:${IMAGE_TAG:-latest}
     pull_policy: always
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -55,7 +76,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@pgbouncer:6432/${POSTGRES_DB:-jambo}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       HOST: 0.0.0.0
@@ -170,7 +191,7 @@ services:
     pull_policy: always
     command: ["ai-worker"]
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
@@ -179,7 +200,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 5000
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@pgbouncer:6432/${POSTGRES_DB:-jambo}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/%2f
       REDIS_URL: redis://redis:6379
       RUST_LOG: ${RUST_LOG:-info}
@@ -235,14 +256,14 @@ services:
     pull_policy: always
     command: ["scheduler-worker"]
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
       HOST: 0.0.0.0
       PORT: 5000
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-jambo}
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@pgbouncer:6432/${POSTGRES_DB:-jambo}
       REDIS_URL: redis://redis:6379
       RUST_LOG: ${RUST_LOG:-info}
       GAME_STALENESS_THRESHOLD_SECS: ${GAME_STALENESS_THRESHOLD_SECS:-60}

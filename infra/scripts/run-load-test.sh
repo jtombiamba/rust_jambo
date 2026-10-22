@@ -315,6 +315,7 @@ if [[ "${SKIP_WS}" != true ]]; then
         --spectators-per-game="${WS_SPECTATORS}" \
         --bet="${WS_BET}" \
         --client-timeout-ms="${WS_TIMEOUT}" \
+        --prometheus-url=http://prometheus:9090 \
         --output=/app/benchmark-results/ws-benchmark.json
     ok "WS load test finished."
 else

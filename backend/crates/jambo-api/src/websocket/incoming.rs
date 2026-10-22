@@ -2,7 +2,7 @@ use actix_web::web;
 use actix_ws::{self, Message, Session};
 use futures_util::StreamExt;
 use serde_json::Value;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 use uuid::Uuid;
 
 use super::connection::{ConnectionContext, ConnectionId};
@@ -30,7 +30,7 @@ pub(super) fn spawn_incoming_handler(
         let _guard = handler_span.enter();
         let mut session = session;
         let mut stream = stream;
-        info!(
+        debug!(
             "Incoming message handler started for connection {}",
             ctx.connection_id.uuid()
         );
@@ -62,7 +62,7 @@ pub(super) fn spawn_incoming_handler(
                         }
                     }
                     Message::Close(reason) => {
-                        info!(
+                        debug!(
                             "WebSocket closed for game {}, connection {}: {:?}",
                             ctx.game_id,
                             ctx.connection_id.uuid(),
@@ -97,14 +97,14 @@ pub(super) fn spawn_incoming_handler(
             }
         }
         // Clean up connection on close
-        info!(
+        debug!(
             "Stream ended for connection {}, cleaning up",
             ctx.connection_id.uuid()
         );
         manager
             .remove_connection(ctx.game_id, ctx.connection_id)
             .await;
-        info!(
+        debug!(
             "Connection {} cleaned up for game {}",
             ctx.connection_id.uuid(),
             ctx.game_id

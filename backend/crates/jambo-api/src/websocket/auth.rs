@@ -1,8 +1,11 @@
 use actix_web::{web, HttpRequest};
+use moka::sync::Cache;
+use std::sync::LazyLock;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::auth::config::AuthConfig;
-use crate::auth::jwt;
+use crate::auth::jwt::{self, GameTokenClaims};
 use jambo_domain::messaging::RedisClient;
 
 /// Namespace constant used to derive a deterministic anonymous identity from a
@@ -12,6 +15,27 @@ const ANON_NAMESPACE: u128 = 0x006A_6F6E_6573_5F61_6E6F_6E5F_7575_6964_u128;
 /// Namespace constant used to derive a deterministic spectator identity from a
 /// game id. Arbitrary but fixed to avoid collisions with real user IDs.
 const SPECTATE_NAMESPACE: u128 = 0x0000_5350_4543_5441_5445_5F41_4E4F_4E5F_4944_u128;
+
+/// TTL for cached token-existence results. Tokens are *not* single-use-deleted
+/// (they persist for their full TTL and are revocable by deletion), so caching a
+/// positive result only delays revocation by this window. Keeping it short bounds
+/// that delay while still collapsing the load test's burst of 100 identical
+/// `EXISTS` calls per game into a single Redis round-trip.
+const TOKEN_CACHE_TTL_SECS: u64 = 2;
+
+/// Process-wide cache of token-key existence checks, keyed by the full Redis key
+/// (`ws_token:{game_id}:{jti}` / `spectate_token:{game_id}:{jti}`). JWT signature,
+/// expiry, and purpose are still verified on every request; only the Redis
+/// `EXISTS` lookup is memoized.
+fn token_cache() -> &'static Cache<String, bool> {
+    static CACHE: LazyLock<Cache<String, bool>> = LazyLock::new(|| {
+        Cache::builder()
+            .time_to_live(Duration::from_secs(TOKEN_CACHE_TTL_SECS))
+            .max_capacity(100_000)
+            .build()
+    });
+    &CACHE
+}
 
 /// Derive a deterministic anonymous user id for a game, so unauthenticated
 /// players always map to the same identity within a session.
@@ -35,6 +59,10 @@ pub(super) struct AuthContext {
 
 /// Authenticate a game WebSocket connection: try the auth cookie first, then
 /// fall back to a one-time game token or spectator token in the query string.
+///
+/// The query-string token is decoded exactly once and its `purpose` selects the
+/// validator, avoiding a wasted HMAC verification when a spectator token is first
+/// rejected as a game token.
 pub(super) async fn authenticate_ws_request(
     req: &HttpRequest,
     game_id: Uuid,
@@ -44,20 +72,13 @@ pub(super) async fn authenticate_ws_request(
     let token = req.cookie("Authorization").map(|c| c.value().to_string());
 
     if let Some(token) = token {
-        tracing::info!(
-            "[DEBUG] WebSocket connection via token cookie for game {}",
-            game_id
-        );
+        tracing::debug!("WebSocket connection via token cookie for game {}", game_id);
         return AuthContext {
             user_id: validate_ws_token(Some(token), auth_config, redis_client).await,
             is_cookie_auth: true,
         };
     }
 
-    tracing::info!(
-        "[DEBUG] WebSocket connection via token query params for game {}",
-        game_id
-    );
     // Check for one-time game token in query parameter
     let game_token = req
         .query_string()
@@ -66,22 +87,25 @@ pub(super) async fn authenticate_ws_request(
         .find(|(k, _)| *k == "token")
         .map(|(_, v)| v.to_string());
 
-    let user_id = if let Some(ref gt) = game_token {
-        tracing::info!("[DEBUG] WebSocket validating token for game {}", game_id);
-        let game_id_auth =
-            validate_game_token(gt, game_id, auth_config.clone(), redis_client.clone()).await;
-        if game_id_auth.is_some() {
-            game_id_auth
-        } else {
-            tracing::info!(
-                "[DEBUG] WebSocket validating spectator token for game {}",
-                game_id
-            );
-            validate_spectate_token(gt, game_id, auth_config, redis_client).await
+    let user_id = if let Some(gt) = game_token {
+        let Some(config) = auth_config else {
+            return AuthContext {
+                user_id: None,
+                is_cookie_auth: false,
+            };
+        };
+        match jwt::decode_game_token(&gt, &config) {
+            Ok(claims) if claims.purpose == "ws:game" => {
+                validate_game_token_with_claims(&claims, game_id, redis_client).await
+            }
+            Ok(claims) if claims.purpose == "ws:spectate" => {
+                validate_spectate_token_with_claims(&claims, game_id, redis_client).await
+            }
+            _ => None,
         }
     } else {
-        tracing::warn!(
-            "[WARN] WebSocket connection via token: no query params for game {}",
+        tracing::debug!(
+            "WebSocket connection via token: no query params for game {}",
             game_id
         );
         None
@@ -132,13 +156,19 @@ pub async fn validate_game_token(
     token: &str,
     game_id: Uuid,
     auth_config: Option<web::Data<AuthConfig>>,
-    mut redis_client: Option<RedisClient>,
+    redis_client: Option<RedisClient>,
 ) -> Option<Uuid> {
     let config = auth_config?;
-
-    // Validate the JWT signature, expiry, and purpose
     let claims = jwt::validate_game_token(token, &config).ok()?;
+    validate_game_token_with_claims(&claims, game_id, redis_client).await
+}
 
+/// Shared post-decode validation for game tokens: scope check + Redis existence.
+async fn validate_game_token_with_claims(
+    claims: &GameTokenClaims,
+    game_id: Uuid,
+    mut redis_client: Option<RedisClient>,
+) -> Option<Uuid> {
     // Ensure the token is for this specific game
     if claims.sub != game_id {
         tracing::warn!(
@@ -155,9 +185,9 @@ pub async fn validate_game_token(
     // and purpose checks already secure the token.
     let redis_key = format!("ws_token:{}:{}", game_id, claims.jti);
     if let Some(ref mut r) = redis_client {
-        match r.exists(&redis_key).await {
+        match cached_exists(r, &redis_key).await {
             Ok(true) => {
-                tracing::info!(
+                tracing::debug!(
                     "Game token validated for game {}, jti: {}",
                     game_id,
                     claims.jti
@@ -197,12 +227,19 @@ pub async fn validate_spectate_token(
     token: &str,
     game_id: Uuid,
     auth_config: Option<web::Data<AuthConfig>>,
-    mut redis_client: Option<RedisClient>,
+    redis_client: Option<RedisClient>,
 ) -> Option<Uuid> {
     let config = auth_config?;
-
     let claims = jwt::validate_spectate_token(token, &config).ok()?;
+    validate_spectate_token_with_claims(&claims, game_id, redis_client).await
+}
 
+/// Shared post-decode validation for spectator tokens: scope check + Redis existence.
+async fn validate_spectate_token_with_claims(
+    claims: &GameTokenClaims,
+    game_id: Uuid,
+    mut redis_client: Option<RedisClient>,
+) -> Option<Uuid> {
     if claims.sub != game_id {
         tracing::warn!(
             "Spectator token mismatch: token is for game {} but connection is for game {}",
@@ -214,9 +251,9 @@ pub async fn validate_spectate_token(
 
     let redis_key = format!("spectate_token:{}:{}", game_id, claims.jti);
     if let Some(ref mut r) = redis_client {
-        match r.exists(&redis_key).await {
+        match cached_exists(r, &redis_key).await {
             Ok(true) => {
-                tracing::info!(
+                tracing::debug!(
                     "Spectator token validated for game {}, jti: {}",
                     game_id,
                     claims.jti
@@ -241,6 +278,16 @@ pub async fn validate_spectate_token(
     }
 
     Some(derive_spectate_id(game_id))
+}
+
+/// Check whether a token's Redis key exists, memoized by an in-process TTL cache.
+async fn cached_exists(redis_client: &mut RedisClient, key: &str) -> redis::RedisResult<bool> {
+    if let Some(cached) = token_cache().get(key) {
+        return Ok(cached);
+    }
+    let exists = redis_client.exists(key).await?;
+    token_cache().insert(key.to_string(), exists);
+    Ok(exists)
 }
 
 #[cfg(test)]

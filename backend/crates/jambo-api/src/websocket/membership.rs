@@ -1,5 +1,23 @@
 use actix_web::{self, web};
+use moka::sync::Cache;
+use std::sync::LazyLock;
+use std::time::Duration;
 use uuid::Uuid;
+
+/// TTL for positive membership results. Only *allowed* results are cached, so a
+/// newly-accepted player can never be falsely rejected; the bounded delay only
+/// affects how quickly a revoked/kicked participant's socket is refused.
+const MEMBERSHIP_CACHE_TTL_SECS: u64 = 2;
+
+fn membership_cache() -> &'static Cache<(Uuid, Uuid), bool> {
+    static CACHE: LazyLock<Cache<(Uuid, Uuid), bool>> = LazyLock::new(|| {
+        Cache::builder()
+            .time_to_live(Duration::from_secs(MEMBERSHIP_CACHE_TTL_SECS))
+            .max_capacity(100_000)
+            .build()
+    });
+    &CACHE
+}
 
 /// Enforce that a cookie-authenticated user may open a game's WebSocket.
 /// Anonymous game-token and spectator connections (`user_id == None`) bypass
@@ -55,6 +73,9 @@ pub(super) async fn resolve_player_for_user(
 /// Determine whether an authenticated user may open a game's WebSocket. Allowed
 /// for the creator, an accepted player, or (while the game is still pending) an
 /// invitee who has not yet responded.
+///
+/// Positive results are memoized briefly so a burst of reconnects from the same
+/// (game, user) pair does not re-issue the creator/player/invite lookups.
 async fn check_game_membership(
     db: &sea_orm::DatabaseConnection,
     game_id: Uuid,
@@ -63,11 +84,16 @@ async fn check_game_membership(
     use jambo_db::models::GameStatus;
     use jambo_db::repositories::{GameInviteRepository, GameRepository, PlayerRepository};
 
+    if let Some(true) = membership_cache().get(&(game_id, user_id)) {
+        return Ok(true);
+    }
+
     let game = GameRepository::new(db.clone()).find_by_id(game_id).await?;
     let Some(game) = game else {
         return Ok(false);
     };
     if game.creator_id == Some(user_id) {
+        membership_cache().insert((game_id, user_id), true);
         return Ok(true);
     }
     if PlayerRepository::new(db.clone())
@@ -75,6 +101,7 @@ async fn check_game_membership(
         .await?
         .is_some()
     {
+        membership_cache().insert((game_id, user_id), true);
         return Ok(true);
     }
     if game.status == GameStatus::Pending
@@ -83,6 +110,7 @@ async fn check_game_membership(
             .await?
             .is_some()
     {
+        membership_cache().insert((game_id, user_id), true);
         return Ok(true);
     }
     Ok(false)
