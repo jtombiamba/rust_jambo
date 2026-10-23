@@ -17,10 +17,10 @@ impl WebSocketManager {
         sender: WsSender,
         correlation_id: CorrelationId,
     ) -> ConnectionId {
-        let mut inner = self.inner.write().await;
         let connection_id = ConnectionId::new();
+        let mut shard = self.shard(user_id).write().await;
 
-        inner
+        shard
             .user_connections
             .entry(user_id)
             .or_default()
@@ -49,11 +49,11 @@ impl WebSocketManager {
 
     /// Remove a WebSocket connection for a user.
     pub async fn remove_user_connection(&self, user_id: Uuid, connection_id: ConnectionId) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.user_connections.get_mut(&user_id) {
+        let mut shard = self.shard(user_id).write().await;
+        if let Some(connections) = shard.user_connections.get_mut(&user_id) {
             connections.retain(|c| c.id != connection_id);
             if connections.is_empty() {
-                inner.user_connections.remove(&user_id);
+                shard.user_connections.remove(&user_id);
             }
             metrics::WS_CONNECTIONS_ACTIVE.dec();
             metrics::WS_DISCONNECTS_TOTAL.inc();
@@ -67,8 +67,8 @@ impl WebSocketManager {
 
     /// Update the last pong time for a user connection to keep it alive.
     pub async fn update_user_pong(&self, user_id: Uuid, connection_id: ConnectionId) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.user_connections.get_mut(&user_id) {
+        let mut shard = self.shard(user_id).write().await;
+        if let Some(connections) = shard.user_connections.get_mut(&user_id) {
             for connection in connections.iter_mut() {
                 if connection.id == connection_id {
                     connection.last_pong = Instant::now();
@@ -81,8 +81,8 @@ impl WebSocketManager {
     /// Broadcast a message to all connections of a specific user.
     pub async fn broadcast_to_user(&self, user_id: Uuid, message: &str, kind: MessageKind) {
         let targets = {
-            let inner = self.inner.read().await;
-            inner
+            let shard = self.shard(user_id).read().await;
+            shard
                 .user_connections
                 .get(&user_id)
                 .map(|conns| {

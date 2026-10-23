@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use sea_orm::{
     ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
-    QueryFilter, QueryOrder, Set,
+    PaginatorTrait, QueryFilter, QueryOrder, Set,
 };
 use uuid::Uuid;
 
@@ -117,6 +117,33 @@ impl GameCardRepository {
         game_card::Entity::find()
             .filter(game_card::Column::GameId.eq(game_id))
             .all(&self.connection)
+            .await
+    }
+
+    /// Count cards played in a specific round of a game.
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn count_played_in_round(&self, game_id: Uuid, round: i32) -> Result<u64, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::GameId.eq(game_id))
+            .filter(game_card::Column::Round.eq(round))
+            .filter(game_card::Column::Played.eq(true))
+            .count(&self.connection)
+            .await
+    }
+
+    /// Count cards played in a specific round inside a transaction.
+    #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
+    pub async fn count_played_in_round_in_txn(
+        &self,
+        txn: &DatabaseTransaction,
+        game_id: Uuid,
+        round: i32,
+    ) -> Result<u64, DbErr> {
+        game_card::Entity::find()
+            .filter(game_card::Column::GameId.eq(game_id))
+            .filter(game_card::Column::Round.eq(round))
+            .filter(game_card::Column::Played.eq(true))
+            .count(txn)
             .await
     }
 

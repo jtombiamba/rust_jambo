@@ -34,6 +34,7 @@ pub struct Config {
     pub db_pool_idle_timeout_secs: u64,
     pub db_pool_max_lifetime_secs: u64,
     pub db_pool_metrics_interval_secs: u64,
+    pub process_metrics_interval_secs: u64,
     pub benchmark_mode: bool,
     pub enable_api_docs: bool,
     pub benchmark_bot_delay_ms: u64,
@@ -72,6 +73,7 @@ pub struct Config {
     pub redis_publish_retry_max_delay_ms: u64,
     pub redis_event_buffer_max_size: usize,
     pub redis_event_buffer_flush_interval_secs: u64,
+    pub redis_pool_size: usize,
     pub ws_heartbeat_interval_secs: u64,
     pub ws_heartbeat_timeout_secs: u64,
     pub ws_spectator_resync_interval_secs: u64,
@@ -154,6 +156,10 @@ impl std::fmt::Debug for Config {
             .field(
                 "db_pool_metrics_interval_secs",
                 &self.db_pool_metrics_interval_secs,
+            )
+            .field(
+                "process_metrics_interval_secs",
+                &self.process_metrics_interval_secs,
             )
             .field("benchmark_mode", &self.benchmark_mode)
             .field("benchmark_bot_delay_ms", &self.benchmark_bot_delay_ms)
@@ -257,6 +263,7 @@ impl std::fmt::Debug for Config {
                 "redis_event_buffer_flush_interval_secs",
                 &self.redis_event_buffer_flush_interval_secs,
             )
+            .field("redis_pool_size", &self.redis_pool_size)
             .field(
                 "ws_heartbeat_interval_secs",
                 &self.ws_heartbeat_interval_secs,
@@ -330,6 +337,7 @@ impl Config {
             .set_default("db_pool_idle_timeout_secs", "300")?
             .set_default("db_pool_max_lifetime_secs", "1800")?
             .set_default("db_pool_metrics_interval_secs", "30")?
+            .set_default("process_metrics_interval_secs", "15")?
             .set_default("benchmark_mode", "false")?
             .set_default("enable_api_docs", "false")?
             .set_default("benchmark_bot_delay_ms", "100")?
@@ -372,6 +380,7 @@ impl Config {
             .set_default("redis_publish_retry_max_delay_ms", "1000")?
             .set_default("redis_event_buffer_max_size", "1000")?
             .set_default("redis_event_buffer_flush_interval_secs", "5")?
+            .set_default("redis_pool_size", "16")?
             .set_default("ws_heartbeat_interval_secs", "30")?
             .set_default("ws_heartbeat_timeout_secs", "90")?
             .set_default("ws_spectator_resync_interval_secs", "10")?
@@ -512,6 +521,10 @@ impl Config {
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()
                 .unwrap_or(30),
+            process_metrics_interval_secs: env::var("PROCESS_METRICS_INTERVAL_SECS")
+                .unwrap_or_else(|_| "15".to_string())
+                .parse()
+                .unwrap_or(15),
             benchmark_mode: env::var("BENCHMARK_MODE")
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
@@ -658,6 +671,10 @@ impl Config {
             .unwrap_or_else(|_| "5".to_string())
             .parse()
             .unwrap_or(5),
+            redis_pool_size: env::var("REDIS_POOL_SIZE")
+                .unwrap_or_else(|_| "16".to_string())
+                .parse()
+                .unwrap_or(16),
             ws_heartbeat_interval_secs: env::var("WS_HEARTBEAT_INTERVAL_SECS")
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()

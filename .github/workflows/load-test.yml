@@ -1,0 +1,108 @@
+name: Load Test
+
+# On-demand load testing. This is intentionally NOT wired to push/pull_request:
+# load tests are slow (a full Rust release build + a containerized benchmark
+# stack), they need Postgres/RabbitMQ/Redis, and their results are only
+# meaningful when a human is watching. Run it manually from the Actions tab and
+# pick the workload you want to stress.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Which load tests to run'
+        required: true
+        type: choice
+        default: 'http'
+        options:
+          - http
+          - ws
+          - both
+      total_games:
+        description: 'Total games to run'
+        required: false
+        type: number
+        default: 300
+      concurrency:
+        description: 'Concurrent games'
+        required: false
+        type: number
+        default: 50
+      warm_up_games:
+        description: 'Warm-up games (HTTP only)'
+        required: false
+        type: number
+        default: 5
+      ramp_up_secs:
+        description: 'Ramp-up duration in seconds (HTTP only)'
+        required: false
+        type: number
+        default: 10
+      duration_secs:
+        description: 'Benchmark duration in seconds'
+        required: false
+        type: number
+        default: 60
+      think_time_ms:
+        description: 'Think time between card plays (HTTP only)'
+        required: false
+        type: number
+        default: 200
+      bet:
+        description: 'Bet amount per game'
+        required: false
+        type: number
+        default: 10
+      spectators_per_game:
+        description: 'Spectator WS connections per game (WS only)'
+        required: false
+        type: number
+        default: 100
+
+concurrency:
+  group: load-test-${{ github.ref }}-${{ github.event.inputs.mode }}
+  cancel-in-progress: true
+
+jobs:
+  load-test:
+    name: Load test (${{ github.event.inputs.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build load-test image & run benchmarks
+        env:
+          # Dev token is only a fallback for the ephemeral benchmark stack;
+          # override with a repo secret for anything sensitive.
+          BENCHMARK_API_TOKEN: ${{ secrets.BENCHMARK_API_TOKEN || 'aiusutzfzdv6529jhz' }}
+        run: |
+          args=(
+            --http-games       "${{ github.event.inputs.total_games }}"
+            --http-concurrency "${{ github.event.inputs.concurrency }}"
+            --http-warmup      "${{ github.event.inputs.warm_up_games }}"
+            --http-rampup      "${{ github.event.inputs.ramp_up_secs }}"
+            --http-duration    "${{ github.event.inputs.duration_secs }}"
+            --http-think-time  "${{ github.event.inputs.think_time_ms }}"
+            --http-bet         "${{ github.event.inputs.bet }}"
+            --ws-games         "${{ github.event.inputs.total_games }}"
+            --ws-concurrency   "${{ github.event.inputs.concurrency }}"
+            --ws-duration      "${{ github.event.inputs.duration_secs }}"
+            --ws-spectators    "${{ github.event.inputs.spectators_per_game }}"
+            --ws-bet           "${{ github.event.inputs.bet }}"
+          )
+
+          case "${{ github.event.inputs.mode }}" in
+            http) args+=(--skip-ws) ;;
+            ws)   args+=(--skip-http) ;;
+          esac
+
+          bash infra/scripts/run-load-test.sh "${args[@]}"
+
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_id }}
+          path: infra/benchmark-results/*.json
+          if-no-files-found: warn

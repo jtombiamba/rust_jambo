@@ -146,6 +146,7 @@ pub struct RateLimiter {
     in_memory: Arc<InMemoryRateLimiter>,
     config: RateLimitConfig,
     pub(crate) fallback_warned: Arc<AtomicBool>,
+    benchmark_mode: bool,
 }
 
 impl RateLimiter {
@@ -155,6 +156,7 @@ impl RateLimiter {
             in_memory: Arc::new(InMemoryRateLimiter::default()),
             config,
             fallback_warned: Arc::new(AtomicBool::new(false)),
+            benchmark_mode: false,
         }
     }
 
@@ -225,6 +227,14 @@ impl RateLimiterMiddleware {
             translator,
         }
     }
+
+    /// Disable rate limiting entirely (used by the benchmark mode so that the
+    /// load-test harness can register/login thousands of virtual users from a
+    /// single container IP without tripping production throttle limits).
+    pub fn with_benchmark_mode(mut self, enabled: bool) -> Self {
+        self.limiter.benchmark_mode = enabled;
+        self
+    }
 }
 
 impl<S, B> Transform<S, ServiceRequest> for RateLimiterMiddleware
@@ -268,6 +278,11 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        if self.limiter.benchmark_mode {
+            let fut = self.service.call(req);
+            return Box::pin(async move { fut.await.map(|res| res.map_into_left_body()) });
+        }
+
         let ip = req
             .extensions()
             .get::<crate::auth::extractors::ClientIp>()

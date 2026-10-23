@@ -170,6 +170,7 @@ pub struct MockDashboardService {
     get_profile_result: Mutex<Option<Result<PlayerProfileResponse, AppError>>>,
     list_games_result: Mutex<Option<Result<GameHistoryResponse, AppError>>>,
     get_game_result: Mutex<Option<Result<QuickGameResponse, AppError>>>,
+    get_player_id_result: Mutex<Option<Result<uuid::Uuid, AppError>>>,
     get_active_game_result: Mutex<Option<Result<QuickGameResponse, AppError>>>,
     resolve_result: Mutex<Option<Result<ResolveResult, AppError>>>,
     check_existing_players_result: Mutex<Option<Result<HashSet<uuid::Uuid>, AppError>>>,
@@ -184,6 +185,7 @@ impl MockDashboardService {
             get_profile_result: Mutex::new(None),
             list_games_result: Mutex::new(None),
             get_game_result: Mutex::new(None),
+            get_player_id_result: Mutex::new(None),
             get_active_game_result: Mutex::new(None),
             resolve_result: Mutex::new(None),
             check_existing_players_result: Mutex::new(None),
@@ -203,6 +205,10 @@ impl MockDashboardService {
 
     pub fn set_get_game_result(&self, r: Result<QuickGameResponse, AppError>) {
         *self.get_game_result.lock().unwrap() = Some(r);
+    }
+
+    pub fn set_get_player_id_result(&self, r: Result<uuid::Uuid, AppError>) {
+        *self.get_player_id_result.lock().unwrap() = Some(r);
     }
 
     pub fn set_get_active_game_result(&self, r: Result<QuickGameResponse, AppError>) {
@@ -300,6 +306,18 @@ impl DashboardServiceTrait for MockDashboardService {
             .unwrap()
             .take()
             .unwrap_or(Ok(default_quick_game()))
+    }
+
+    async fn get_player_id(
+        &self,
+        _user_id: uuid::Uuid,
+        _game_id: uuid::Uuid,
+    ) -> Result<uuid::Uuid, AppError> {
+        self.get_player_id_result
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or(Ok(uuid::Uuid::new_v4()))
     }
 
     async fn get_active_game(&self, _user_id: uuid::Uuid) -> Result<QuickGameResponse, AppError> {

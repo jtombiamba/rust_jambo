@@ -64,12 +64,12 @@ impl WebSocketManager {
                     while let Some(msg) = stream.next().await {
                         let channel: String = msg.get_channel().unwrap_or_default();
                         let payload: String = msg.get_payload().unwrap_or_default();
-                        tracing::info!("Redis message on channel {} (shard {})", channel, shard);
+                        tracing::debug!("Redis message on channel {} (shard {})", channel, shard);
 
                         match parse_channel(&channel) {
                             Some(Channel::Game(game_id)) => {
                                 let target = shard_for_id(game_id, shard_count);
-                                tracing::info!(
+                                tracing::debug!(
                                     "[WS-INFO] game {} -> target shard {} (this shard {}, shard_count {})",
                                     game_id,
                                     target,
@@ -77,7 +77,7 @@ impl WebSocketManager {
                                     shard_count
                                 );
                                 if target != shard {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "[WS-INFO] DROPPING game event for {} on shard {} (target {})",
                                         game_id,
                                         shard,
@@ -107,7 +107,7 @@ impl WebSocketManager {
                             }
                             Some(Channel::Room(room_id)) => {
                                 let target = shard_for_id(room_id, shard_count);
-                                tracing::info!(
+                                tracing::debug!(
                                     "[WS-INFO] room {} -> target shard {} (this shard {}, shard_count {})",
                                     room_id,
                                     target,
@@ -115,7 +115,7 @@ impl WebSocketManager {
                                     shard_count
                                 );
                                 if target != shard {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "[WS-INFO] DROPPING room event for {} on shard {} (target {})",
                                         room_id,
                                         shard,
@@ -145,7 +145,7 @@ impl WebSocketManager {
                             }
                             Some(Channel::User(user_id)) => {
                                 let target = shard_for_id(user_id, shard_count);
-                                tracing::info!(
+                                tracing::debug!(
                                     "[WS-INFO] user {} -> target shard {} (this shard {}, shard_count {})",
                                     user_id,
                                     target,
@@ -153,7 +153,7 @@ impl WebSocketManager {
                                     shard_count
                                 );
                                 if target != shard {
-                                    tracing::info!(
+                                    tracing::debug!(
                                         "[WS-INFO] DROPPING user event for {} on shard {} (target {})",
                                         user_id,
                                         shard,
@@ -207,7 +207,7 @@ impl WebSocketManager {
         // Log the concrete event variant so we can detect duplicate
         // deliveries of the same event (the logs showed the same game event
         // processed twice within ~0.3ms).
-        tracing::info!(
+        tracing::debug!(
             "[WS-DIAG] route_event: game {} -> variant={}",
             game_id,
             event.variant_name()
@@ -228,11 +228,7 @@ impl WebSocketManager {
                 self.broadcast_to_game(game_id, &event.to_json(), MessageKind::Control)
                     .await;
                 self.remove_player_connections(game_id, *player_id).await;
-                let db = {
-                    let inner = self.inner.read().await;
-                    inner.db.clone()
-                };
-                if let Some(db) = db {
+                if let Some(db) = self.db.clone() {
                     crate::websocket::game_state::send_snapshots_to_all_players(self, &db, game_id)
                         .await;
                 }
@@ -249,8 +245,8 @@ impl WebSocketManager {
     /// their player id arrived still receive game-scoped broadcasts.
     pub async fn send_to_unidentified(&self, game_id: Uuid, message: &str, kind: MessageKind) {
         let targets = {
-            let inner = self.inner.read().await;
-            inner
+            let shard = self.shard(game_id).read().await;
+            shard
                 .connections
                 .get(&game_id)
                 .map(|conns| {

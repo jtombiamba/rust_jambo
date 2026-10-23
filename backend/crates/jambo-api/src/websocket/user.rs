@@ -1,9 +1,7 @@
+use crate::auth::config::AuthConfig;
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
 use actix_ws;
 use futures_util::StreamExt;
-use tracing::info;
-
-use crate::auth::config::AuthConfig;
 use jambo_core::observability::CorrelationId;
 use jambo_domain::messaging::RedisClient;
 
@@ -33,7 +31,7 @@ pub(crate) async fn ws_user_handler(
         ));
     }
     let user_id = user_id.unwrap();
-    info!("User WebSocket connection established for user {}", user_id);
+    tracing::debug!("User WebSocket connection established for user {}", user_id);
 
     let correlation_id = req
         .extensions()
@@ -56,7 +54,7 @@ pub(crate) async fn ws_user_handler(
     let connection_id = manager
         .add_user_connection(user_id, tx, correlation_id)
         .await;
-    info!(
+    tracing::debug!(
         "User WebSocket connection registered for user {} with connection ID {}",
         user_id,
         connection_id.uuid()
@@ -101,7 +99,7 @@ pub(crate) async fn ws_user_handler(
                     manager.update_user_pong(user_id, connection_id).await;
                 }
                 Ok(actix_ws::Message::Close(reason)) => {
-                    tracing::info!("User WS closed for user {}: {:?}", user_id, reason);
+                    tracing::debug!("User WS closed for user {}: {:?}", user_id, reason);
                     break;
                 }
                 Err(e) => {

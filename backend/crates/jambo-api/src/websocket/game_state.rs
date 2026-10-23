@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::{debug, error};
 use uuid::Uuid;
 
 use jambo_db::models::{GameMode, PlayerType};
@@ -161,7 +161,7 @@ pub(super) async fn send_game_state_snapshot(
             manager
                 .send_to_player(game_id, player_id, &json, MessageKind::Snapshot)
                 .await;
-            info!(
+            debug!(
                 "Sent game state snapshot for game {} to player {}",
                 game_id, player_id
             );
@@ -286,7 +286,7 @@ pub(super) async fn send_snapshots_to_all_players(
                 manager
                     .send_to_player(game_id, player_id, &json, MessageKind::Snapshot)
                     .await;
-                info!(
+                debug!(
                     "Sent game state snapshot for game {} to player {}",
                     game_id, player_id
                 );
@@ -424,7 +424,7 @@ pub(super) async fn send_spectator_snapshot(
             manager
                 .send_to_spectators(game_id, &json, MessageKind::Snapshot)
                 .await;
-            info!("Sent spectator snapshot for game {}", game_id);
+            debug!("Sent spectator snapshot for game {}", game_id);
         }
         Err(e) => {
             error!("Failed to serialize spectator snapshot: {}", e);

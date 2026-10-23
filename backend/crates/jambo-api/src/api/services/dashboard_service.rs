@@ -36,6 +36,8 @@ pub trait DashboardServiceTrait: Send + Sync {
 
     async fn get_game(&self, user_id: Uuid, game_id: Uuid) -> Result<QuickGameResponse, AppError>;
 
+    async fn get_player_id(&self, user_id: Uuid, game_id: Uuid) -> Result<Uuid, AppError>;
+
     async fn get_active_game(&self, user_id: Uuid) -> Result<QuickGameResponse, AppError>;
 
     async fn resolve_invite_user_ids(
@@ -280,6 +282,19 @@ impl<R: DashboardRepoTrait> DashboardService<R> {
         build_game_state_response(&*self.game_repo, &*self.card_repo, &game, user_id).await
     }
 
+    /// Resolve the player id for a (user, game) pair without building the full
+    /// game-state response. The card-play handler only needs the player id; the
+    /// play path re-validates turn/ownership/status inside its own transaction.
+    pub async fn get_player_id(&self, user_id: Uuid, game_id: Uuid) -> Result<Uuid, AppError> {
+        let player = self
+            .repo
+            .find_player_by_game_and_user(game_id, user_id)
+            .await
+            .map_err(AppError::Database)?
+            .ok_or_else(|| AppError::NotFound("game.not_participant"))?;
+        Ok(player.id)
+    }
+
     pub async fn get_active_game(&self, user_id: Uuid) -> Result<QuickGameResponse, AppError> {
         let players = self
             .repo
@@ -479,6 +494,10 @@ impl<R: DashboardRepoTrait> DashboardServiceTrait for DashboardService<R> {
 
     async fn get_game(&self, user_id: Uuid, game_id: Uuid) -> Result<QuickGameResponse, AppError> {
         DashboardService::get_game(self, user_id, game_id).await
+    }
+
+    async fn get_player_id(&self, user_id: Uuid, game_id: Uuid) -> Result<Uuid, AppError> {
+        DashboardService::get_player_id(self, user_id, game_id).await
     }
 
     async fn get_active_game(&self, user_id: Uuid) -> Result<QuickGameResponse, AppError> {

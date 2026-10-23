@@ -1,6 +1,6 @@
 mod common;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,12 @@ struct Cli {
 
     #[arg(long, default_value = "ws-benchmark.json")]
     output: String,
+
+    #[arg(long, default_value = "http://localhost:9090")]
+    prometheus_url: String,
+
+    #[arg(long, default_value = "5")]
+    metrics_interval_secs: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +57,7 @@ struct WsBenchmarkReport {
     config: WsBenchmarkConfig,
     summary: WsBenchmarkSummary,
     ws_metrics: WsMetrics,
+    resource_metrics: ResourceMetrics,
     errors: WsErrorStats,
 }
 
@@ -91,6 +98,20 @@ struct WsErrorStats {
     registration: u64,
 }
 
+#[derive(Debug, Serialize)]
+struct ResourceMetrics {
+    backend: ResourceStats,
+}
+
+#[derive(Debug, Serialize, Default)]
+struct ResourceStats {
+    cpu_avg_percent: f64,
+    cpu_peak_percent: f64,
+    rss_avg_mb: f64,
+    rss_peak_mb: f64,
+    samples: u32,
+}
+
 #[derive(Clone)]
 struct UserSession {
     user_id: Uuid,
@@ -103,6 +124,29 @@ fn build_client(timeout_ms: u64) -> reqwest::Client {
         .connect_timeout(Duration::from_millis(timeout_ms))
         .build()
         .expect("Failed to create HTTP client")
+}
+
+/// Query a Prometheus scalar (instant vector with a single value) and return
+/// the numeric value, or `None` if the metric is absent / not yet scraped.
+async fn query_prometheus_scalar(
+    client: &reqwest::Client,
+    prometheus_url: &str,
+    query: &str,
+) -> Result<Option<f64>> {
+    let url = format!("{}/api/v1/query", prometheus_url.trim_end_matches('/'));
+    let resp = client.get(&url).query(&[("query", query)]).send().await?;
+    let json: serde_json::Value = resp.json().await?;
+    let value = json
+        .get("data")
+        .and_then(|d| d.get("result"))
+        .and_then(|r| r.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|item| item.get("value"))
+        .and_then(|v| v.as_array())
+        .and_then(|v| v.get(1))
+        .and_then(|s| s.as_str())
+        .and_then(|s| s.parse::<f64>().ok());
+    Ok(value)
 }
 
 async fn register_user(
@@ -272,6 +316,47 @@ async fn main() -> Result<()> {
     let deadline = benchmark_start + Duration::from_secs(cli.duration_secs);
     let concurrency_sem = Arc::new(Semaphore::new(cli.concurrent_games));
     let mut games_started = 0usize;
+    let mut game_handles = Vec::new();
+
+    // Sample the backend's self-reported CPU/memory (via Prometheus) while the
+    // games dispatch and their connections are established.
+    let resource_samples: Arc<tokio::sync::Mutex<Vec<(f64, f64)>>> =
+        Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let sampler_stop = Arc::new(AtomicBool::new(false));
+    let sampler = {
+        let client = client.clone();
+        let prometheus_url = cli.prometheus_url.clone();
+        let interval = Duration::from_secs(cli.metrics_interval_secs);
+        let samples = resource_samples.clone();
+        let stop = sampler_stop.clone();
+        tokio::spawn(async move {
+            while !stop.load(Ordering::Relaxed) {
+                let cpu = query_prometheus_scalar(
+                    &client,
+                    &prometheus_url,
+                    "cpu_usage_percent{process=\"backend\"}",
+                )
+                .await
+                .ok()
+                .flatten();
+                let rss_bytes = query_prometheus_scalar(
+                    &client,
+                    &prometheus_url,
+                    "memory_usage_bytes{process=\"backend\"}",
+                )
+                .await
+                .ok()
+                .flatten();
+                match (cpu, rss_bytes) {
+                    (Some(c), Some(m)) => {
+                        samples.lock().await.push((c, m / (1024.0 * 1024.0)));
+                    }
+                    _ => warn!("Prometheus sample missing for backend CPU/memory"),
+                }
+                tokio::time::sleep(interval).await;
+            }
+        })
+    };
 
     while games_started < cli.total_games && Instant::now() < deadline {
         let session_idx = games_started * 4;
@@ -298,7 +383,7 @@ async fn main() -> Result<()> {
         let spectators_per_game = cli.spectators_per_game;
         let benchmark_token = benchmark_token.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _permit = permit;
             let game_id =
                 match create_benchmark_game(&client, &target_url, &user_ids, bet, &benchmark_token)
@@ -405,6 +490,9 @@ async fn main() -> Result<()> {
             }
 
             if spectators_per_game > 0 {
+                // Production mints ONE spectate token per game (the shared
+                // "copy stream URL" flow); every spectator connects with that
+                // same token. Mirror that here.
                 let token = match mint_spectate_token(
                     &client,
                     &target_url,
@@ -502,11 +590,48 @@ async fn main() -> Result<()> {
                 }
             }
         });
+        game_handles.push(handle);
         games_started += 1;
     }
 
-    info!("Dispatched {} WS sessions, stabilizing...", games_started);
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    info!(
+        "Dispatched {} WS sessions, awaiting connections...",
+        games_started
+    );
+    futures_util::future::join_all(game_handles).await;
+
+    sampler_stop.store(true, Ordering::Relaxed);
+    let _ = sampler.await;
+
+    let resource_metrics = {
+        let samples = resource_samples.lock().await;
+        let mut stats = ResourceStats {
+            samples: samples.len() as u32,
+            ..Default::default()
+        };
+        if !samples.is_empty() {
+            let mut cpu_sum = 0.0;
+            let mut rss_sum = 0.0;
+            let mut cpu_peak = f64::MIN;
+            let mut rss_peak = f64::MIN;
+            for (cpu, rss) in samples.iter() {
+                cpu_sum += cpu;
+                rss_sum += rss;
+                if *cpu > cpu_peak {
+                    cpu_peak = *cpu;
+                }
+                if *rss > rss_peak {
+                    rss_peak = *rss;
+                }
+            }
+            let n = samples.len() as f64;
+            stats.cpu_avg_percent = cpu_sum / n;
+            stats.rss_avg_mb = rss_sum / n;
+            stats.cpu_peak_percent = cpu_peak;
+            stats.rss_peak_mb = rss_peak;
+        }
+        ResourceMetrics { backend: stats }
+    };
 
     let elapsed = benchmark_start.elapsed().as_secs_f64();
     let attempted = ws_connections_attempted.load(Ordering::Relaxed);
@@ -548,6 +673,7 @@ async fn main() -> Result<()> {
                 0.0
             },
         },
+        resource_metrics,
         errors: WsErrorStats {
             ws_connection: 0,
             game_creation: creation_errors.load(Ordering::Relaxed),

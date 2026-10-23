@@ -15,7 +15,6 @@ pub use auth::{validate_game_token, validate_spectate_token, validate_ws_token};
 
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
 use actix_ws;
-use tracing::info;
 use uuid::Uuid;
 
 use crate::auth::config::AuthConfig;
@@ -41,7 +40,7 @@ pub async fn ws_handler(
     manager: web::Data<WebSocketManager>,
 ) -> Result<HttpResponse, actix_web::Error> {
     let game_id = game_id.into_inner();
-    tracing::info!("[DEBUG] WebSocket connection attempt for game {}", game_id);
+    tracing::debug!("WebSocket connection attempt for game {}", game_id);
     let auth_config = req.app_data::<web::Data<AuthConfig>>().cloned();
     let redis_client = req
         .app_data::<web::Data<Option<RedisClient>>>()
@@ -90,28 +89,10 @@ pub async fn ws_handler(
 
     let (tx, rx) = tokio::sync::mpsc::channel(WS_SEND_QUEUE_CAPACITY);
 
-    // Send a welcome message BEFORE registering the connection
-    match serde_json::to_string(&OutgoingMessage::GameJoined { game_id }) {
-        Ok(welcome_message) => {
-            if let Err(e) = session.text(welcome_message).await {
-                tracing::error!(
-                    "Failed to send welcome message, not registering connection: {}",
-                    e
-                );
-                return Ok(res);
-            }
-            info!("Sent welcome message for game {}", game_id);
-        }
-        Err(e) => {
-            tracing::error!(
-                "Failed to serialize welcome message, not registering: {}",
-                e
-            );
-            return Ok(res);
-        }
-    }
-
-    // Register the connection AFTER successful welcome message
+    // Register the connection FIRST, then send the welcome message. The welcome
+    // doubles as the admission signal: a client only receives `game_joined` once
+    // it is actually in the registry, and we never pay a socket write for a
+    // connection we cannot admit.
     let connection_id = manager.add_connection(game_id, tx, correlation_id).await;
 
     // Record the authenticated identity on the connection (used for ownership and
@@ -120,6 +101,28 @@ pub async fn ws_handler(
         manager
             .set_connection_user(game_id, connection_id, uid)
             .await;
+    }
+
+    match serde_json::to_string(&OutgoingMessage::GameJoined { game_id }) {
+        Ok(welcome_message) => {
+            if let Err(e) = session.text(welcome_message).await {
+                tracing::error!(
+                    "Failed to send welcome message, disconnecting connection: {}",
+                    e
+                );
+                manager.remove_connection(game_id, connection_id).await;
+                return Ok(res);
+            }
+            tracing::debug!("Sent welcome message for game {}", game_id);
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to serialize welcome message, disconnecting connection: {}",
+                e
+            );
+            manager.remove_connection(game_id, connection_id).await;
+            return Ok(res);
+        }
     }
 
     let ctx = ConnectionContext {

@@ -5,6 +5,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use super::connection::{ConnectionId, MessageKind, TrackedConnection, WsMessage, WsSender};
+use super::routing::shard_for_id;
 use jambo_core::observability::metrics;
 use jambo_domain::messaging::RedisClient;
 
@@ -18,8 +19,11 @@ mod user;
 #[cfg(test)]
 mod tests;
 
-/// Inner shared state for the WebSocket manager.
-struct Inner {
+/// Registry state for a single shard. Connection maps are partitioned by the
+/// same `shard_for_id` hash used to route Redis subscriber messages, so a game's
+/// connections and its events always land on the same shard and never contend
+/// with unrelated games.
+struct Shard {
     /// Map from game ID to list of active tracked connections.
     connections: HashMap<Uuid, Vec<TrackedConnection>>,
     /// Map from room ID to list of active tracked connections.
@@ -27,36 +31,56 @@ struct Inner {
     /// Map from user ID to list of active tracked connections (user-scoped,
     /// e.g. for real-time invitation push).
     user_connections: HashMap<Uuid, Vec<TrackedConnection>>,
-    /// Redis client for publishing/subscribing to game events.
-    redis_client: Option<RedisClient>,
-    /// Database connection for querying game state snapshots.
-    db: Option<sea_orm::DatabaseConnection>,
+}
+
+impl Shard {
+    fn empty() -> Self {
+        Self {
+            connections: HashMap::new(),
+            room_connections: HashMap::new(),
+            user_connections: HashMap::new(),
+        }
+    }
 }
 
 /// The WebSocket manager that coordinates connections and broadcasts.
+///
+/// Connection state is sharded across `N = min(num_cpus, 8)` [`RwLock`]s instead
+/// of one global lock, so a handshake storm (many concurrent `add_connection`
+/// / `mark_spectator` / `update_pong` writes) no longer serializes all games
+/// behind a single writer. The immutable collaborators (`redis_client`, `db`)
+/// are held outside the locks.
 #[derive(Clone)]
 pub struct WebSocketManager {
-    inner: Arc<RwLock<Inner>>,
+    shards: Arc<Vec<RwLock<Shard>>>,
+    shard_count: usize,
+    redis_client: Option<RedisClient>,
+    db: Option<sea_orm::DatabaseConnection>,
 }
 
 impl WebSocketManager {
     /// Create a new WebSocket manager with an optional Redis client and database connection.
     pub fn new(redis_client: Option<RedisClient>, db: Option<sea_orm::DatabaseConnection>) -> Self {
+        let shard_count = num_cpus::get().clamp(1, 8);
+        let shards = (0..shard_count)
+            .map(|_| RwLock::new(Shard::empty()))
+            .collect();
         Self {
-            inner: Arc::new(RwLock::new(Inner {
-                connections: HashMap::new(),
-                room_connections: HashMap::new(),
-                user_connections: HashMap::new(),
-                redis_client,
-                db,
-            })),
+            shards: Arc::new(shards),
+            shard_count,
+            redis_client,
+            db,
         }
+    }
+
+    /// Resolve the shard that owns a given entity id (game, room, or user).
+    fn shard(&self, id: Uuid) -> &RwLock<Shard> {
+        &self.shards[shard_for_id(id, self.shard_count)]
     }
 
     /// Get the Redis client for publishing events.
     pub async fn redis_client(&self) -> Option<RedisClient> {
-        let inner = self.inner.read().await;
-        inner.redis_client.clone()
+        self.redis_client.clone()
     }
 
     /// Deliver a message to a set of already-collected connections using a
@@ -103,8 +127,8 @@ impl WebSocketManager {
     /// Snapshot the sender handles for a game's connections under the read lock,
     /// then release the lock before the caller delivers outside it.
     async fn snapshot_senders(&self, game_id: Uuid) -> Vec<(ConnectionId, WsSender)> {
-        let inner = self.inner.read().await;
-        inner
+        let shard = self.shard(game_id).read().await;
+        shard
             .connections
             .get(&game_id)
             .map(|conns| conns.iter().map(|c| (c.id, c.sender.clone())).collect())

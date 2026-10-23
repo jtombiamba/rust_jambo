@@ -7,33 +7,26 @@ use crate::websocket::connection::{ConnectionId, MessageKind, WsMessage};
 use jambo_core::observability::metrics;
 
 impl WebSocketManager {
-    /// Mark a specific connection for a game as a read-only spectator, then
-    /// refresh the per-game spectator gauge.
+    /// Mark a specific connection for a game as a read-only spectator.
     ///
     /// Setting the spectator flag also clears any player identity on the same
     /// connection: a spectator never has a hand, so a connection that is marked
     /// spectator must not keep receiving personalized (per-player) events.
+    ///
+    /// The per-game spectator gauge is refreshed lazily by the periodic resync
+    /// task (and immediately on disconnect) rather than on every mark, so a
+    /// burst of spectator joins does not serialize on a gauge write per socket.
     pub async fn mark_spectator_for_connection(&self, game_id: Uuid, connection_id: ConnectionId) {
-        let changed = {
-            let mut inner = self.inner.write().await;
-            let mut changed = false;
-            if let Some(connections) = inner.connections.get_mut(&game_id) {
-                for conn in connections.iter_mut() {
-                    if conn.id == connection_id {
-                        if !conn.spectator {
-                            conn.spectator = true;
-                            changed = true;
-                        }
-                        conn.player_id = None;
-                        conn.player_position = None;
-                        break;
-                    }
+        let mut shard = self.shard(game_id).write().await;
+        if let Some(connections) = shard.connections.get_mut(&game_id) {
+            for conn in connections.iter_mut() {
+                if conn.id == connection_id {
+                    conn.spectator = true;
+                    conn.player_id = None;
+                    conn.player_position = None;
+                    break;
                 }
             }
-            changed
-        };
-        if changed {
-            self.refresh_spectator_gauge(game_id).await;
         }
     }
 
@@ -41,8 +34,8 @@ impl WebSocketManager {
     /// and marked as spectator).
     pub async fn send_to_spectators(&self, game_id: Uuid, message: &str, kind: MessageKind) {
         let targets = {
-            let inner = self.inner.read().await;
-            inner
+            let shard = self.shard(game_id).read().await;
+            shard
                 .connections
                 .get(&game_id)
                 .map(|conns| {
@@ -73,8 +66,8 @@ impl WebSocketManager {
     /// Takes the read lock internally, so callers must not hold the write lock.
     pub(super) async fn refresh_spectator_gauge(&self, game_id: Uuid) {
         let count = {
-            let inner = self.inner.read().await;
-            inner
+            let shard = self.shard(game_id).read().await;
+            shard
                 .connections
                 .get(&game_id)
                 .map(|conns| conns.iter().filter(|c| c.spectator).count())
@@ -100,13 +93,18 @@ impl WebSocketManager {
     /// connection. Used by the periodic resync task to bound the number of games
     /// it refreshes.
     pub(crate) async fn games_with_spectators(&self) -> Vec<Uuid> {
-        let inner = self.inner.read().await;
-        inner
-            .connections
-            .iter()
-            .filter(|(_, conns)| conns.iter().any(|c| c.spectator))
-            .map(|(game_id, _)| *game_id)
-            .collect()
+        let mut games = Vec::new();
+        for shard in self.shards.iter() {
+            let shard = shard.read().await;
+            games.extend(
+                shard
+                    .connections
+                    .iter()
+                    .filter(|(_, conns)| conns.iter().any(|c| c.spectator))
+                    .map(|(game_id, _)| *game_id),
+            );
+        }
+        games
     }
 
     /// Start a background task that periodically sends a public-only spectator
@@ -127,14 +125,14 @@ impl WebSocketManager {
                 if games.is_empty() {
                     continue;
                 }
-                let db = {
-                    let inner = manager.inner.read().await;
-                    inner.db.clone()
-                };
-                let Some(db) = db else {
+                let Some(db) = manager.db.clone() else {
                     continue;
                 };
                 for game_id in games {
+                    // Refresh the gauge lazily here; disconnect paths refresh it
+                    // immediately so the series is removed as soon as the last
+                    // spectator leaves.
+                    manager.refresh_spectator_gauge(game_id).await;
                     crate::websocket::game_state::send_spectator_snapshot(&manager, &db, game_id)
                         .await;
                 }

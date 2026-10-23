@@ -3,12 +3,17 @@ use jambo_core::observability::metrics::{
     REDIS_BUFFER_OVERFLOW_TOTAL, REDIS_PUBLISH_DURATION_SECONDS, REDIS_PUBLISH_FAILURES_TOTAL,
     REDIS_PUBLISH_RETRIES_TOTAL,
 };
-use redis::{aio::ConnectionManager, AsyncCommands, Client, RedisResult};
+use redis::{AsyncCommands, Client, RedisResult};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{error, info};
+
+/// Default number of pooled Redis connections created by [`RedisClient::new`].
+/// Callers that apply [`RedisClient::with_config`] override this with
+/// `Config::redis_pool_size`.
+const DEFAULT_POOL_SIZE: usize = 16;
 
 pub enum PublishResult {
     Published,
@@ -21,10 +26,15 @@ struct QueuedEvent {
 }
 
 /// Redis client wrapper that manages a connection pool, publish retries, and event buffering.
+///
+/// All commands are served from a [`deadpool_redis::Pool`] of multiplexed
+/// connections instead of a single shared [`redis::aio::ConnectionManager`], so
+/// concurrent commands (e.g. a burst of token `EXISTS` checks during a WebSocket
+/// handshake storm) are no longer serialized behind one socket.
 #[derive(Clone)]
 pub struct RedisClient {
     client: Client,
-    connection_manager: ConnectionManager,
+    pool: deadpool_redis::Pool,
     publish_max_retries: u32,
     publish_retry_base_delay_ms: u64,
     publish_retry_max_delay_ms: u64,
@@ -37,11 +47,20 @@ pub struct RedisClient {
 impl RedisClient {
     pub async fn new(url: &str) -> RedisResult<Self> {
         let client = Client::open(url)?;
-        let connection_manager = client.get_connection_manager().await?;
+        let mut config = deadpool_redis::Config::from_url(url);
+        config.pool = Some(deadpool_redis::PoolConfig {
+            max_size: DEFAULT_POOL_SIZE,
+            ..Default::default()
+        });
+        let pool = config
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .map_err(|e| {
+                redis::RedisError::from((redis::ErrorKind::Io, "redis pool", e.to_string()))
+            })?;
         info!("Connected to Redis at {}", url);
         Ok(Self {
             client,
-            connection_manager,
+            pool,
             publish_max_retries: 3,
             publish_retry_base_delay_ms: 100,
             publish_retry_max_delay_ms: 1000,
@@ -58,24 +77,34 @@ impl RedisClient {
         self.publish_retry_max_delay_ms = config.redis_publish_retry_max_delay_ms;
         self.buffer_max_size = config.redis_event_buffer_max_size;
         self.flush_interval_secs = config.redis_event_buffer_flush_interval_secs;
+        self.pool.resize(config.redis_pool_size.max(1));
         self
+    }
+
+    /// Borrow a pooled connection for a single command.
+    async fn connection(&self) -> RedisResult<deadpool_redis::Connection> {
+        self.pool.get().await.map_err(|e| {
+            redis::RedisError::from((redis::ErrorKind::Io, "redis pool", e.to_string()))
+        })
     }
 
     /// Get a string value by key.
     pub async fn get(&mut self, key: &str) -> RedisResult<Option<String>> {
-        self.connection_manager.get(key).await
+        let mut conn = self.connection().await?;
+        conn.get(key).await
     }
 
     /// Set a string value by key with TTL, only if key doesn't exist.
     /// Returns true if the key was set, false if it already existed.
     pub async fn set_nx_ex(&mut self, key: &str, value: &str, ttl_secs: u64) -> RedisResult<bool> {
+        let mut conn = self.connection().await?;
         let result: Option<String> = redis::cmd("SET")
             .arg(key)
             .arg(value)
             .arg("NX")
             .arg("EX")
             .arg(ttl_secs)
-            .query_async(&mut self.connection_manager)
+            .query_async(&mut conn)
             .await?;
         Ok(result.is_some())
     }
@@ -88,10 +117,11 @@ impl RedisClient {
                  return 0\n\
              end",
         );
+        let mut conn = self.connection().await?;
         let result: i64 = script
             .key(key)
             .arg(expected)
-            .invoke_async(&mut self.connection_manager)
+            .invoke_async(&mut conn)
             .await?;
         Ok(result == 1)
     }
@@ -99,18 +129,21 @@ impl RedisClient {
     /// Set a string value by key (no expiry).
     #[allow(dead_code)]
     pub async fn set(&mut self, key: &str, value: &str) -> RedisResult<()> {
-        self.connection_manager.set(key, value).await
+        let mut conn = self.connection().await?;
+        conn.set(key, value).await
     }
 
     /// Set a string value by key with TTL in seconds.
     pub async fn set_ex(&mut self, key: &str, value: &str, ttl_secs: u64) -> RedisResult<()> {
-        self.connection_manager.set_ex(key, value, ttl_secs).await
+        let mut conn = self.connection().await?;
+        conn.set_ex(key, value, ttl_secs).await
     }
 
     /// Atomically increment a counter and return the new value.
     #[allow(dead_code)]
     pub async fn incr(&mut self, key: &str) -> RedisResult<u64> {
-        self.connection_manager.incr(key, 1).await
+        let mut conn = self.connection().await?;
+        conn.incr(key, 1).await
     }
 
     /// Atomically increment a counter and set TTL if the key was newly created.
@@ -121,33 +154,34 @@ impl RedisClient {
              if current == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end\n\
              return current",
         );
-        script
-            .key(key)
-            .arg(ttl_secs)
-            .invoke_async(&mut self.connection_manager)
-            .await
+        let mut conn = self.connection().await?;
+        script.key(key).arg(ttl_secs).invoke_async(&mut conn).await
     }
 
     /// Delete one or more keys.
     pub async fn del(&mut self, key: &str) -> RedisResult<()> {
-        self.connection_manager.del(key).await
+        let mut conn = self.connection().await?;
+        conn.del(key).await
     }
 
     /// Check if a key exists.
     pub async fn exists(&mut self, key: &str) -> RedisResult<bool> {
-        self.connection_manager.exists(key).await
+        let mut conn = self.connection().await?;
+        conn.exists(key).await
     }
 
     /// Set expiry on an existing key.
     #[allow(dead_code)]
     pub async fn expire(&mut self, key: &str, ttl_secs: u64) -> RedisResult<()> {
-        self.connection_manager.expire(key, ttl_secs as i64).await
+        let mut conn = self.connection().await?;
+        conn.expire(key, ttl_secs as i64).await
     }
 
     /// Publish a message to a Redis channel.
     pub async fn publish(&mut self, channel: &str, message: &str) -> RedisResult<()> {
         let start = Instant::now();
-        let result = self.connection_manager.publish(channel, message).await;
+        let mut conn = self.connection().await?;
+        let result = conn.publish(channel, message).await;
         let duration = start.elapsed().as_secs_f64();
         REDIS_PUBLISH_DURATION_SECONDS
             .with_label_values(&[])
@@ -321,6 +355,7 @@ impl RedisClient {
     pub async fn del_pattern(&mut self, pattern: &str) -> RedisResult<u64> {
         let mut cursor = 0u64;
         let mut deleted = 0u64;
+        let mut conn = self.connection().await?;
         loop {
             let (next_cursor, keys): (u64, Vec<String>) = redis::cmd("SCAN")
                 .arg(cursor)
@@ -328,12 +363,12 @@ impl RedisClient {
                 .arg(pattern)
                 .arg("COUNT")
                 .arg(100)
-                .query_async(&mut self.connection_manager)
+                .query_async(&mut conn)
                 .await?;
             if !keys.is_empty() {
                 let count: u64 = redis::cmd("DEL")
                     .arg(keys.as_slice())
-                    .query_async(&mut self.connection_manager)
+                    .query_async(&mut conn)
                     .await?;
                 deleted += count;
             }
@@ -356,7 +391,8 @@ impl RedisClient {
 
     #[allow(dead_code)]
     pub async fn zadd(&mut self, key: &str, member: String, score: f64) -> RedisResult<()> {
-        self.connection_manager.zadd(key, member, score).await
+        let mut conn = self.connection().await?;
+        conn.zadd(key, member, score).await
     }
 
     pub async fn zrevrange_withscores(
@@ -365,19 +401,17 @@ impl RedisClient {
         start: isize,
         stop: isize,
     ) -> RedisResult<Vec<(String, f64)>> {
-        self.connection_manager
-            .zrevrange_withscores(key, start, stop)
-            .await
+        let mut conn = self.connection().await?;
+        conn.zrevrange_withscores(key, start, stop).await
     }
 
     pub async fn zrevrank(&mut self, key: &str, member: String) -> RedisResult<Option<u64>> {
-        self.connection_manager.zrevrank(key, member).await
+        let mut conn = self.connection().await?;
+        conn.zrevrank(key, member).await
     }
 
     pub async fn mget(&mut self, keys: &[String]) -> RedisResult<Vec<Option<String>>> {
-        redis::cmd("MGET")
-            .arg(keys)
-            .query_async(&mut self.connection_manager)
-            .await
+        let mut conn = self.connection().await?;
+        redis::cmd("MGET").arg(keys).query_async(&mut conn).await
     }
 }
