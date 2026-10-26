@@ -106,6 +106,25 @@ function AppContent() {
   const [autoStartCountdown, setAutoStartCountdown] = useState(0)
   const autoStartRef = useRef(false)
   const [roomRefreshKey, setRoomRefreshKey] = useState(0)
+  const loadRunGame = useCallback(async (gameIdVal: string) => {
+    try {
+      const gameRes = await axios.get<QuickGameResponse>(`/api/me/games/${gameIdVal}`)
+      if (gameRes.data.game_id && gameRes.data.players) {
+        setGameStore(
+          gameRes.data.game_id,
+          gameRes.data.players,
+          gameRes.data.status,
+          gameRes.data.current_turn,
+          gameRes.data.bet,
+          gameRes.data.deck_slots || null
+        )
+        offerClaimFromResponse(gameRes.data)
+        clearGameOver()
+      }
+    } catch {
+      showToast('Failed to load game', 'error')
+    }
+  }, [clearGameOver, setGameStore, showToast, offerClaimFromResponse])
   useGameWebSocket(gameId, wsToken)
   useUserWebSocket(isAuthenticated)
   useRoomWebSocket({
@@ -117,6 +136,12 @@ function AppContent() {
         if (event.total_games) setRunTotalGames(event.total_games)
         if (event.game_index !== undefined) setRunGameIndex(event.game_index + 1)
         useRoomStore.getState().setCurrentRunGameId(event.game_id)
+        // Server-driven reload: when a new game auto-starts in the run the user
+        // is currently playing, reload the game table so every player gets the
+        // new cards without racing to call next-game themselves.
+        if (runId && event.run_id === runId && gameId && event.game_id !== gameId) {
+          loadRunGame(event.game_id)
+        }
       }
       if (event.type === 'run_completed' || event.type === 'run_created' || event.type === 'member_joined' || event.type === 'member_left') {
         setRoomRefreshKey(k => k + 1)
@@ -479,26 +504,14 @@ function AppContent() {
         setRunGameIndex(newIndex)
         setRunTotalGames(res.data.total_games)
         useRoomStore.getState().setCurrentRunGameId(res.data.game_id)
-        const gameRes = await axios.get<QuickGameResponse>(`/api/me/games/${res.data.game_id}`)
-        if (gameRes.data.game_id && gameRes.data.players) {
-          setGameStore(
-            gameRes.data.game_id,
-            gameRes.data.players,
-            gameRes.data.status,
-            gameRes.data.current_turn,
-            gameRes.data.bet,
-            gameRes.data.deck_slots || null
-          )
-          offerClaimFromResponse(gameRes.data)
-          clearGameOver()
-        }
+        await loadRunGame(res.data.game_id)
       }
     } catch {
       showToast('Failed to start next game', 'error')
     } finally {
       setStartingGame(false)
     }
-  }, [runId, clearGameOver, setGameStore, showToast, offerClaimFromResponse])
+  }, [runId, loadRunGame, showToast])
 
   useEffect(() => {
     if (!gameOver?.isGameOver || !runId || runGameIndex >= runTotalGames) return

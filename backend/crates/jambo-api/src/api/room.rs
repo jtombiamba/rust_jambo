@@ -6,10 +6,17 @@ use uuid::Uuid;
 use crate::api::dto::responses::{
     ActiveRunResponse, ApiErrorResponse, CreateRunResponse, CurrentGameResponse, JoinRunResponse,
     RoomCreatedResponse, RoomDetailResponse, RoomListItem, RunListItem, SimpleSuccessResponse,
-    StartNextGameResponse,
+    SpectateTokenResponse, StartNextGameResponse,
 };
+use crate::auth::config::AuthConfig;
 use crate::auth::extractors::AuthenticatedUser;
+use crate::auth::jwt;
+use jambo_core::error::AppError;
+use jambo_domain::messaging::RedisClient;
 use jambo_domain::room::service_trait::RoomServiceTrait;
+
+/// TTL for run-scoped spectator tokens in seconds (6 hours).
+const RUN_SPECTATE_TOKEN_TTL_SECS: u64 = 21600;
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct CreateRoomRequest {
@@ -373,4 +380,68 @@ pub async fn list_runs(
             .list_runs(path.into_inner(), auth_user.user_id)
             .await
     )
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/me/runs/{run_id}/spectate-token",
+    tag = "rooms",
+    security(("cookie_auth" = [])),
+    params(("run_id" = Uuid, Path, description = "Run ID")),
+    responses(
+        (status = 200, description = "Run spectator token minted", body = SpectateTokenResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+        (status = 403, description = "Not a run participant", body = ApiErrorResponse),
+    )
+)]
+/// Mint a run-scoped spectator token. Unlike the per-game spectator token, this
+/// token grants read-only access to every game in the run, so a streamer can
+/// share one link that follows the run across games.
+pub async fn mint_run_spectate_token(
+    auth_user: AuthenticatedUser,
+    path: web::Path<Uuid>,
+    service: web::Data<Arc<dyn RoomServiceTrait>>,
+    auth_config: web::Data<AuthConfig>,
+    redis: web::Data<Option<RedisClient>>,
+) -> HttpResponse {
+    let run_id = path.into_inner();
+
+    match service.is_run_participant(run_id, auth_user.user_id).await {
+        Ok(true) => {}
+        Ok(false) => return AppError::Forbidden("room.not_run_player").error_response(),
+        Err(e) => return e.error_response(),
+    }
+
+    match jwt::generate_run_spectate_token(run_id, &auth_config, RUN_SPECTATE_TOKEN_TTL_SECS) {
+        Ok((token, claims)) => {
+            let redis_key = format!("spectate_run_token:{}:{}", run_id, claims.jti);
+            if let Some(redis_client) = redis.get_ref().as_ref() {
+                let mut client = redis_client.clone();
+                if let Err(e) = client
+                    .set_ex(&redis_key, &token, RUN_SPECTATE_TOKEN_TTL_SECS)
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to store run spectate token for run {}: {}",
+                        run_id,
+                        e
+                    );
+                }
+            }
+
+            let url = format!(
+                "{}/run/{}/stream?token={}",
+                auth_config.frontend_url, run_id, token
+            );
+            HttpResponse::Ok().json(SpectateTokenResponse { token, url })
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to generate run spectate token for run {}: {}",
+                run_id,
+                e
+            );
+            AppError::Internal("Failed to generate run spectate token".to_string()).error_response()
+        }
+    }
 }

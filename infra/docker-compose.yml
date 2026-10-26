@@ -150,6 +150,9 @@ services:
       PAYPAL_DONATE_URL: https://www.paypal.me/jtombi/1
       TOPUP_CREDIT_AMOUNT: "250"
       TOPUP_MONTHLY_LIMIT_EUR_CENTS: "10000"
+      BENCHMARK_MODE: "${BENCHMARK_MODE:-false}"
+      BENCHMARK_API_TOKEN: "${BENCHMARK_API_TOKEN:-}"
+      BENCHMARK_SKIP_CREDIT_CHECK: "${BENCHMARK_SKIP_CREDIT_CHECK:-true}"
     ports:
       - "5000:5000"
     volumes:

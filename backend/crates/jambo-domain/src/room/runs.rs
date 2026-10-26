@@ -360,6 +360,18 @@ impl RoomService {
         Ok(())
     }
 
+    pub async fn is_run_participant(
+        &self,
+        run_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, RoomServiceError> {
+        Ok(self
+            .run_player_repo
+            .find_by_run_and_user(run_id, user_id)
+            .await?
+            .is_some())
+    }
+
     pub async fn get_active_run(
         &self,
         room_id: Uuid,
