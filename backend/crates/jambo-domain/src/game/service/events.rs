@@ -304,7 +304,11 @@ impl GameService {
         }
     }
 
-    async fn finalize_run_on_game_completion(&self, run_id: Uuid, _game_model: &game::Model) {
+    pub(crate) async fn finalize_run_on_game_completion(
+        &self,
+        run_id: Uuid,
+        _game_model: &game::Model,
+    ) {
         let run = {
             let mut attempts = 0u32;
             loop {
@@ -335,6 +339,7 @@ impl GameService {
         };
 
         if run.current_game_index >= run.num_games {
+            // TODO: move to repositories this DB call
             match game_run::Entity::update_many()
                 .col_expr(
                     game_run::Column::Status,

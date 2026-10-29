@@ -212,6 +212,10 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         .route(
                             "/runs/{run_id}/current-game",
                             web::get().to(room::get_current_game),
+                        )
+                        .route(
+                            "/runs/{run_id}/spectate-token",
+                            web::post().to(room::mint_run_spectate_token),
                         ),
                 )
                 .service(
@@ -283,6 +287,15 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                                         .route(
                                             web::post().to(
                                                 jambo_api::api::benchmark::cleanup_benchmark_data,
+                                            ),
+                                        )
+                                        .route(web::route().to(fallback::method_not_allowed)),
+                                )
+                                .service(
+                                    web::resource("/runs/{run_id}/force-finish")
+                                        .route(
+                                            web::post().to(
+                                                jambo_api::api::benchmark::force_finish_run_game,
                                             ),
                                         )
                                         .route(web::route().to(fallback::method_not_allowed)),

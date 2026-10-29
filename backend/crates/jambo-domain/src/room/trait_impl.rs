@@ -105,4 +105,12 @@ impl RoomServiceTrait for RoomService {
     ) -> Result<Vec<RunListItem>, RoomServiceError> {
         RoomService::list_runs(self, room_id, user_id).await
     }
+
+    async fn is_run_participant(
+        &self,
+        run_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, RoomServiceError> {
+        RoomService::is_run_participant(self, run_id, user_id).await
+    }
 }

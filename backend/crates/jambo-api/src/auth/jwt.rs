@@ -163,6 +163,45 @@ pub fn validate_spectate_token(
     Ok(claims)
 }
 
+/// Generate a run-scoped spectator token. Unlike a per-game spectator token
+/// (which is bound to a single `game_id`), this token is bound to a `run_id` and
+/// grants read-only access to every game in the run. It is validated against the
+/// Redis key `spectate_run_token:{run_id}:{jti}`.
+pub fn generate_run_spectate_token(
+    run_id: Uuid,
+    config: &AuthConfig,
+    ttl_secs: u64,
+) -> Result<GenerateGameTokenResult, jsonwebtoken::errors::Error> {
+    let now = chrono::Utc::now();
+    let claims = GameTokenClaims {
+        sub: run_id,
+        purpose: "ws:spectate_run".to_string(),
+        exp: (now + chrono::Duration::seconds(ttl_secs as i64)).timestamp() as usize,
+        iat: now.timestamp() as usize,
+        jti: Uuid::new_v4().to_string(),
+    };
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+    )?;
+    Ok((token, claims))
+}
+
+/// Validate a run-scoped spectator token and return its claims.
+pub fn validate_run_spectate_token(
+    token: &str,
+    config: &AuthConfig,
+) -> Result<GameTokenClaims, jsonwebtoken::errors::Error> {
+    let claims = decode_game_token(token, config)?;
+    if claims.purpose != "ws:spectate_run" {
+        return Err(jsonwebtoken::errors::Error::from(
+            jsonwebtoken::errors::ErrorKind::InvalidSubject,
+        ));
+    }
+    Ok(claims)
+}
+
 pub fn generate_reset_token(
     email: &str,
     config: &AuthConfig,

@@ -347,6 +347,10 @@ impl BenchmarkService for MockGameService {
             }),
         }
     }
+
+    async fn force_finish_run_game(&self, _run_id: Uuid) -> Result<Uuid, GameError> {
+        Ok(Uuid::new_v4())
+    }
 }
 
 // ── Backward-compatible supertrait ────────────────────────────────────
