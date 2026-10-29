@@ -103,32 +103,6 @@ async fn make_full_dashboard_app_with_queue(
     .await
 }
 
-fn quick_game_with_current_user(player_id: Uuid) -> crate::api::dto::responses::QuickGameResponse {
-    use crate::api::dto::responses::PlayerInfoDto;
-    crate::api::dto::responses::QuickGameResponse {
-        game_id: Uuid::new_v4(),
-        players: vec![PlayerInfoDto {
-            id: player_id,
-            player_type: "human".into(),
-            name: "alice".into(),
-            position: 0,
-            display_position: 0,
-            cards: vec![1, 2],
-            cards_count: 2,
-            is_current_user: true,
-        }],
-        status: "active".into(),
-        current_turn: 0,
-        bet: 10,
-        max_players: 4,
-        invite_expires_at: None,
-        deck_slots: None,
-        ws_token: None,
-        step_by_step: false,
-        special_cards: None,
-    }
-}
-
 #[actix_web::test]
 async fn get_profile_success() {
     let app = make_full_dashboard_app(
@@ -372,7 +346,7 @@ async fn start_game_success() {
 async fn play_game_success() {
     let player_id = Uuid::new_v4();
     let dash = Arc::new(MockDashboardService::new());
-    dash.set_get_game_result(Ok(quick_game_with_current_user(player_id)));
+    dash.set_get_player_id_result(Ok(player_id));
     let app = make_full_dashboard_app(dash, Arc::new(MockGameService::ok())).await;
     let user = authenticated_user();
     let game_id = Uuid::new_v4();
@@ -423,22 +397,9 @@ async fn mint_spectate_token_success() {
 }
 
 #[actix_web::test]
-async fn play_game_not_player_returns_403() {
+async fn play_game_not_participant_returns_404() {
     let dash = Arc::new(MockDashboardService::new());
-    let game = crate::api::dto::responses::QuickGameResponse {
-        game_id: Uuid::new_v4(),
-        players: vec![],
-        status: "active".into(),
-        current_turn: 0,
-        bet: 10,
-        max_players: 4,
-        invite_expires_at: None,
-        deck_slots: None,
-        ws_token: None,
-        step_by_step: false,
-        special_cards: None,
-    };
-    dash.set_get_game_result(Ok(game));
+    dash.set_get_player_id_result(Err(AppError::NotFound("game.not_participant")));
     let app = make_full_dashboard_app(dash, Arc::new(MockGameService::ok())).await;
     let user = authenticated_user();
     let game_id = Uuid::new_v4();
@@ -448,7 +409,7 @@ async fn play_game_not_player_returns_403() {
         .to_request();
     req.extensions_mut().insert(user);
     let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 403);
+    assert_eq!(resp.status(), 404);
 }
 
 fn db_err() -> AppError {
@@ -549,9 +510,9 @@ async fn start_game_service_error_returns_error() {
 }
 
 #[actix_web::test]
-async fn play_game_get_game_error_returns_error() {
+async fn play_game_get_player_id_error_returns_error() {
     let dash = Arc::new(MockDashboardService::new());
-    dash.set_get_game_result(Err(AppError::NotFound("game.not_found")));
+    dash.set_get_player_id_result(Err(AppError::NotFound("game.not_found")));
     let app = make_full_dashboard_app(dash, Arc::new(MockGameService::ok())).await;
     let user = authenticated_user();
     let game_id = Uuid::new_v4();

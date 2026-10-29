@@ -21,7 +21,7 @@ use super::GameService;
 
 #[async_trait]
 impl GamePlayService for GameService {
-    #[tracing::instrument(level = "info", skip(self), fields(correlation_id = %correlation_id.map(|c| c.to_string()).unwrap_or_default(), game_id = %game_id, player_id = %player_id, card_index = card_index))]
+    #[tracing::instrument(level = "debug", skip(self), fields(correlation_id = %correlation_id.map(|c| c.to_string()).unwrap_or_default(), game_id = %game_id, player_id = %player_id, card_index = card_index))]
     async fn play_card(
         &self,
         game_id: Uuid,

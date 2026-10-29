@@ -13,19 +13,22 @@ async fn main() -> std::io::Result<()> {
 
     jambo_core::observability::metrics_init::init_all();
 
+    let config = jambo_core::config::Config::from_env().expect("Failed to load configuration");
+
     // Periodically publish process CPU/memory usage. The Rust prometheus
     // crate does not auto-export process metrics, so we collect them here
     // with sysinfo and expose them as cpu_usage_percent / memory_usage_bytes.
-    tokio::spawn(async {
+    let process_metrics_interval =
+        std::time::Duration::from_secs(config.process_metrics_interval_secs);
+    tokio::spawn(async move {
         let mut sys = sysinfo::System::new();
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        let mut interval = tokio::time::interval(process_metrics_interval);
         loop {
             interval.tick().await;
             jambo_core::observability::metrics::update_process_metrics(&mut sys, "backend");
         }
     });
 
-    let config = jambo_core::config::Config::from_env().expect("Failed to load configuration");
     let cpu_count = num_cpus::get();
     info!(
         "Starting server on {}:{} -- CPU cores: {}, Actix workers: 2 (production-optimized)",

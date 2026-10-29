@@ -11,6 +11,7 @@ pub async fn create_connection(config: &Config) -> Result<DatabaseConnection, Db
     let mut opt = ConnectOptions::new(&config.database_url);
     opt.max_connections(config.db_pool_max_connections)
         .min_connections(config.db_pool_min_connections)
+        .map_sqlx_postgres_opts(|opts| opts.statement_cache_capacity(0))
         .connect_timeout(Duration::from_secs(config.db_pool_connect_timeout_secs))
         .acquire_timeout(Duration::from_secs(config.db_pool_acquire_timeout_secs))
         .idle_timeout(Duration::from_secs(config.db_pool_idle_timeout_secs))
@@ -28,6 +29,7 @@ pub async fn create_connection_with_pool_size(
     let mut opt = ConnectOptions::new(&config.database_url);
     opt.max_connections(max_connections)
         .min_connections(config.db_pool_min_connections.min(max_connections))
+        .map_sqlx_postgres_opts(|opts| opts.statement_cache_capacity(0))
         .connect_timeout(Duration::from_secs(config.db_pool_connect_timeout_secs))
         .acquire_timeout(Duration::from_secs(config.db_pool_acquire_timeout_secs))
         .idle_timeout(Duration::from_secs(config.db_pool_idle_timeout_secs))

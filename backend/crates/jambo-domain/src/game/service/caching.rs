@@ -1,4 +1,4 @@
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::DatabaseConnection;
 use serde_json;
 use tracing::{error, warn};
 use uuid::Uuid;
@@ -10,8 +10,83 @@ use crate::game::turn_order::next_player;
 use jambo_core::error::GameError;
 use jambo_core::observability::metrics::GAME_STATE_CACHE_WRITE_ERRORS_TOTAL;
 use jambo_db::models::{game, game_card, player, PlayerType};
+use jambo_db::repositories::{GameCardRepository, GameRepository, PlayerRepository};
 
 use super::GameService;
+
+fn assemble_cached_game_state(
+    game: &game::Model,
+    players: &[player::Model],
+    cards: &[game_card::Model],
+    round_completed: bool,
+    next_player_id: Uuid,
+) -> CachedGameState {
+    let cached_players: Vec<CachedPlayer> = players
+        .iter()
+        .map(|p| CachedPlayer {
+            id: p.id,
+            name: p.name.clone(),
+            position: p.position,
+            player_type: match p.player_type {
+                PlayerType::Human => "human".to_string(),
+                PlayerType::Bot => "bot".to_string(),
+            },
+            credits: p.credits,
+            user_id: p.user_id,
+        })
+        .collect();
+
+    let cached_cards: Vec<CachedCard> = cards
+        .iter()
+        .map(|c| CachedCard {
+            player_id: c.player_id,
+            card_index: c.card_index,
+            played: c.played,
+            round: c.round,
+        })
+        .collect();
+
+    CachedGameState {
+        status: format!("{:?}", game.status),
+        roll: game.roll,
+        rank: game.rank,
+        bet: game.bet,
+        current_winning_card: game.current_winning_card,
+        current_winning_player_position: game.current_winning_player_position,
+        players: cached_players,
+        cards: cached_cards,
+        round_completed,
+        next_player_id,
+    }
+}
+
+/// A round is complete when every non-kicked player has played a card in it.
+/// Uses two aggregate queries (via the repositories) instead of a per-player N+1.
+async fn is_round_complete(
+    db: &DatabaseConnection,
+    game_id: Uuid,
+    round: i32,
+) -> Result<bool, GameError> {
+    let active_count = PlayerRepository::new(db.clone())
+        .count_active(game_id)
+        .await?;
+    let played_in_round = GameCardRepository::new(db.clone())
+        .count_played_in_round(game_id, round)
+        .await?;
+
+    Ok(played_in_round >= active_count)
+}
+
+fn next_player_id_from(game: &game::Model, players: &[player::Model]) -> Option<Uuid> {
+    let current_rank = game.rank.unwrap_or(0) as usize;
+    let active_count = players.iter().filter(|p| !p.kicked).count();
+    let next_rank = next_player(current_rank, active_count);
+    players
+        .iter()
+        .filter(|p| !p.kicked)
+        .nth(next_rank)
+        .map(|p| p.id)
+}
 
 impl GameService {
     pub async fn cache_game_state(&self, game_id: Uuid) {
@@ -41,6 +116,59 @@ impl GameService {
         } else {
             warn!("Failed to build cached game state for {}", game_id);
         }
+    }
+
+    /// Offload the read-through game-state cache write to a background task,
+    /// reusing the player list already loaded by the card-play transaction so
+    /// the write stays off the request critical path.
+    pub(crate) fn spawn_cache_game_state(&self, game_id: Uuid, players: Vec<player::Model>) {
+        let db = self.db.clone();
+        let Some(mut redis) = self.redis_client.clone() else {
+            return;
+        };
+        tokio::spawn(async move {
+            let game = match GameRepository::new(db.clone()).find_by_id(game_id).await {
+                Ok(Some(g)) => g,
+                _ => return,
+            };
+            let cards = match GameCardRepository::new(db.clone())
+                .list_by_game(game_id)
+                .await
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let round_completed = match is_round_complete(&db, game_id, game.roll).await {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            let Some(next_player_id) = next_player_id_from(&game, &players) else {
+                return;
+            };
+
+            let state = assemble_cached_game_state(
+                &game,
+                &players,
+                &cards,
+                round_completed,
+                next_player_id,
+            );
+            let Ok(data) = serde_json::to_string(&state) else {
+                warn!("Failed to serialize game state for cache: {}", game_id);
+                return;
+            };
+            if let Err(e) = redis
+                .set_ex(
+                    &format!("game:state:{game_id}"),
+                    &data,
+                    GAME_STATE_CACHE_TTL_SECS,
+                )
+                .await
+            {
+                warn!("Failed to cache game state for {}: {}", game_id, e);
+                GAME_STATE_CACHE_WRITE_ERRORS_TOTAL.inc();
+            }
+        });
     }
 
     pub async fn invalidate_game_state_cache(&self, game_id: Uuid) {
@@ -101,93 +229,30 @@ impl GameService {
         &self,
         game_id: Uuid,
     ) -> Result<CachedGameState, GameError> {
-        let game = game::Entity::find_by_id(game_id)
-            .one(&self.db)
+        let game = GameRepository::new(self.db.clone())
+            .find_by_id(game_id)
             .await?
             .ok_or(GameError::GameNotFound)?;
 
-        let players = player::Entity::find()
-            .filter(player::Column::GameId.eq(game_id))
-            .order_by_asc(player::Column::Position)
-            .all(&self.db)
+        let players = PlayerRepository::new(self.db.clone())
+            .list_by_game(game_id)
             .await?;
 
-        let cards = game_card::Entity::find()
-            .filter(game_card::Column::GameId.eq(game_id))
-            .all(&self.db)
+        let cards = GameCardRepository::new(self.db.clone())
+            .list_by_game(game_id)
             .await?;
 
-        let cached_players: Vec<CachedPlayer> = players
-            .iter()
-            .map(|p| CachedPlayer {
-                id: p.id,
-                name: p.name.clone(),
-                position: p.position,
-                player_type: match p.player_type {
-                    PlayerType::Human => "human".to_string(),
-                    PlayerType::Bot => "bot".to_string(),
-                },
-                credits: p.credits,
-                user_id: p.user_id,
-            })
-            .collect();
-
-        let cached_cards: Vec<CachedCard> = cards
-            .iter()
-            .map(|c| CachedCard {
-                player_id: c.player_id,
-                card_index: c.card_index,
-                played: c.played,
-                round: c.round,
-            })
-            .collect();
-
-        let round_complete = self
-            .is_round_complete_txn_inner(&self.db, game_id, game.roll)
-            .await?;
+        let round_complete = is_round_complete(&self.db, game_id, game.roll).await?;
 
         let next_player_id = self.order_next_player(game_id, &game, &players).await?;
 
-        Ok(CachedGameState {
-            status: format!("{:?}", game.status),
-            roll: game.roll,
-            rank: game.rank,
-            bet: game.bet,
-            current_winning_card: game.current_winning_card,
-            current_winning_player_position: game.current_winning_player_position,
-            players: cached_players,
-            cards: cached_cards,
-            round_completed: round_complete,
+        Ok(assemble_cached_game_state(
+            &game,
+            &players,
+            &cards,
+            round_complete,
             next_player_id,
-        })
-    }
-
-    pub(crate) async fn is_round_complete_txn_inner(
-        &self,
-        db: &DatabaseConnection,
-        game_id: Uuid,
-        round: i32,
-    ) -> Result<bool, GameError> {
-        let players = player::Entity::find()
-            .filter(player::Column::GameId.eq(game_id))
-            .all(db)
-            .await?;
-
-        // Skip kicked players — they should not block round completion
-        for player_model in players {
-            if player_model.kicked {
-                continue;
-            }
-            let cards = game_card::Entity::find()
-                .filter(game_card::Column::PlayerId.eq(player_model.id))
-                .all(db)
-                .await?;
-            let played_in_round = cards.iter().any(|c| c.played && c.round == Some(round));
-            if !played_in_round {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        ))
     }
 
     pub(crate) async fn order_next_player(

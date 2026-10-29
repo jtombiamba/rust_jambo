@@ -20,18 +20,10 @@ impl WebSocketManager {
         sender: WsSender,
         correlation_id: CorrelationId,
     ) -> ConnectionId {
-        let mut inner = self.inner.write().await;
         let connection_id = ConnectionId::new();
-        let cid_display = correlation_id.to_string();
-        let conn_uuid = connection_id.uuid();
+        let mut shard = self.shard(game_id).write().await;
 
-        let _was_reconnect = inner
-            .connections
-            .get(&game_id)
-            .map(|conns| conns.iter().any(|c| c.player_id.is_some()))
-            .unwrap_or(false);
-
-        inner
+        shard
             .connections
             .entry(game_id)
             .or_default()
@@ -47,22 +39,11 @@ impl WebSocketManager {
                 spectator: false,
                 user_id: None,
             });
-        tracing::info!(
+        tracing::debug!(
             "New WebSocket connection {} for game {} (correlation_id={})",
-            conn_uuid,
+            connection_id.uuid(),
             game_id,
-            cid_display
-        );
-        // Confirm the game is now present in the map and how many
-        // connections it holds, so we can correlate registration timing with
-        // any subsequent "No connections" broadcast warnings.
-        let known_games: Vec<String> = inner.connections.keys().map(|g| g.to_string()).collect();
-        tracing::info!(
-            "[WS-DIAG] add_connection: game {} now has {} connection(s); known_games={:?} (count={})",
-            game_id,
-            inner.connections.get(&game_id).map(|c| c.len()).unwrap_or(0),
-            known_games,
-            known_games.len()
+            correlation_id
         );
         metrics::WS_CONNECTIONS_ACTIVE.inc();
         connection_id
@@ -81,9 +62,9 @@ impl WebSocketManager {
         player_position: i32,
     ) {
         let was_previously_connected = {
-            let mut inner = self.inner.write().await;
+            let mut shard = self.shard(game_id).write().await;
             let was_previously_connected =
-                if let Some(connections) = inner.connections.get(&game_id) {
+                if let Some(connections) = shard.connections.get(&game_id) {
                     connections
                         .iter()
                         .any(|c| c.player_id == Some(player_id) && c.id != connection_id)
@@ -92,7 +73,7 @@ impl WebSocketManager {
                 };
 
             let mut conn_user_id: Option<Uuid> = None;
-            if let Some(connections) = inner.connections.get_mut(&game_id) {
+            if let Some(connections) = shard.connections.get_mut(&game_id) {
                 for conn in connections.iter_mut() {
                     if conn.id == connection_id {
                         conn.player_id = Some(player_id);
@@ -151,8 +132,8 @@ impl WebSocketManager {
 
     /// Update the last activity time for a connection.
     pub async fn update_activity(&self, game_id: Uuid, connection_id: ConnectionId) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.connections.get_mut(&game_id) {
+        let mut shard = self.shard(game_id).write().await;
+        if let Some(connections) = shard.connections.get_mut(&game_id) {
             for connection in connections {
                 if connection.id == connection_id {
                     connection.last_activity = Instant::now();
@@ -163,8 +144,8 @@ impl WebSocketManager {
     }
 
     pub async fn update_pong(&self, game_id: Uuid, connection_id: ConnectionId) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.connections.get_mut(&game_id) {
+        let mut shard = self.shard(game_id).write().await;
+        if let Some(connections) = shard.connections.get_mut(&game_id) {
             for connection in connections.iter_mut() {
                 if connection.id == connection_id {
                     connection.last_pong = Instant::now();
@@ -182,8 +163,8 @@ impl WebSocketManager {
         connection_id: ConnectionId,
         user_id: Uuid,
     ) {
-        let mut inner = self.inner.write().await;
-        if let Some(connections) = inner.connections.get_mut(&game_id) {
+        let mut shard = self.shard(game_id).write().await;
+        if let Some(connections) = shard.connections.get_mut(&game_id) {
             for connection in connections.iter_mut() {
                 if connection.id == connection_id {
                     connection.user_id = Some(user_id);
@@ -199,8 +180,8 @@ impl WebSocketManager {
         game_id: Uuid,
         connection_id: ConnectionId,
     ) -> Option<Uuid> {
-        let inner = self.inner.read().await;
-        inner
+        let shard = self.shard(game_id).read().await;
+        shard
             .connections
             .get(&game_id)
             .and_then(|conns| conns.iter().find(|c| c.id == connection_id))
@@ -213,8 +194,8 @@ impl WebSocketManager {
     /// Delegates to `remove_connection` for actual removal and metric handling.
     pub async fn force_disconnect(&self, game_id: Uuid, connection_id: ConnectionId) {
         let (player_id, position, was_disconnected) = {
-            let mut inner = self.inner.write().await;
-            let result = if let Some(connections) = inner.connections.get_mut(&game_id) {
+            let mut shard = self.shard(game_id).write().await;
+            let result = if let Some(connections) = shard.connections.get_mut(&game_id) {
                 let idx = connections.iter().position(|c| c.id == connection_id);
                 match idx {
                     Some(i) => {
@@ -255,8 +236,8 @@ impl WebSocketManager {
     }
     pub async fn remove_connection(&self, game_id: Uuid, connection_id: ConnectionId) {
         let (removed_player_id, removed_position, already_disconnected) = {
-            let mut inner = self.inner.write().await;
-            if let Some(connections) = inner.connections.get_mut(&game_id) {
+            let mut shard = self.shard(game_id).write().await;
+            if let Some(connections) = shard.connections.get_mut(&game_id) {
                 let before = connections.len();
                 let conn_info = connections
                     .iter()
@@ -272,21 +253,9 @@ impl WebSocketManager {
                     after
                 );
                 if connections.is_empty() {
-                    inner.connections.remove(&game_id);
-                    tracing::info!("No more connections for game {}, removed from map", game_id);
+                    shard.connections.remove(&game_id);
+                    tracing::debug!("No more connections for game {}, removed from map", game_id);
                 }
-                // Record the post-removal map state so we can tell
-                // whether a later "No connections" broadcast raced with this
-                // removal (i.e. the game was present before, gone after).
-                let known_games: Vec<String> =
-                    inner.connections.keys().map(|g| g.to_string()).collect();
-                tracing::info!(
-                    "[WS-DIAG] remove_connection: game {} now has {} connection(s); known_games={:?} (count={})",
-                    game_id,
-                    inner.connections.get(&game_id).map(|c| c.len()).unwrap_or(0),
-                    known_games,
-                    known_games.len()
-                );
                 conn_info.unwrap_or((None, None, true))
             } else {
                 tracing::warn!(
@@ -328,8 +297,8 @@ impl WebSocketManager {
     #[allow(dead_code)]
     pub async fn remove_all_connections(&self, game_id: Uuid) {
         let removed = {
-            let mut inner = self.inner.write().await;
-            inner.connections.remove(&game_id).map(|conns| {
+            let mut shard = self.shard(game_id).write().await;
+            shard.connections.remove(&game_id).map(|conns| {
                 let count = conns.len();
                 metrics::WS_CONNECTIONS_ACTIVE.sub(count as f64);
                 metrics::WS_DISCONNECTS_TOTAL.inc_by(count as f64);
@@ -347,13 +316,13 @@ impl WebSocketManager {
     pub async fn remove_player_connections(&self, game_id: Uuid, player_id: Uuid) {
         let mut changed = false;
         {
-            let mut inner = self.inner.write().await;
-            if let Some(connections) = inner.connections.get_mut(&game_id) {
+            let mut shard = self.shard(game_id).write().await;
+            if let Some(connections) = shard.connections.get_mut(&game_id) {
                 let before = connections.len();
                 connections.retain(|c| c.player_id != Some(player_id));
                 let removed = before - connections.len();
                 if connections.is_empty() {
-                    inner.connections.remove(&game_id);
+                    shard.connections.remove(&game_id);
                     tracing::info!(
                         "No more connections for game {} after removing player {}",
                         game_id,
@@ -381,20 +350,7 @@ impl WebSocketManager {
     pub async fn broadcast_to_game(&self, game_id: Uuid, message: &str, kind: MessageKind) {
         let targets = self.snapshot_senders(game_id).await;
         if targets.is_empty() {
-            // Record the set of game IDs currently known to this manager so we
-            // can tell whether the game was never registered or was already
-            // removed when the broadcast arrived.
-            let inner = self.inner.read().await;
-            let known_games: Vec<String> =
-                inner.connections.keys().map(|g| g.to_string()).collect();
-            tracing::warn!(
-                "[WS-DIAG] No connections for game {}, message not broadcast. \
-                 known_games={:?} (count={}), message_len={}",
-                game_id,
-                known_games,
-                known_games.len(),
-                message.len()
-            );
+            tracing::debug!("No connections for game {}, message not broadcast", game_id);
             return;
         }
 
@@ -450,8 +406,8 @@ impl WebSocketManager {
         kind: MessageKind,
     ) {
         let targets = {
-            let inner = self.inner.read().await;
-            inner
+            let shard = self.shard(game_id).read().await;
+            shard
                 .connections
                 .get(&game_id)
                 .map(|conns| {
@@ -483,8 +439,8 @@ impl WebSocketManager {
     /// Get the list of (player_id, player_position) for all connected players in a game.
     /// Returns only connections that have both a known player_id and player_position.
     pub async fn get_connected_player_info(&self, game_id: Uuid) -> Vec<(Uuid, i32)> {
-        let inner = self.inner.read().await;
-        if let Some(connections) = inner.connections.get(&game_id) {
+        let shard = self.shard(game_id).read().await;
+        if let Some(connections) = shard.connections.get(&game_id) {
             connections
                 .iter()
                 .filter_map(|c| c.player_id.zip(c.player_position))
@@ -497,8 +453,8 @@ impl WebSocketManager {
     /// Get the number of active connections for a specific game.
     #[allow(dead_code)]
     pub async fn connection_count(&self, game_id: Uuid) -> usize {
-        let inner = self.inner.read().await;
-        inner
+        let shard = self.shard(game_id).read().await;
+        shard
             .connections
             .get(&game_id)
             .map(|c| c.len())
@@ -508,8 +464,8 @@ impl WebSocketManager {
     /// Check if a specific player has an active connection for a game.
     #[allow(dead_code)]
     pub async fn is_player_connected(&self, game_id: Uuid, player_id: Uuid) -> bool {
-        let inner = self.inner.read().await;
-        inner
+        let shard = self.shard(game_id).read().await;
+        shard
             .connections
             .get(&game_id)
             .map(|conns| conns.iter().any(|c| c.player_id == Some(player_id)))
@@ -519,7 +475,16 @@ impl WebSocketManager {
     /// Get total number of active connections across all games.
     #[allow(dead_code)]
     pub async fn total_connection_count(&self) -> usize {
-        let inner = self.inner.read().await;
-        inner.connections.values().map(|c| c.len()).sum()
+        let mut total = 0;
+        for shard in self.shards.iter() {
+            total += shard
+                .read()
+                .await
+                .connections
+                .values()
+                .map(|c| c.len())
+                .sum::<usize>();
+        }
+        total
     }
 }

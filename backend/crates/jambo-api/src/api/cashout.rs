@@ -61,6 +61,10 @@ pub async fn request_cashout(
             });
 
             if !admin_email.is_empty() {
+                tracing::warn!(
+                "Enqueuing cashout request to admin email: {} for user {} ({}), credits: {}, amount_eur_cents: {}, paypal_email: {}",
+                admin_email, user.pseudo, user.email, credits, amount_eur_cents, paypal_email
+            );
                 email_queue.enqueue(EmailJob::CashoutAdminAlert {
                     to_email: admin_email,
                     pseudo: user.pseudo.clone(),

@@ -69,7 +69,7 @@ impl PostCommitContext {
         }
 
         if !game_ended {
-            service.cache_game_state(game_id).await;
+            service.spawn_cache_game_state(game_id, players);
         }
     }
 }

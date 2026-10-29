@@ -1,6 +1,6 @@
 use actix_web::web;
 use actix_ws::{self, Session};
-use tracing::{error, info};
+use tracing::error;
 
 use super::connection::{ConnectionContext, WsMessage};
 use super::manager::WebSocketManager;
@@ -21,7 +21,7 @@ pub(super) fn spawn_forwarding_task(
     );
     actix_rt::spawn(async move {
         let _guard = fwd_span.enter();
-        info!(
+        tracing::debug!(
             "Message forwarding task started for connection {}",
             ctx.connection_id.uuid()
         );
@@ -36,13 +36,13 @@ pub(super) fn spawn_forwarding_task(
                     .await;
             }
             ForwardOutcome::ChannelClosed => {
-                info!(
+                tracing::debug!(
                     "Connection {} send channel closed, closing session so the client can reconnect",
                     ctx.connection_id.uuid()
                 );
             }
         }
-        info!(
+        tracing::debug!(
             "Message forwarding task ended for connection {} (channel closed)",
             ctx.connection_id.uuid()
         );

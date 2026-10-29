@@ -530,6 +530,10 @@ async fn test_spectator_gauge_tracks_join_and_removal() {
         .mark_spectator_for_connection(game_id, spectator_conn)
         .await;
 
+    // The gauge is refreshed lazily by the resync task (and on disconnect), so
+    // trigger it explicitly here to assert the gauge logic itself.
+    manager.refresh_spectator_gauge(game_id).await;
+
     let label = game_id.to_string();
     let gauge = jambo_core::observability::metrics::WS_SPECTATORS_PER_GAME
         .get_metric_with_label_values(&[&label])
@@ -620,9 +624,9 @@ async fn test_cleanup_keeps_connection_refreshed_by_ping() {
 
     // Backdate both connections' heartbeat tracks beyond the timeout.
     {
-        let mut inner = manager.inner.write().await;
+        let mut shard = manager.shard(game_id).write().await;
         let stale = Instant::now() - Duration::from_secs(120);
-        for conn in inner.connections.get_mut(&game_id).unwrap().iter_mut() {
+        for conn in shard.connections.get_mut(&game_id).unwrap().iter_mut() {
             conn.last_activity = stale;
             conn.last_pong = stale;
         }
