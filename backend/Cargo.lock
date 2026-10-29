@@ -294,9 +294,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "amq-protocol"
-version = "10.2.0"
+version = "10.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95442d3faf08b9bed7491ceda36b0e0268126cb20d44e6e7573cf930d9aa5073"
+checksum = "b63f30a81ad95c7a278080be6d993d5b3e971d93e1b00bd894067220fc756804"
 dependencies = [
  "amq-protocol-tcp",
  "amq-protocol-types",
@@ -308,9 +308,9 @@ dependencies = [
 
 [[package]]
 name = "amq-protocol-tcp"
-version = "10.2.0"
+version = "10.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc754c77e62e58ea7323c3f257a97f747ac57f0ff3f7a91185f484dc1cb25bd2"
+checksum = "2b1bcecdd743111f05c26294d26b887ba6b2e4789c27515aa48f0fe32066e96c"
 dependencies = [
  "amq-protocol-uri",
  "async-rs",
@@ -321,9 +321,9 @@ dependencies = [
 
 [[package]]
 name = "amq-protocol-types"
-version = "10.2.0"
+version = "10.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d8cb8fa210da5ec52799abf7ce45e2275b5a3f82ec4efafcd3e8161b7dbc9a8"
+checksum = "8a268a50e97bd5d52292a8b96636f6436215def6f3d128fb8218318f5feb4c33"
 dependencies = [
  "cookie-factory",
  "nom 8.0.0",
@@ -333,9 +333,9 @@ dependencies = [
 
 [[package]]
 name = "amq-protocol-uri"
-version = "10.2.0"
+version = "10.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0bc3e8b145641e20b57777a17b3bd7ba6bbdbb2b2ae2f26f6224be35e42c330"
+checksum = "8a34581b010818ef3da6b5a853e94f6438b3903914baba77a15f7fb2c7ad8958"
 dependencies = [
  "amq-protocol-types",
  "percent-encoding",
@@ -3252,16 +3252,16 @@ checksum = "d4345964bb142484797b161f473a503a434de77149dd8c7427788c6e13379388"
 
 [[package]]
 name = "lapin"
-version = "4.7.0"
+version = "4.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d66b77d79b9752fad298008c1c5a83a40477b59879aaca7554f1b381cbf606ff"
+checksum = "3212643cc0031d982f81a62360998106268587237d81d6e8501a0a323e13b656"
 dependencies = [
  "amq-protocol",
  "async-rs",
  "async-trait",
- "atomic-waker",
  "backon",
  "cfg-if",
+ "event-listener 5.4.1",
  "flume",
  "futures-core",
  "futures-io",
