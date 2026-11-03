@@ -6,3 +6,6 @@ mod flows1;
 
 #[cfg(test)]
 mod flows2;
+
+#[cfg(test)]
+mod start_next_game;

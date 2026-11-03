@@ -13,8 +13,11 @@ mod cleanup;
 mod game;
 mod redis;
 mod room;
+mod run_spectators;
 mod spectators;
 mod user;
+
+use run_spectators::RunSpectator;
 
 #[cfg(test)]
 mod tests;
@@ -31,6 +34,9 @@ struct Shard {
     /// Map from user ID to list of active tracked connections (user-scoped,
     /// e.g. for real-time invitation push).
     user_connections: HashMap<Uuid, Vec<TrackedConnection>>,
+    /// Map from run ID to read-only run-spectator connections that follow the
+    /// run across games (re-pointed to each new game_id on `GameStarted`).
+    run_spectators: HashMap<Uuid, Vec<RunSpectator>>,
 }
 
 impl Shard {
@@ -39,6 +45,7 @@ impl Shard {
             connections: HashMap::new(),
             room_connections: HashMap::new(),
             user_connections: HashMap::new(),
+            run_spectators: HashMap::new(),
         }
     }
 }

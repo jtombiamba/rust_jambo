@@ -23,15 +23,15 @@ use tracing::info;
 
 /// Immutable inputs computed during the planning phase, consumed by the
 /// transactional write phase.
-struct GameCreationPlan {
-    game_id: Uuid,
-    player_ids: Vec<Uuid>,
-    user_map: HashMap<Uuid, String>,
-    profile_map: HashMap<Uuid, PlayerProfile>,
-    run_player_map: HashMap<Uuid, GameRunPlayer>,
-    shuffled_positions: Vec<usize>,
-    position_map: HashMap<i32, Uuid>,
-    bet: i32,
+pub(crate) struct GameCreationPlan {
+    pub(crate) game_id: Uuid,
+    pub(crate) player_ids: Vec<Uuid>,
+    pub(crate) user_map: HashMap<Uuid, String>,
+    pub(crate) profile_map: HashMap<Uuid, PlayerProfile>,
+    pub(crate) run_player_map: HashMap<Uuid, GameRunPlayer>,
+    pub(crate) shuffled_positions: Vec<usize>,
+    pub(crate) position_map: HashMap<i32, Uuid>,
+    pub(crate) bet: i32,
 }
 
 pub struct StartNextGameService {
@@ -86,10 +86,65 @@ impl StartNextGameService {
         run_id: Uuid,
         user_id: Uuid,
     ) -> Result<StartNextGameResponse, RoomServiceError> {
-        let mut guard = self.lock_service.acquire(run_id).await?;
+        // Fast path: if a game already exists at the current index (e.g. the
+        // "Play Next Game" button was pressed twice, or another player already
+        // advanced the run), return it without contending on the lock.
+        if let Some(resp) = self.try_existing_game(run_id).await? {
+            return Ok(resp);
+        }
+
+        let mut guard = match self.lock_service.acquire(run_id).await {
+            Ok(guard) => guard,
+            Err(RoomServiceError::StartAlreadyInProgress) => {
+                // Another request is mid-creation. Rather than failing (which is
+                // what caused players to miss the reload of the auto-advanced
+                // game), poll briefly for the game that the concurrent request
+                // creates and return it. Only surface the original error if no
+                // game appears within the window.
+                return self.wait_for_existing_game(run_id).await;
+            }
+            Err(e) => return Err(e),
+        };
+
         let result = self.start_next_game_inner(run_id, user_id).await;
         guard.release().await;
         result
+    }
+
+    /// Return the already-created game at the run's current index, if any.
+    async fn try_existing_game(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Option<StartNextGameResponse>, RoomServiceError> {
+        let Some(run) = self.run_repo.find_by_id(run_id).await? else {
+            return Ok(None);
+        };
+        if let Some(rg) = self
+            .run_game_repo
+            .find_by_run_and_index(run_id, run.current_game_index)
+            .await?
+        {
+            return Ok(Some(existing_response(
+                rg.game_id,
+                run.current_game_index,
+                &run,
+            )));
+        }
+        Ok(None)
+    }
+
+    /// Poll for the game created by a concurrent `start_next_game` request.
+    async fn wait_for_existing_game(
+        &self,
+        run_id: Uuid,
+    ) -> Result<StartNextGameResponse, RoomServiceError> {
+        for _ in 0..30 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if let Some(resp) = self.try_existing_game(run_id).await? {
+                return Ok(resp);
+            }
+        }
+        Err(RoomServiceError::StartAlreadyInProgress)
     }
 
     async fn start_next_game_inner(
@@ -423,7 +478,7 @@ impl StartNextGameService {
     }
 }
 
-fn assemble_game_creation_plan(
+pub(crate) fn assemble_game_creation_plan(
     run_players: &[GameRunPlayer],
     user_map: HashMap<Uuid, String>,
     profile_map: HashMap<Uuid, PlayerProfile>,
@@ -486,82 +541,5 @@ fn build_response(
         current_game_index: new_index,
         all_games_created: Some(new_index >= run.num_games),
         status: None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use jambo_db::models::PlayerType;
-
-    fn make_run_player(user_id: Uuid) -> GameRunPlayer {
-        GameRunPlayer {
-            id: Uuid::now_v7(),
-            game_run_id: Uuid::nil(),
-            user_id,
-            position: 0,
-            provisioned_credits: 0,
-            kicked: false,
-            joined_at: chrono::Utc::now(),
-        }
-    }
-
-    fn make_profile(user_id: Uuid) -> PlayerProfile {
-        PlayerProfile {
-            id: Uuid::now_v7(),
-            user_id,
-            player_type: PlayerType::Human,
-            credit: 1000,
-            game_played: 0,
-            wins: 0,
-            kora_wins: 0,
-            winning_streak: 0,
-            latitude: None,
-            longitude: None,
-            country_code: None,
-            city: None,
-            frozen_until: None,
-            cashout_locked: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }
-    }
-
-    #[test]
-    fn assemble_plan_keeps_all_players_and_orders_positions() {
-        let players: Vec<GameRunPlayer> = (0..4).map(|_| make_run_player(Uuid::now_v7())).collect();
-        let user_ids: Vec<Uuid> = players.iter().map(|p| p.user_id).collect();
-
-        let user_map: HashMap<Uuid, String> = user_ids
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (*id, format!("user{}", i)))
-            .collect();
-        let profile_map: HashMap<Uuid, PlayerProfile> =
-            user_ids.iter().map(|id| (*id, make_profile(*id))).collect();
-
-        let plan = assemble_game_creation_plan(&players, user_map, profile_map, 25);
-
-        assert_eq!(plan.player_ids, user_ids);
-        assert_eq!(plan.bet, 25);
-        assert_eq!(plan.shuffled_positions.len(), 4);
-        assert_eq!(plan.position_map.len(), 4);
-
-        // shuffled_positions is a permutation of 0..3
-        let mut sorted_positions = plan.shuffled_positions.clone();
-        sorted_positions.sort_unstable();
-        assert_eq!(sorted_positions, vec![0, 1, 2, 3]);
-
-        // position_map covers every position with a distinct player
-        let mut assigned: Vec<Uuid> = (0..4).map(|i| plan.position_map[&i]).collect();
-        assigned.sort();
-        let mut expected = user_ids.clone();
-        expected.sort();
-        assert_eq!(assigned, expected);
-
-        // every player is represented in the run_player_map
-        for id in &user_ids {
-            assert!(plan.run_player_map.contains_key(id));
-        }
     }
 }

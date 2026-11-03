@@ -9,6 +9,7 @@ mod incoming;
 mod membership;
 mod room;
 mod routing;
+mod run;
 mod user;
 
 pub use auth::{validate_game_token, validate_spectate_token, validate_ws_token};
@@ -144,5 +145,6 @@ pub fn scope() -> actix_web::Scope {
     web::scope("/ws")
         .service(web::resource("/me").route(web::get().to(ws_user_handler)))
         .service(web::resource("/room/{room_id}").route(web::get().to(ws_room_handler)))
+        .service(web::resource("/run/{run_id}").route(web::get().to(run::ws_run_spectator_handler)))
         .service(web::resource("/{game_id}").route(web::get().to(ws_handler)))
 }

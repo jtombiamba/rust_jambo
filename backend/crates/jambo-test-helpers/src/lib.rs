@@ -158,6 +158,7 @@ pub struct MockRoomService {
     start_next_game_result: Mutex<Option<Result<StartNextGameResponse, RoomServiceError>>>,
     get_current_game_result: Mutex<Option<Result<CurrentGameResponse, RoomServiceError>>>,
     list_runs_result: Mutex<Option<Result<Vec<RunListItem>, RoomServiceError>>>,
+    is_run_participant_result: Mutex<Option<Result<bool, RoomServiceError>>>,
 }
 
 impl MockRoomService {
@@ -176,6 +177,7 @@ impl MockRoomService {
             start_next_game_result: Mutex::new(None),
             get_current_game_result: Mutex::new(None),
             list_runs_result: Mutex::new(None),
+            is_run_participant_result: Mutex::new(None),
         }
     }
 
@@ -408,6 +410,18 @@ impl RoomServiceTrait for MockRoomService {
             .unwrap()
             .take()
             .unwrap_or(Ok(vec![]))
+    }
+
+    async fn is_run_participant(
+        &self,
+        _run_id: uuid::Uuid,
+        _user_id: uuid::Uuid,
+    ) -> Result<bool, RoomServiceError> {
+        self.is_run_participant_result
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap_or(Ok(true))
     }
 }
 

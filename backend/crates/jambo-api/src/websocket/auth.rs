@@ -280,6 +280,59 @@ async fn validate_spectate_token_with_claims(
     Some(derive_spectate_id(game_id))
 }
 
+/// Validate a run-scoped spectator token for the dedicated run stream WebSocket.
+/// The token must:
+/// 1. Be a valid JWT with purpose "ws:spectate_run" and matching run_id.
+/// 2. Exist in Redis (inserted at mint time, revocable by deletion).
+pub async fn validate_run_spectate_token(
+    token: &str,
+    run_id: Uuid,
+    auth_config: Option<web::Data<AuthConfig>>,
+    redis_client: Option<RedisClient>,
+) -> Option<Uuid> {
+    let config = auth_config?;
+    let claims = jwt::validate_run_spectate_token(token, &config).ok()?;
+
+    if claims.sub != run_id {
+        tracing::warn!(
+            "Run spectate token mismatch: token is for run {} but connection is for run {}",
+            claims.sub,
+            run_id
+        );
+        return None;
+    }
+
+    let redis_key = format!("spectate_run_token:{}:{}", run_id, claims.jti);
+    if let Some(mut redis) = redis_client {
+        match cached_exists(&mut redis, &redis_key).await {
+            Ok(true) => {
+                tracing::debug!(
+                    "Run spectate token validated for run {}, jti: {}",
+                    run_id,
+                    claims.jti
+                );
+            }
+            Ok(false) => {
+                tracing::warn!(
+                    "Run spectate token not found in Redis (never issued or expired) for run {}",
+                    run_id
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::error!("Redis error checking run spectate token: {}", e);
+                jambo_core::observability::metrics::WS_TOKEN_VALIDATION_REDIS_ERRORS_TOTAL.inc();
+                tracing::warn!(
+                    "Redis unavailable, allowing run spectate token connection for run {}",
+                    run_id
+                );
+            }
+        }
+    }
+
+    Some(derive_spectate_id(run_id))
+}
+
 /// Check whether a token's Redis key exists, memoized by an in-process TTL cache.
 async fn cached_exists(redis_client: &mut RedisClient, key: &str) -> redis::RedisResult<bool> {
     if let Some(cached) = token_cache().get(key) {

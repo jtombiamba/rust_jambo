@@ -164,3 +164,35 @@ pub async fn cleanup_benchmark_data(
         Err(e) => AppError::from(e).error_response(),
     }
 }
+
+#[utoipa::path(
+    post,
+    path = "/api/benchmark/runs/{run_id}/force-finish",
+    tag = "benchmark",
+    params(("run_id" = Uuid, Path, description = "Run ID")),
+    responses(
+        (status = 200, description = "Current run game force-finished"),
+        (status = 401, description = "Invalid benchmark token"),
+    )
+)]
+/// Force-finish the current game of a run (benchmark/test only, gated by
+/// `BENCHMARK_MODE`). Marks the game finished and runs the run-completion
+/// finalization, allowing deterministic multi-game run tests.
+pub async fn force_finish_run_game(
+    req: HttpRequest,
+    config: web::Data<Config>,
+    path: web::Path<Uuid>,
+    orchestrator: web::Data<Arc<dyn BenchmarkService>>,
+) -> HttpResponse {
+    if let Some(error_response) = validate_benchmark_token(&req, config.get_ref()) {
+        return error_response;
+    }
+
+    match orchestrator.force_finish_run_game(path.into_inner()).await {
+        Ok(game_id) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true,
+            "game_id": game_id,
+        })),
+        Err(e) => AppError::from(e).error_response(),
+    }
+}

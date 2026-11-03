@@ -252,6 +252,13 @@ pub trait BenchmarkService: Send + Sync {
     async fn cleanup_benchmark_data(
         &self,
     ) -> Result<BenchmarkCleanupCounts, jambo_core::error::GameError>;
+
+    /// Force-finish the current game of a run (benchmark/test only). Returns the
+    /// finished game id.
+    async fn force_finish_run_game(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Uuid, jambo_core::error::GameError>;
 }
 
 /// Backward-compatible supertrait combining all game service concerns.

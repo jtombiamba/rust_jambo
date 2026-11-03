@@ -78,4 +78,10 @@ pub trait RoomServiceTrait: Send + Sync {
         room_id: Uuid,
         user_id: Uuid,
     ) -> Result<Vec<RunListItem>, RoomServiceError>;
+
+    async fn is_run_participant(
+        &self,
+        run_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, RoomServiceError>;
 }

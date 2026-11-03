@@ -1,14 +1,19 @@
 use std::collections::HashSet;
 
 use rand::RngExt;
-use sea_orm::{ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait,
+};
 use uuid::Uuid;
 
 use crate::game::distribution::distribute_cards;
 use crate::game::service::types::{
     BenchmarkCleanupCounts, BenchmarkGameOutcome, BenchmarkPlayerOutcome,
 };
+use crate::messaging::events::GameEvent;
+use crate::messaging::redis::PublishResult;
 use jambo_core::error::GameError;
+use jambo_core::observability::metrics;
 use jambo_db::models::{self, game, player, GameMode, GameStatus, PlayerType};
 
 use super::GameService;
@@ -197,6 +202,92 @@ impl GameService {
             current_turn: initial_rank,
             bet,
         })
+    }
+
+    #[tracing::instrument(level = "info", skip(self), fields(run_id = %run_id))]
+    pub async fn force_finish_run_game(&self, run_id: Uuid) -> Result<Uuid, GameError> {
+        let run = models::game_run::Entity::find_by_id(run_id)
+            .one(&self.db)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or_else(|| GameError::internal("Run not found"))?;
+
+        let game_index = run.current_game_index - 1;
+        if game_index < 0 {
+            return Err(GameError::internal("No game started in this run yet"));
+        }
+
+        let run_game = models::game_run_game::Entity::find()
+            .filter(models::game_run_game::Column::GameRunId.eq(run_id))
+            .filter(models::game_run_game::Column::GameIndex.eq(game_index))
+            .one(&self.db)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or_else(|| GameError::internal("Current run game not found"))?;
+
+        let game_id = run_game.game_id;
+        let game_model = game::Entity::find_by_id(game_id)
+            .one(&self.db)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or_else(|| GameError::internal("Game not found"))?;
+
+        if matches!(
+            game_model.status,
+            GameStatus::Finished
+                | GameStatus::Kora
+                | GameStatus::DoubleKora
+                | GameStatus::Cancelled
+        ) {
+            return Ok(game_id);
+        }
+
+        let players = player::Entity::find()
+            .filter(player::Column::GameId.eq(game_id))
+            .all(&self.db)
+            .await
+            .map_err(GameError::Database)?;
+        let winner = players.first().cloned();
+
+        let mut game_active: game::ActiveModel = game_model.clone().into();
+        game_active.status = ActiveValue::Set(GameStatus::Finished);
+        game_active.winner_id = ActiveValue::Set(winner.as_ref().map(|p| p.id));
+        game_active.finished_at = ActiveValue::Set(Some(chrono::Utc::now()));
+        game_active.updated_at = ActiveValue::Set(chrono::Utc::now());
+        game_active
+            .update(&self.db)
+            .await
+            .map_err(GameError::Database)?;
+
+        metrics::ACTIVE_GAMES.dec();
+
+        if let Some(mut redis) = self.redis_client.clone() {
+            let event = GameEvent::GameFinished {
+                game_id,
+                winner_id: winner.as_ref().map(|p| p.id),
+                winner_name: winner.as_ref().map(|p| p.name.clone()),
+                winner_position: winner.as_ref().map(|p| p.position),
+                status: "finished".to_string(),
+                final_score: None,
+                rounds_played: game_model.roll,
+                correlation_id: None,
+            };
+            if let PublishResult::RetryExhausted(e) =
+                redis.publish_game_event_with_retry(&event).await
+            {
+                tracing::error!("Failed to publish GameFinished for force-finish: {}", e);
+            }
+        }
+
+        let refreshed = game::Entity::find_by_id(game_id)
+            .one(&self.db)
+            .await
+            .map_err(GameError::Database)?
+            .ok_or_else(|| GameError::internal("Game not found after finish"))?;
+        self.finalize_run_on_game_completion(run_id, &refreshed)
+            .await;
+
+        Ok(game_id)
     }
 
     #[tracing::instrument(level = "info", skip(self))]

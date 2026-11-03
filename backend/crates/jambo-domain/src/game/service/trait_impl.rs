@@ -364,6 +364,10 @@ impl BenchmarkService for GameService {
     async fn cleanup_benchmark_data(&self) -> Result<BenchmarkCleanupCounts, GameError> {
         self.cleanup_benchmark_data().await
     }
+
+    async fn force_finish_run_game(&self, run_id: Uuid) -> Result<Uuid, GameError> {
+        self.force_finish_run_game(run_id).await
+    }
 }
 
 // ── Backward-compatible supertrait ────────────────────────────────────

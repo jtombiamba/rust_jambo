@@ -338,6 +338,15 @@ impl WebSocketManager {
 
     /// Route a parsed room event to broadcast to room connections.
     pub(super) async fn route_room_event(&self, room_id: Uuid, event: RoomEvent) {
+        // When a new game starts in a run, re-point any run spectators so they
+        // follow the run across games (a run spectate token is run-scoped, not
+        // game-scoped).
+        if let RoomEvent::GameStarted {
+            run_id, game_id, ..
+        } = &event
+        {
+            self.re_point_run_spectators(*run_id, *game_id).await;
+        }
         self.broadcast_to_room(room_id, &event.to_json(), MessageKind::Control)
             .await;
     }
