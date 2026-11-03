@@ -20,7 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 tracing = { version = "0.1", features = ["log"] }
 thiserror = "2.0"
-utoipa = { version = "5", features = ["uuid", "chrono", "macros"] }
+utoipa = { version = "6", features = ["uuid", "chrono", "macros"] }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
