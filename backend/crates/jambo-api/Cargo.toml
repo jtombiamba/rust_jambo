@@ -41,7 +41,7 @@ prometheus = "0.13"
 num_cpus = "1.16"
 sysinfo = "0.31"
 http = "1"
-utoipa = { version = "5", features = ["actix_extras", "uuid", "chrono", "macros"] }
+utoipa = { version = "6", features = ["actix_extras", "uuid", "chrono", "macros"] }
 
 [dev-dependencies]
 sea-orm = { version = "2.0.0", features = ["mock"] }
