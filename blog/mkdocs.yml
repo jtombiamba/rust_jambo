@@ -76,6 +76,7 @@ nav:
       - Database Backups for a Live Game: blog/database-backup-management.md
       - Grafana LGTM vs Sentry and SigNoz: blog/observability-grafana-lgtm-vs-sentry-signoz.md
       - Load Testing a Real-Time Card Game Backend: blog/load-testing-management.md
+      - "The Finesse of Load Tests: A Rust Harness vs k6": blog/load-testing-rust-vs-k6.md
       - Observability in a Rust API: blog/observability-otel-traces-metrics-logs-rust.md
       - Fixing Silent Failures in Production: blog/silent-failure-remediation.md
       - Spectator Mode: blog/spectator-mode-stream-view.md
