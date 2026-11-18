@@ -12,6 +12,8 @@
   "auth.auth_required": "Authentification requise",
   "auth.token_revoked": "Le jeton a été révoqué",
   "auth.user_not_found": "Utilisateur introuvable",
+  "auth.deletion_requested": "Votre demande de suppression de données a bien été enregistrée. Notre équipe la traitera prochainement.",
+  "auth.account_deleted": "Ce compte a été désactivé.",
   "password.forgot": "Si {email} existe, vous recevrez un email pour réinitialiser votre mot de passe",
   "password.reset_link_expired": "Ce lien de réinitialisation est invalide ou a expiré",
   "password.reset_success": "Mot de passe réinitialisé avec succès",

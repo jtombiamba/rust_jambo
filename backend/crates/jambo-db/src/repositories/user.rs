@@ -1,12 +1,32 @@
 use async_trait::async_trait;
+use sea_orm::sea_query::Expr;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DbErr, EntityTrait,
     QueryFilter, QuerySelect, Set, TransactionTrait,
 };
 use uuid::Uuid;
 
-use crate::models::{player_profile, user, PlayerProfile, PlayerType, User};
+use crate::models::{player, player_profile, user, PlayerProfile, PlayerType, User};
 use crate::traits::UserRepoTrait;
+
+/// Display name substituted for every `players.name` row belonging to a
+/// soft-deleted user. Keeps historical games intact while hiding the pseudo.
+pub const DEACTIVATED_PLAYER_NAME: &str = "deactivated player";
+
+/// Unique pseudo tombstone for a soft-deleted user. The `id` keeps the value
+/// unique against the `users.pseudo` unique constraint while dropping the
+/// original pseudo.
+pub fn tombstone_pseudo(id: Uuid) -> String {
+    format!("deleted_{id}")
+}
+
+/// Result of a soft-delete: the anonymized user row plus how many player rows
+/// were relabeled.
+#[derive(Debug, Clone)]
+pub struct SoftDeleteOutcome {
+    pub user: User,
+    pub players_renamed: u64,
+}
 
 #[derive(Debug, Clone)]
 pub struct UserRepository {
@@ -96,6 +116,8 @@ impl UserRepository {
                         language: Set("en".to_string()),
                         created_at: Set(now),
                         updated_at: Set(now),
+                        deletion_requested_at: ActiveValue::NotSet,
+                        deleted_at: ActiveValue::NotSet,
                     };
                     let user = user_active.insert(txn).await?;
 
@@ -163,6 +185,83 @@ impl UserRepository {
         active.updated_at = Set(chrono::Utc::now());
         active.update(&self.connection).await
     }
+
+    /// Mark a user as having requested deletion of their data. Idempotent: the
+    /// first request timestamp is preserved and a second request is a no-op.
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn request_deletion(&self, id: Uuid) -> Result<User, DbErr> {
+        let user_model = user::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+
+        if user_model.deletion_requested_at.is_some() {
+            return Ok(user_model);
+        }
+
+        let now = chrono::Utc::now();
+        let mut active: user::ActiveModel = user_model.into();
+        active.deletion_requested_at = Set(Some(now));
+        active.updated_at = Set(now);
+        active.update(&self.connection).await
+    }
+
+    /// List users who requested deletion but have not yet been soft-deleted.
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn list_deletion_requests(&self) -> Result<Vec<User>, DbErr> {
+        user::Entity::find()
+            .filter(user::Column::DeletionRequestedAt.is_not_null())
+            .filter(user::Column::DeletedAt.is_null())
+            .all(&self.connection)
+            .await
+    }
+
+    /// Soft-delete a user and relabel their historical player rows. The user row
+    /// stays (flagged by `deleted_at`) but the pseudo is replaced by a unique
+    /// tombstone so uniqueness holds and no personal data leaks; `players.name`
+    /// is set to [`DEACTIVATED_PLAYER_NAME`] so game history remains coherent.
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn soft_delete(&self, id: Uuid) -> Result<SoftDeleteOutcome, DbErr> {
+        let now = chrono::Utc::now();
+        let tombstone = tombstone_pseudo(id);
+
+        self.connection
+            .transaction(|txn| {
+                Box::pin(async move {
+                    let user_model = user::Entity::find_by_id(id)
+                        .one(txn)
+                        .await?
+                        .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+
+                    let already_deleted = user_model.deleted_at.is_some();
+                    let mut active: user::ActiveModel = user_model.into();
+                    active.pseudo = Set(tombstone);
+                    if !already_deleted {
+                        active.deleted_at = Set(Some(now));
+                    }
+                    active.updated_at = Set(now);
+                    let user = active.update(txn).await?;
+
+                    let rename = player::Entity::update_many()
+                        .col_expr(
+                            player::Column::Name,
+                            Expr::value(DEACTIVATED_PLAYER_NAME.to_string()),
+                        )
+                        .filter(player::Column::UserId.eq(id))
+                        .exec(txn)
+                        .await?;
+
+                    Ok::<_, DbErr>(SoftDeleteOutcome {
+                        user,
+                        players_renamed: rename.rows_affected,
+                    })
+                })
+            })
+            .await
+            .map_err(|e: sea_orm::TransactionError<DbErr>| {
+                DbErr::Custom(format!("Transaction failed: {}", e))
+            })
+    }
 }
 
 #[async_trait]
@@ -208,5 +307,83 @@ impl UserRepoTrait for UserRepository {
 
     async fn update_language(&self, id: Uuid, language: &str) -> Result<User, DbErr> {
         self.update_language(id, language).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, MockDatabase};
+
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap()
+    }
+
+    fn make_user(id: Uuid) -> User {
+        User {
+            id,
+            pseudo: "alice".to_string(),
+            email: "alice@example.com".to_string(),
+            password_hash: "hash".to_string(),
+            last_ip_hash: None,
+            language: "en".to_string(),
+            created_at: now(),
+            updated_at: now(),
+            deletion_requested_at: None,
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn tombstone_pseudo_is_unique_per_uuid() {
+        let id = Uuid::now_v7();
+        assert_eq!(tombstone_pseudo(id), format!("deleted_{id}"));
+    }
+
+    #[test]
+    fn deactivated_placeholder_is_present() {
+        assert_eq!(DEACTIVATED_PLAYER_NAME, "deactivated player");
+    }
+
+    #[tokio::test]
+    async fn request_deletion_sets_timestamp() {
+        let id = Uuid::now_v7();
+        let updated = User {
+            deletion_requested_at: Some(now()),
+            ..make_user(id)
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results(vec![vec![make_user(id)], vec![updated.clone()]])
+            .into_connection();
+        let repo = UserRepository::new(db, 500);
+
+        let result = repo.request_deletion(id).await.expect("request succeeds");
+        assert_eq!(result.deletion_requested_at, updated.deletion_requested_at);
+        assert!(result.deleted_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn request_deletion_is_idempotent_when_already_requested() {
+        let id = Uuid::now_v7();
+        let requested = User {
+            deletion_requested_at: Some(now()),
+            ..make_user(id)
+        };
+        // No exec result configured: an update would fail, so a successful
+        // return proves the early no-op path was taken.
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results(vec![vec![requested.clone()]])
+            .into_connection();
+        let repo = UserRepository::new(db, 500);
+
+        let result = repo
+            .request_deletion(id)
+            .await
+            .expect("idempotent request succeeds");
+        assert_eq!(
+            result.deletion_requested_at,
+            requested.deletion_requested_at
+        );
+        assert!(result.deleted_at.is_none());
     }
 }

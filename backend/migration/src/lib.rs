@@ -18,6 +18,7 @@ mod m20260921_000001_admin_keys;
 mod m20260922_000001_cashout;
 mod m20260923_000001_topup_transactions;
 mod m20260924_000001_topup_order_id_unique;
+mod m20261117_000001_user_soft_delete;
 
 pub struct Migrator;
 
@@ -43,6 +44,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260922_000001_cashout::Migration),
             Box::new(m20260923_000001_topup_transactions::Migration),
             Box::new(m20260924_000001_topup_order_id_unique::Migration),
+            Box::new(m20261117_000001_user_soft_delete::Migration),
         ]
     }
 }

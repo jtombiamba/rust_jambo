@@ -261,6 +261,8 @@ pub mod user {
         pub language: String,
         pub created_at: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
+        pub deletion_requested_at: Option<DateTime<Utc>>,
+        pub deleted_at: Option<DateTime<Utc>>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

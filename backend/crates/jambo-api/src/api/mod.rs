@@ -5,6 +5,7 @@ pub mod cashout;
 pub mod config;
 pub mod contact;
 pub mod dashboard;
+pub mod deletion;
 pub mod dto;
 pub mod fallback;
 pub mod game;

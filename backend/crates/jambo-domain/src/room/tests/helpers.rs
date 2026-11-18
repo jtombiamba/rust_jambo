@@ -517,5 +517,7 @@ pub(super) fn make_user_model(id: Uuid, pseudo: &str) -> jambo_db::models::user:
         language: "en".to_string(),
         created_at: DateTime::from_timestamp(0, 0).unwrap(),
         updated_at: DateTime::from_timestamp(0, 0).unwrap(),
+        deletion_requested_at: None,
+        deleted_at: None,
     }
 }

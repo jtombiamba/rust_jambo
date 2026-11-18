@@ -7,6 +7,7 @@ and the Grafana LGTM observability stack. Play the game at
 
 ## Posts
 
+- **2026-11-16** — [Running n8n on a resource-starved microk8s cluster](blog/n8n-microk8s-blog.md) · `n8n`, `kubernetes`, `microk8s`, `self-hosted`, `ai`, `networking`, `cloudflare`, `postgresql`, `redis`
 - **2026-10-12** — [Your AI Agent Shouldn't Be Able to `rm -rf` Production — Unix Permissions Can Stop It](blog/llm-agent-unix-permission-isolation.md) · `security`, `llm`, `unix`, `permissions`, `postgresql`, `rbac`
 - **2026-10-04** — [Database Backups for a Live Game: One Script, Two Deployment Models](blog/database-backup-management.md) · `postgresql`, `backup`, `restore`, `s3`, `kubernetes`, `docker`
 - **2026-09-25** — [Solid Observability in a Rust API](blog/observability-otel-traces-metrics-logs-rust.md) · `observability`, `opentelemetry`, `rust`, `actix-web`

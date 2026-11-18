@@ -188,6 +188,10 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                             "/cashout",
                             web::get().to(jambo_api::api::cashout::list_cashouts),
                         )
+                        .route(
+                            "/deletion-request",
+                            web::post().to(jambo_api::api::deletion::request_account_deletion),
+                        )
                         .route("/rooms", web::post().to(room::create_room))
                         .route("/rooms", web::get().to(room::list_rooms))
                         .route("/rooms/join", web::post().to(room::join_room))
