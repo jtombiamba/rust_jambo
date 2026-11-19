@@ -72,6 +72,8 @@ enum Command {
     /// Soft-delete a user (GDPR): flags the account, tombstone the pseudo and
     /// relabels their player rows. Accepts a UUID or pseudo.
     DeletionExecute { user: String },
+    /// Email a deactivation confirmation link to a user. Accepts a UUID or pseudo.
+    DeletionSend { user: String },
 }
 
 #[tokio::main]
@@ -155,6 +157,10 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::DeletionExecute { user } => {
             let _admin = authenticate(&admin_repo).await?;
             gdpr::deletion_execute(&db, &cli.format, &user).await
+        }
+        Command::DeletionSend { user } => {
+            let _admin = authenticate(&admin_repo).await?;
+            gdpr::deletion_send_email(&config, &db, &cli.format, &user).await
         }
     }
 }

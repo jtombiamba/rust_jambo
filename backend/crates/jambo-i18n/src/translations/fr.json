@@ -91,6 +91,7 @@
   "email.subject_invitation": "{inviter_name} vous a invité à une partie - Jambo Game",
   "email.subject_freeze_expired": "Votre compte a été dégelé - Jambo Game",
   "email.subject_contact": "Contact : {subject}",
+  "email.subject_deletion_confirm": "Confirmez votre demande de désactivation de compte - Jambo Game",
   "server.internal_error": "Erreur interne du serveur",
   "paypal_page.error_missing_order": "Erreur de paiement — ID de commande manquant",
   "paypal_page.error_session_expired": "Erreur de paiement — session expirée",

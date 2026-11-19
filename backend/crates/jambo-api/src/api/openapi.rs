@@ -79,7 +79,7 @@ impl Modify for SecurityAddon {
         crate::api::topup::paypal_cancel_topup,
         crate::api::cashout::request_cashout,
         crate::api::cashout::list_cashouts,
-        crate::api::deletion::request_account_deletion,
+        crate::api::deletion::confirm_account_deletion,
         crate::api::benchmark::create_benchmark_game,
         crate::api::benchmark::cleanup_benchmark_data,
     ),

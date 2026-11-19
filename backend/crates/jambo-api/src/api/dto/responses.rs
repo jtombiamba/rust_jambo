@@ -223,14 +223,6 @@ pub struct ContactSentResponse {
     pub message: String,
 }
 
-#[derive(Debug, Serialize, utoipa::ToSchema)]
-pub struct DeletionRequestResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub requested_at: Option<String>,
-    pub message: String,
-}
-
 impl From<PlayCardOutcome> for PlayCardResponse {
     fn from(o: PlayCardOutcome) -> Self {
         PlayCardResponse {

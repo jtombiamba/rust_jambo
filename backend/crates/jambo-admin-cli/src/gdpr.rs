@@ -1,4 +1,7 @@
+use jambo_core::config::Config;
+use jambo_core::deletion_token;
 use jambo_db::repositories::UserRepository;
+use jambo_i18n::Lang;
 
 use super::refund::resolve_user;
 
@@ -81,6 +84,51 @@ pub(crate) async fn deletion_execute(
                 .unwrap_or_default()
         );
         println!("  players renamed: {}", outcome.players_renamed);
+    }
+    Ok(())
+}
+
+/// Send the user an email with a button link to confirm their deactivation
+/// request. The link carries a signed token that, once clicked, records the
+/// deletion request so it appears in `deletion-list`.
+pub(crate) async fn deletion_send_email(
+    config: &Config,
+    db: &sea_orm::DatabaseConnection,
+    format: &str,
+    user: &str,
+) -> Result<(), String> {
+    let user_repo = UserRepository::new(db.clone(), 0);
+    let user_id = resolve_user(&user_repo, user).await?;
+    let user = user_repo
+        .find_by_id(user_id)
+        .await
+        .map_err(|e| format!("db: {e}"))?
+        .ok_or_else(|| format!("no user found for '{user}'"))?;
+
+    let token = deletion_token::generate_deletion_token(user.id, &config.jwt_secret)
+        .map_err(|e| format!("token: {e}"))?;
+    let confirm_link = format!("{}/api/deletion/confirm?token={token}", config.frontend_url);
+    let lang = Lang::parse(&user.language).unwrap_or(Lang::En);
+
+    let mailer = jambo_mailer::create_mailer(jambo_mailer::MailerConfig::from_env())
+        .map_err(|e| format!("mailer: {e}"))?;
+    mailer
+        .send_deletion_confirmation(&user.email, &confirm_link, lang)
+        .await
+        .map_err(|e| format!("send: {e}"))?;
+
+    if format == "json" {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "id": user.id.to_string(),
+                "email": user.email,
+                "sent": true,
+            }))
+            .map_err(|e| e.to_string())?
+        );
+    } else {
+        println!("sent deactivation confirmation email to {}", user.email);
     }
     Ok(())
 }

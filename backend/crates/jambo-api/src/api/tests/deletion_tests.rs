@@ -1,19 +1,10 @@
-use crate::api::deletion::request_account_deletion;
-use crate::auth::extractors::AuthenticatedUser;
-use actix_web::{test, web, App, HttpMessage};
+use crate::api::deletion::confirm_account_deletion;
+use actix_web::{test, web, App};
 use jambo_core::config::Config;
-use jambo_core::i18n::Translator;
+use jambo_core::deletion_token;
 use jambo_db::models::User;
 use sea_orm::{DatabaseBackend, MockDatabase};
-use std::sync::Arc;
 use uuid::Uuid;
-
-fn authenticated_user() -> AuthenticatedUser {
-    AuthenticatedUser {
-        user_id: Uuid::now_v7(),
-        pseudo: "TestPlayer".to_string(),
-    }
-}
 
 fn make_user(user_id: Uuid) -> User {
     let now = chrono::Utc::now();
@@ -33,6 +24,7 @@ fn make_user(user_id: Uuid) -> User {
 
 async fn make_app(
     db: sea_orm::DatabaseConnection,
+    config: Config,
 ) -> impl actix_web::dev::Service<
     actix_http::Request,
     Response = actix_web::dev::ServiceResponse,
@@ -41,48 +33,54 @@ async fn make_app(
     actix_web::test::init_service(
         App::new()
             .app_data(web::Data::new(db))
-            .app_data(web::Data::new(Config::default()))
-            .app_data(web::Data::new(Arc::new(Translator::new())))
+            .app_data(web::Data::new(config))
             .service(
-                web::resource("/deletion-request").route(web::post().to(request_account_deletion)),
+                web::resource("/deletion/confirm").route(web::get().to(confirm_account_deletion)),
             ),
     )
     .await
 }
 
 #[actix_web::test]
-async fn request_account_deletion_success() {
-    let user = authenticated_user();
+async fn confirm_account_deletion_records_request() {
+    let user_id = Uuid::now_v7();
+    let config = Config::default();
+    let token = deletion_token::generate_deletion_token(user_id, &config.jwt_secret).unwrap();
+
     let updated = User {
         deletion_requested_at: Some(chrono::Utc::now()),
-        ..make_user(user.user_id)
+        ..make_user(user_id)
     };
     let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_query_results(vec![vec![make_user(user.user_id)], vec![updated]])
+        .append_query_results(vec![vec![make_user(user_id)], vec![updated]])
         .into_connection();
-    let app = make_app(db).await;
+    let app = make_app(db, config).await;
 
-    let req = test::TestRequest::post()
-        .uri("/deletion-request")
+    let req = test::TestRequest::get()
+        .uri(&format!("/deletion/confirm?token={token}"))
         .to_request();
-    req.extensions_mut().insert(user);
     let resp = test::call_service(&app, req).await;
 
     assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(body["success"], true);
-    assert!(body["message"].is_string());
+    let content_type = resp
+        .headers()
+        .get(actix_web::http::header::CONTENT_TYPE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(content_type.contains("text/html"));
 }
 
 #[actix_web::test]
-async fn request_account_deletion_requires_auth() {
+async fn confirm_account_deletion_rejects_invalid_token() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
-    let app = make_app(db).await;
+    let app = make_app(db, Config::default()).await;
 
-    let req = test::TestRequest::post()
-        .uri("/deletion-request")
+    let req = test::TestRequest::get()
+        .uri("/deletion/confirm?token=not-a-token")
         .to_request();
     let resp = test::call_service(&app, req).await;
 
-    assert_eq!(resp.status(), 401);
+    assert_eq!(resp.status(), 400);
 }

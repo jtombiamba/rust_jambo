@@ -106,6 +106,13 @@ impl SmtpMailer {
 
         super::register_cashout_templates(&mut handlebars)?;
 
+        handlebars
+            .register_template_string("en_deletion_confirm", jambo_templates::en::DELETION_CONFIRM)
+            .map_err(|e| format!("Failed to register en/deletion_confirm template: {e}"))?;
+        handlebars
+            .register_template_string("fr_deletion_confirm", jambo_templates::fr::DELETION_CONFIRM)
+            .map_err(|e| format!("Failed to register fr/deletion_confirm template: {e}"))?;
+
         let translator = Arc::new(Translator::new());
 
         Ok(Self {
@@ -532,6 +539,32 @@ impl Mailer for SmtpMailer {
 
         self.send_html(to, "New cashout request".to_string(), html)
             .await
+    }
+
+    async fn send_deletion_confirmation(
+        &self,
+        to_email: &str,
+        confirm_link: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::DeletionConfirmationEmail {
+            confirm_link: confirm_link.to_string(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("deletion_confirm", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        let to: Mailbox = format!("<{to_email}>")
+            .parse()
+            .map_err(|e| format!("Invalid to address: {e}"))?;
+
+        let subject = self.translator.t("email.subject_deletion_confirm", lang);
+
+        self.send_html(to, subject, html).await
     }
 }
 
