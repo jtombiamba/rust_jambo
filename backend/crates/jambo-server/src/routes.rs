@@ -192,6 +192,10 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                             "/cashout",
                             web::get().to(jambo_api::api::cashout::list_cashouts),
                         )
+                        .route(
+                            "/payout/onboarding",
+                            web::post().to(jambo_api::api::cashout::payout_onboarding),
+                        )
                         .route("/rooms", web::post().to(room::create_room))
                         .route("/rooms", web::get().to(room::list_rooms))
                         .route("/rooms/join", web::post().to(room::join_room))
@@ -273,6 +277,29 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                             web::get().to(jambo_api::api::topup::paypal_cancel_topup),
                         ),
                 )
+                .service(
+                    web::scope("/stripe")
+                        .route(
+                            "/return",
+                            web::get().to(jambo_api::api::unfreeze::stripe_return),
+                        )
+                        .route(
+                            "/cancel",
+                            web::get().to(jambo_api::api::unfreeze::stripe_cancel),
+                        )
+                        .route(
+                            "/topup/return",
+                            web::get().to(jambo_api::api::topup::stripe_return_topup),
+                        )
+                        .route(
+                            "/topup/cancel",
+                            web::get().to(jambo_api::api::topup::stripe_cancel_topup),
+                        ),
+                )
+                .service(web::scope("/webhooks").route(
+                    "/stripe",
+                    web::post().to(jambo_api::api::webhooks::stripe_webhook),
+                ))
                 .configure(|cfg| {
                     if state.config.benchmark_mode {
                         cfg.service(

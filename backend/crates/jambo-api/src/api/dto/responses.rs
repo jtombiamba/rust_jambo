@@ -115,7 +115,7 @@ pub struct UserSearchResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct UnfreezeOrderResponse {
     pub order_id: String,
-    pub approval_url: String,
+    pub redirect_url: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -127,7 +127,7 @@ pub struct UnfreezeCaptureResponse {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct TopupOrderResponse {
     pub order_id: String,
-    pub approval_url: String,
+    pub redirect_url: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -146,12 +146,18 @@ pub struct CashoutRequestResponse {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PayoutOnboardingResponse {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct CashoutHistoryItem {
     pub id: Uuid,
     pub credits: i32,
     pub amount_eur_cents: i32,
     pub status: String,
-    pub paypal_email: String,
+    pub payout_method: String,
+    pub payout_destination: String,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub processed_at: Option<String>,

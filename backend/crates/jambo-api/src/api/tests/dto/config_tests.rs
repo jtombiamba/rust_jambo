@@ -3,7 +3,6 @@ use crate::api::dto::config::ClientConfigResponse;
 #[test]
 fn client_config_response_serializes() {
     let response = ClientConfigResponse {
-        paypal_donate_url: "https://paypal.me/x".into(),
         bot_thinking_delay_ms: 1000,
         round_pause_delay_ms: 2000,
         cashout_enabled: true,

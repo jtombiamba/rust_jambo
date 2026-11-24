@@ -25,8 +25,6 @@ fn unconfigured_payment_service() -> Arc<dyn jambo_core::payment::PaymentService
         "".to_string(),
         "".to_string(),
         "sandbox".to_string(),
-        "1.00".to_string(),
-        "1.00".to_string(),
         "https://api-m.sandbox.paypal.com".to_string(),
         "https://api-m.paypal.com".to_string(),
     ))
@@ -187,6 +185,7 @@ async fn create_topup_order_unconfigured_returns_500() {
     let user = authenticated_user();
     let req = actix_web::test::TestRequest::post()
         .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
         .to_request();
     req.extensions_mut().insert(user);
 
@@ -194,6 +193,61 @@ async fn create_topup_order_unconfigured_returns_500() {
     assert_eq!(resp.status(), 500);
     let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
     assert_eq!(body["success"], false);
+}
+
+#[actix_web::test]
+async fn create_topup_order_invalid_bundle_returns_400() {
+    let payment = Arc::new(MockPaymentService::configured());
+    payment.set_provider(jambo_core::payment::PaymentProviderKind::Stripe);
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+    let app = make_topup_app(payment, db).await;
+    let user = authenticated_user();
+    let req = actix_web::test::TestRequest::post()
+        .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = actix_web::test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
+}
+
+#[actix_web::test]
+async fn create_topup_order_stripe_bundle_success() {
+    let user_id = Uuid::new_v4();
+    let payment = Arc::new(MockPaymentService::configured());
+    payment.set_provider(jambo_core::payment::PaymentProviderKind::Stripe);
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results(vec![vec![make_profile(user_id, 100)]])
+        .append_query_results(vec![Vec::<TopupTransaction>::new()])
+        .into_connection();
+    let app = make_topup_app(payment, db).await;
+    let user = authenticated_user();
+    let req = actix_web::test::TestRequest::post()
+        .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 500 }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = actix_web::test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
+    assert_eq!(body["order_id"], "ORDER_1");
+    assert_eq!(body["redirect_url"], "https://checkout.stripe.com/approve");
+}
+
+#[actix_web::test]
+async fn capture_topup_order_rejected_for_stripe_provider() {
+    let payment = Arc::new(MockPaymentService::configured());
+    payment.set_provider(jambo_core::payment::PaymentProviderKind::Stripe);
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+    let app = make_topup_app(payment, db).await;
+    let user = authenticated_user();
+    let req = actix_web::test::TestRequest::post()
+        .uri("/topup/capture")
+        .set_json(serde_json::json!({ "order_id": "ORDER_1" }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = actix_web::test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 400);
 }
 
 #[actix_web::test]
@@ -247,6 +301,7 @@ async fn create_topup_order_success() {
     let user = authenticated_user();
     let req = actix_web::test::TestRequest::post()
         .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = actix_web::test::call_service(&app, req).await;
@@ -264,6 +319,7 @@ async fn create_topup_order_profile_not_found_returns_404() {
     let user = authenticated_user();
     let req = actix_web::test::TestRequest::post()
         .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = actix_web::test::call_service(&app, req).await;
@@ -282,6 +338,7 @@ async fn create_topup_order_frozen_returns_403() {
     let user = authenticated_user();
     let req = actix_web::test::TestRequest::post()
         .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = actix_web::test::call_service(&app, req).await;
@@ -298,6 +355,7 @@ async fn create_topup_order_credit_depleted_returns_400() {
     let user = authenticated_user();
     let req = actix_web::test::TestRequest::post()
         .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = actix_web::test::call_service(&app, req).await;
@@ -315,6 +373,7 @@ async fn create_topup_order_monthly_limit_returns_400() {
     let user = authenticated_user();
     let req = actix_web::test::TestRequest::post()
         .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = actix_web::test::call_service(&app, req).await;
@@ -394,7 +453,7 @@ async fn capture_topup_order_success() {
 async fn create_topup_order_paypal_failure_returns_500() {
     let user_id = Uuid::new_v4();
     let payment = Arc::new(MockPaymentService::configured());
-    payment.set_create_topup_order_result(Err("paypal down".to_string()));
+    payment.set_create_checkout_result(Err("paypal down".to_string()));
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results(vec![vec![make_profile(user_id, 100)]])
         .append_query_results(vec![Vec::<TopupTransaction>::new()])
@@ -403,6 +462,7 @@ async fn create_topup_order_paypal_failure_returns_500() {
     let user = authenticated_user();
     let req = actix_web::test::TestRequest::post()
         .uri("/topup")
+        .set_json(serde_json::json!({ "amount_eur_cents": 100 }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = actix_web::test::call_service(&app, req).await;

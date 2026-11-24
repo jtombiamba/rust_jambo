@@ -50,7 +50,14 @@ pub struct Config {
     pub paypal_topup_amount_eur: String,
     pub paypal_sandbox_url: String,
     pub paypal_live_url: String,
-    pub paypal_donate_url: String,
+    pub payment_provider: String,
+    pub stripe_secret_key: String,
+    pub stripe_publishable_key: String,
+    pub stripe_webhook_secret: String,
+    pub stripe_connect_client_id: String,
+    pub stripe_connect_account_country: String,
+    pub stripe_topup_bundles_eur_cents: String,
+    pub stripe_unfreeze_amount_eur: String,
     pub topup_credit_amount: i32,
     pub topup_monthly_limit_eur_cents: i32,
     pub benchmark_api_token: String,
@@ -187,6 +194,23 @@ impl std::fmt::Debug for Config {
             .field("paypal_topup_amount_eur", &self.paypal_topup_amount_eur)
             .field("paypal_sandbox_url", &self.paypal_sandbox_url)
             .field("paypal_live_url", &self.paypal_live_url)
+            .field("payment_provider", &self.payment_provider)
+            .field("stripe_secret_key", &"***")
+            .field("stripe_publishable_key", &self.stripe_publishable_key)
+            .field("stripe_webhook_secret", &"***")
+            .field("stripe_connect_client_id", &self.stripe_connect_client_id)
+            .field(
+                "stripe_connect_account_country",
+                &self.stripe_connect_account_country,
+            )
+            .field(
+                "stripe_topup_bundles_eur_cents",
+                &self.stripe_topup_bundles_eur_cents,
+            )
+            .field(
+                "stripe_unfreeze_amount_eur",
+                &self.stripe_unfreeze_amount_eur,
+            )
             .field("topup_credit_amount", &self.topup_credit_amount)
             .field(
                 "topup_monthly_limit_eur_cents",
@@ -345,15 +369,22 @@ impl Config {
             .set_default("freeze_duration_secs", "86400")?
             .set_default("default_credit", "100")?
             .set_default("unfreeze_credit_no_payment", "50")?
-            .set_default("unfreeze_credit_with_payment", "250")?
+            .set_default("unfreeze_credit_with_payment", "312")?
             .set_default("paypal_client_id", "")?
             .set_default("paypal_client_secret", "")?
             .set_default("paypal_mode", "sandbox")?
-            .set_default("paypal_unfreeze_amount_eur", "1.00")?
+            .set_default("paypal_unfreeze_amount_eur", "1.25")?
             .set_default("paypal_topup_amount_eur", "1.00")?
             .set_default("paypal_sandbox_url", "https://api-m.sandbox.paypal.com")?
             .set_default("paypal_live_url", "https://api-m.paypal.com")?
-            .set_default("paypal_donate_url", "https://www.paypal.me/jtombi")?
+            .set_default("payment_provider", "paypal")?
+            .set_default("stripe_secret_key", "")?
+            .set_default("stripe_publishable_key", "")?
+            .set_default("stripe_webhook_secret", "")?
+            .set_default("stripe_connect_client_id", "")?
+            .set_default("stripe_connect_account_country", "FR")?
+            .set_default("stripe_topup_bundles_eur_cents", "500,1000")?
+            .set_default("stripe_unfreeze_amount_eur", "1.25")?
             .set_default("topup_credit_amount", "250")?
             .set_default("topup_monthly_limit_eur_cents", "10000")?
             .set_default("benchmark_api_token", "")?
@@ -554,22 +585,31 @@ impl Config {
                 .parse()
                 .unwrap_or(50),
             unfreeze_credit_with_payment: env::var("UNFREEZE_CREDIT_WITH_PAYMENT")
-                .unwrap_or_else(|_| "250".to_string())
+                .unwrap_or_else(|_| "312".to_string())
                 .parse()
-                .unwrap_or(250),
+                .unwrap_or(312),
             paypal_client_id: env::var("PAYPAL_CLIENT_ID").unwrap_or_default(),
             paypal_client_secret: env::var("PAYPAL_CLIENT_SECRET").unwrap_or_default(),
             paypal_mode: env::var("PAYPAL_MODE").unwrap_or_else(|_| "sandbox".to_string()),
             paypal_unfreeze_amount_eur: env::var("PAYPAL_UNFREEZE_AMOUNT_EUR")
-                .unwrap_or_else(|_| "1.00".to_string()),
+                .unwrap_or_else(|_| "1.25".to_string()),
             paypal_topup_amount_eur: env::var("PAYPAL_TOPUP_AMOUNT_EUR")
                 .unwrap_or_else(|_| "1.00".to_string()),
             paypal_sandbox_url: env::var("PAYPAL_SANDBOX_URL")
                 .unwrap_or_else(|_| "https://api-m.sandbox.paypal.com".to_string()),
             paypal_live_url: env::var("PAYPAL_LIVE_URL")
                 .unwrap_or_else(|_| "https://api-m.paypal.com".to_string()),
-            paypal_donate_url: env::var("PAYPAL_DONATE_URL")
-                .unwrap_or_else(|_| "https://www.paypal.me/jtombi".to_string()),
+            payment_provider: env::var("PAYMENT_PROVIDER").unwrap_or_else(|_| "paypal".to_string()),
+            stripe_secret_key: env::var("STRIPE_SECRET_KEY").unwrap_or_default(),
+            stripe_publishable_key: env::var("STRIPE_PUBLISHABLE_KEY").unwrap_or_default(),
+            stripe_webhook_secret: env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_default(),
+            stripe_connect_client_id: env::var("STRIPE_CONNECT_CLIENT_ID").unwrap_or_default(),
+            stripe_connect_account_country: env::var("STRIPE_CONNECT_ACCOUNT_COUNTRY")
+                .unwrap_or_else(|_| "FR".to_string()),
+            stripe_topup_bundles_eur_cents: env::var("STRIPE_TOPUP_BUNDLES_EUR_CENTS")
+                .unwrap_or_else(|_| "500,1000".to_string()),
+            stripe_unfreeze_amount_eur: env::var("STRIPE_UNFREEZE_AMOUNT_EUR")
+                .unwrap_or_else(|_| "1.25".to_string()),
             topup_credit_amount: env::var("TOPUP_CREDIT_AMOUNT")
                 .unwrap_or_else(|_| "250".to_string())
                 .parse()

@@ -46,5 +46,6 @@ utoipa = { version = "6", features = ["actix_extras", "uuid", "chrono", "macros"
 [dev-dependencies]
 sea-orm = { version = "2.0.0", features = ["mock"] }
 actix-rt = "2.9"
+hmac = "0.12"
 jambo-domain = { path = "../jambo-domain", features = ["testing"] }
 jambo-test-helpers = { path = "../jambo-test-helpers" }

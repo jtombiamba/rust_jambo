@@ -117,7 +117,14 @@ pub struct CaptureOrderRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct TopupOrderRequest {
+    pub amount_eur_cents: i32,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CashoutRequest {
     pub credits: i32,
-    pub paypal_email: String,
+    pub payout_method: String,
+    #[serde(default)]
+    pub payout_destination: String,
 }

@@ -13,7 +13,6 @@ use jambo_domain::game::constants::{BOT_THINKING_DELAY_MS, ROUND_PAUSE_DELAY_MS}
 #[get("/config")]
 pub async fn client_config(config: web::Data<Config>) -> HttpResponse {
     let response = ClientConfigResponse {
-        paypal_donate_url: config.paypal_donate_url.clone(),
         bot_thinking_delay_ms: *BOT_THINKING_DELAY_MS,
         round_pause_delay_ms: *ROUND_PAUSE_DELAY_MS,
         cashout_enabled: config.cashout_enabled,

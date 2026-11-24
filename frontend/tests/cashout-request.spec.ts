@@ -40,7 +40,6 @@ test.describe('Cashout request from profile', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          paypal_donate_url: 'https://paypal.com/donate',
           bot_thinking_delay_ms: 800,
           round_pause_delay_ms: 2500,
           cashout_enabled: true,
@@ -150,7 +149,8 @@ test.describe('Cashout request from profile', () => {
               credits: 250,
               amount_eur_cents: 100,
               status: 'requested',
-              paypal_email: 'payer@example.com',
+              payout_method: 'paypal_email',
+              payout_destination: 'payer@example.com',
               created_at: '2026-09-23T10:00:00Z',
               processed_at: null,
             },

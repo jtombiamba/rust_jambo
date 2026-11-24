@@ -4,16 +4,21 @@ use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::api::dto::requests::CaptureOrderRequest;
+use crate::api::dto::requests::{CaptureOrderRequest, TopupOrderRequest};
 use crate::api::dto::responses::{ApiErrorResponse, TopupCaptureResponse, TopupOrderResponse};
-use crate::api::payment_limits::{current_month_start, monthly_limit_exceeded, parse_eur_to_cents};
+use crate::api::payment_limits::{
+    credits_for_amount, current_month_start, monthly_limit_exceeded, parse_bundles_eur_cents,
+    parse_eur_to_cents,
+};
 use crate::api::unfreeze::{close_window_error_html, close_window_html};
+use crate::api::webhooks::{META_AMOUNT_CENTS, META_CREDITS, META_KIND, META_VALUE_TOPUP};
 use crate::auth::extractors::AuthenticatedUser;
 use jambo_core::config::Config;
 use jambo_core::error::AppError;
 use jambo_core::observability::metrics::{
     GAME_STATE_CACHE_WRITE_ERRORS_TOTAL, PAYMENT_TOPUP_DURATION_SECONDS, PAYMENT_TOPUP_TOTAL,
 };
+use jambo_core::payment::{CheckoutContext, PaymentProviderKind};
 use jambo_db::models::TopupTransactionKind;
 use jambo_db::repositories::{PlayerProfileRepository, TopupTransactionRepository};
 use jambo_domain::messaging::RedisClient;
@@ -23,11 +28,45 @@ const TOPUP_ORDER_PREFIX: &str = "topup_order";
 const TOPUP_TTL_SECS: u64 = 86400;
 const TOPUP_IDEM_PREFIX: &str = "topup";
 
+/// Resolve the euro-cent amount for a top-up request and its credit value.
+///
+/// Stripe accepts only the configured bundle amounts; PayPal only accepts the
+/// single legacy amount. Returns the validated amount.
+fn resolve_topup_amount(
+    provider: PaymentProviderKind,
+    config: &Config,
+    amount: i32,
+) -> Result<i32, AppError> {
+    match provider {
+        PaymentProviderKind::Stripe => {
+            let bundles = parse_bundles_eur_cents(&config.stripe_topup_bundles_eur_cents);
+            if bundles.is_empty() || !bundles.contains(&amount) {
+                return Err(AppError::BadRequestParams {
+                    key: "payment.invalid_topup_bundle",
+                    params: vec![("{bundles}", config.stripe_topup_bundles_eur_cents.clone())],
+                });
+            }
+            Ok(amount)
+        }
+        PaymentProviderKind::Paypal => {
+            let legacy = parse_eur_to_cents(&config.paypal_topup_amount_eur);
+            if amount != legacy {
+                return Err(AppError::BadRequestParams {
+                    key: "payment.invalid_topup_amount",
+                    params: vec![("{euros}", config.paypal_topup_amount_eur.clone())],
+                });
+            }
+            Ok(amount)
+        }
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/api/me/topup",
     tag = "payments",
     security(("cookie_auth" = [])),
+    request_body = TopupOrderRequest,
     responses(
         (status = 200, description = "Top-up order created", body = TopupOrderResponse),
         (status = 400, description = "Top-up not needed", body = ApiErrorResponse),
@@ -37,6 +76,7 @@ const TOPUP_IDEM_PREFIX: &str = "topup";
 )]
 pub async fn create_topup_order(
     auth_user: AuthenticatedUser,
+    body: web::Json<TopupOrderRequest>,
     payment_service: web::Data<Arc<dyn jambo_core::payment::PaymentServiceTrait>>,
     config: web::Data<Config>,
     redis: web::Data<Option<RedisClient>>,
@@ -45,6 +85,13 @@ pub async fn create_topup_order(
     if !payment_service.is_configured() {
         return AppError::Internal("Payment service is not configured".into()).error_response();
     }
+
+    let provider = payment_service.provider();
+    let amount_eur_cents = match resolve_topup_amount(provider, &config, body.amount_eur_cents) {
+        Ok(a) => a,
+        Err(e) => return e.error_response(),
+    };
+    let credit_add = credits_for_amount(amount_eur_cents, config.cashout_credits_per_eur);
 
     let profile_repo = jambo_db::repositories::PlayerProfileRepository::new(db.get_ref().clone());
     let profile = match profile_repo.find_by_user_id(auth_user.user_id).await {
@@ -73,33 +120,28 @@ pub async fn create_topup_order(
         Ok(cents) => cents,
         Err(e) => return AppError::Database(e).error_response(),
     };
-    let upcoming_cents = parse_eur_to_cents(&config.paypal_topup_amount_eur);
     if monthly_limit_exceeded(
         spent_cents,
-        upcoming_cents,
+        amount_eur_cents,
         config.topup_monthly_limit_eur_cents,
     ) {
         return AppError::BadRequest("payment.monthly_limit_reached").error_response();
     }
 
-    let return_url = format!(
-        "{}/api/paypal/topup/return",
-        config.frontend_url.trim_end_matches('/')
-    );
-    let cancel_url = format!(
-        "{}/api/paypal/topup/cancel",
-        config.frontend_url.trim_end_matches('/')
-    );
+    let (return_url, cancel_url) = return_cancel_urls(&config, provider);
+
+    let ctx = CheckoutContext::new(amount_eur_cents, "Credit top-up", &return_url, &cancel_url)
+        .with_client_reference_id(auth_user.user_id.to_string())
+        .with_metadata(META_KIND, META_VALUE_TOPUP)
+        .with_metadata(META_AMOUNT_CENTS, amount_eur_cents.to_string())
+        .with_metadata(META_CREDITS, credit_add.to_string());
 
     let create_start = Instant::now();
-    let order = match payment_service
-        .create_topup_order(&return_url, &cancel_url)
-        .await
-    {
+    let order = match payment_service.create_checkout(&ctx).await {
         Ok(o) => o,
         Err(e) => {
             tracing::error!(
-                "PayPal create topup order failed for user {}: {}",
+                "create topup order failed for user {}: {}",
                 auth_user.user_id,
                 e
             );
@@ -132,7 +174,7 @@ pub async fn create_topup_order(
 
     HttpResponse::Ok().json(TopupOrderResponse {
         order_id: order.order_id,
-        approval_url: order.approval_url,
+        redirect_url: order.redirect_url,
     })
 }
 
@@ -158,6 +200,9 @@ pub async fn capture_topup_order(
 ) -> HttpResponse {
     if !payment_service.is_configured() {
         return AppError::Internal("Payment service is not configured".into()).error_response();
+    }
+    if payment_service.provider() != PaymentProviderKind::Paypal {
+        return AppError::BadRequest("payment.capture_not_applicable").error_response();
     }
 
     let order_id = &body.order_id;
@@ -384,14 +429,47 @@ pub async fn paypal_cancel_topup() -> HttpResponse {
     close_window_html("Payment Cancelled")
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stripe/topup/return",
+    tag = "payments",
+    responses((status = 200, description = "Top-up result page", content_type = "text/html"))
+)]
+pub async fn stripe_return_topup() -> HttpResponse {
+    close_window_html("Payment Complete — Credits Added")
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stripe/topup/cancel",
+    tag = "payments",
+    responses((status = 200, description = "Top-up cancelled page", content_type = "text/html"))
+)]
+pub async fn stripe_cancel_topup() -> HttpResponse {
+    close_window_html("Payment Cancelled")
+}
+
+/// Build the provider-appropriate return/cancel redirect URLs.
+pub(crate) fn return_cancel_urls(
+    config: &Config,
+    provider: PaymentProviderKind,
+) -> (String, String) {
+    let base = config.frontend_url.trim_end_matches('/');
+    match provider {
+        PaymentProviderKind::Stripe => (
+            format!("{base}/api/stripe/return"),
+            format!("{base}/api/stripe/cancel"),
+        ),
+        PaymentProviderKind::Paypal => (
+            format!("{base}/api/paypal/return"),
+            format!("{base}/api/paypal/cancel"),
+        ),
+    }
+}
+
 /// Record a successful top-up and atomically credit the user in a single
-/// database transaction.
-///
-/// Idempotency is enforced by the `UNIQUE` constraint on `topup_transactions.
-/// order_id`: if a row with this `order_id` already exists, the insert is a
-/// no-op and no credit is applied. The Redis "completed" flag and dashboard
-/// cache invalidation are best-effort optimisations only; they never gate the
-/// credit.
+/// database transaction. Idempotency is enforced by the `UNIQUE` constraint on
+/// `topup_transactions.order_id`; Redis flags are best-effort only.
 pub(crate) async fn finalize_topup(
     db: &web::Data<sea_orm::DatabaseConnection>,
     redis_client: Option<&mut RedisClient>,

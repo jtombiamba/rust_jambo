@@ -45,7 +45,7 @@ A real‑time, multiplayer card game (Jambo) with:
 | I18n | Backend: `Translator` + JSON; Frontend: `i18next` |
 | Metrics | Prometheus (`/metrics` endpoint, 42+ families) |
 | Tracing | `tracing` + CorrelationId (HTTP → Redis → RabbitMQ → WS) |
-| Payments | PayPal REST API (unfreeze + topup + cashout payouts) |
+| Payments | Stripe / PayPal REST API (unfreeze + topup + cashout payouts) |
 
 ### Game Rules Summary
 
@@ -62,9 +62,10 @@ A real‑time, multiplayer card game (Jambo) with:
   is offered a claim (immediate win) or may decline; an unclaimed combo held by
   the winner upgrades the result to `Kora`.
 - **Cashout**: player requests a payout (multiple of `CASHOUT_CREDITS_PER_EUR`,
-  min `CASHOUT_MIN_CREDITS`, cap `CASHOUT_MAX_EUR_CENTS`) to a PayPal account.
+  min `CASHOUT_MIN_CREDITS`, cap `CASHOUT_MAX_EUR_CENTS`) to a PayPal email or a
+  linked Stripe Connect account.
   Credits are reserved and the profile locked until an admin approves/rejects
-  (1‑day auto‑reject fallback); payout via PayPal Payouts.
+  (1‑day auto‑reject fallback); payout via PayPal Payouts or Stripe Transfers.
 
 **Card index → suit/rank mapping:**
 
@@ -406,7 +407,7 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `config.rs` | `Config` struct built from env vars (database, RabbitMQ, Redis, JWT, CORS, rate limits, game settings, PayPal, benchmarks) |
 | `i18n/` | `Lang` enum (En, Fr), `Translator`, `I18n` extractor, language endpoints (re-exports `jambo-i18n`) |
 | `observability/` | `CorrelationId`, correlation middleware, tracing init, `metrics` (re-exported from `jambo-metrics`) |
-| `payment/` | `PaymentService` wrapping the PayPal REST API (`/v2/checkout/orders`) |
+| `payment/` | `PaymentService` (PayPal) + `StripeService` behind the `PaymentServiceTrait` seam (`/v2/checkout/orders`, `/v1/checkout/sessions`) |
 | `error/` | `AppError`, `GameError` (wraps `ValidationError`, `NotFound`, etc.) with `ResponseError` |
 
 ### 3.5 Supporting crates
@@ -462,10 +463,12 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `GET` | `/active-game` | Current active game |
 | `GET` | `/invitations` | Pending game invitations |
 | `GET` | `/leaderboard` | Global leaderboard (Redis sorted set) |
-| `POST` | `/unfreeze` | Create PayPal unfreeze order |
+| `POST` | `/unfreeze` | Create unfreeze checkout (Stripe/PayPal) |
 | `POST` | `/unfreeze/capture` | Capture PayPal unfreeze order |
-| `POST` | `/topup` | Create PayPal topup order |
+| `POST` | `/topup` | Create topup checkout (Stripe/PayPal) |
 | `POST` | `/topup/capture` | Capture PayPal topup order |
+| `POST` | `/webhooks/stripe` | Stripe webhook (checkout + connect) |
+| `POST` | `/me/payout/onboarding` | Start Stripe Connect onboarding |
 | `POST` | `/cashout` | Request cashout |
 | `GET` | `/cashout` | List cashout requests |
 | `POST` | `/rooms` | Create room |
@@ -517,6 +520,10 @@ cryptographically random per call, is not stored in code or config, and each inv
 | `GET` | `/api/paypal/cancel` | Unfreeze cancel URL |
 | `GET` | `/api/paypal/topup/return` | Topup return URL |
 | `GET` | `/api/paypal/topup/cancel` | Topup cancel URL |
+| `GET` | `/api/stripe/return` | Stripe unfreeze success page |
+| `GET` | `/api/stripe/cancel` | Stripe unfreeze cancel page |
+| `GET` | `/api/stripe/topup/return` | Stripe topup success page |
+| `GET` | `/api/stripe/topup/cancel` | Stripe topup cancel page |
 
 ### 4.7 Game Event Types (Serialized as JSON)
 
@@ -2161,8 +2168,9 @@ erDiagram
     int credits
     int amount_eur_cents
     string status
-    string paypal_email
-    string paypal_payout_batch_id
+    string payout_method
+    string payout_destination
+    string payout_reference
     string admin_note
     uuid processed_by
     datetime created_at

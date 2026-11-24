@@ -17,7 +17,6 @@ async fn client_config_returns_config_values() {
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body["paypal_donate_url"].is_string());
     assert!(body["bot_thinking_delay_ms"].is_u64());
     assert!(body["cashout_enabled"].is_boolean());
     assert!(body["cashout_min_credits"].is_i64());

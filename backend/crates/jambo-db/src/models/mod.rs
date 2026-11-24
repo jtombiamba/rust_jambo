@@ -259,6 +259,8 @@ pub mod user {
         pub password_hash: String,
         pub last_ip_hash: Option<String>,
         pub language: String,
+        pub stripe_connect_account_id: Option<String>,
+        pub stripe_connect_account_status: super::ConnectAccountStatus,
         pub created_at: DateTime<Utc>,
         pub updated_at: DateTime<Utc>,
         pub deletion_requested_at: Option<DateTime<Utc>>,
@@ -559,8 +561,8 @@ pub mod game_run_event {
 }
 
 mod cashout;
-pub use cashout::{admin_key, cashout_request, CashoutStatus};
-
+pub use cashout::{admin_key, cashout_request, CashoutStatus, PayoutMethod};
+pub use cashout::{evaluate_account_status, ConnectAccountStatus};
 mod topup;
 pub use topup::{topup_transaction, TopupTransactionKind};
 

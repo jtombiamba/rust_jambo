@@ -9,12 +9,15 @@ use crate::api::dto::responses::{
     ApiErrorResponse, UnfreezeCaptureResponse, UnfreezeOrderResponse,
 };
 use crate::api::payment_limits::{current_month_start, monthly_limit_exceeded, parse_eur_to_cents};
+use crate::api::topup::return_cancel_urls;
+use crate::api::webhooks::{META_AMOUNT_CENTS, META_CREDITS, META_KIND, META_VALUE_UNFREEZE};
 use crate::auth::extractors::AuthenticatedUser;
 use jambo_core::config::Config;
 use jambo_core::error::AppError;
 use jambo_core::observability::metrics::{
     PAYMENT_UNFREEZE_DURATION_SECONDS, PAYMENT_UNFREEZE_TOTAL,
 };
+use jambo_core::payment::{CheckoutContext, PaymentProviderKind, PaymentServiceTrait};
 use jambo_db::models::TopupTransactionKind;
 use jambo_db::repositories::{PlayerProfileRepository, TopupTransactionRepository};
 use jambo_domain::messaging::RedisClient;
@@ -23,6 +26,14 @@ pub(crate) const UNFREEZE_CAPTURE_PREFIX: &str = "unfreeze_capture";
 pub(crate) const UNFREEZE_ORDER_PREFIX: &str = "unfreeze_order";
 const UNFREEZE_TTL_SECS: u64 = 86400;
 pub(crate) const UNFREEZE_IDEM_PREFIX: &str = "unfreeze";
+
+fn unfreeze_amount_cents(provider: PaymentProviderKind, config: &Config) -> i32 {
+    let amount = match provider {
+        PaymentProviderKind::Stripe => &config.stripe_unfreeze_amount_eur,
+        PaymentProviderKind::Paypal => &config.paypal_unfreeze_amount_eur,
+    };
+    parse_eur_to_cents(amount)
+}
 
 pub(crate) fn close_window_html(title: &str) -> HttpResponse {
     window_html(HttpResponse::Ok(), title)
@@ -57,7 +68,7 @@ fn window_html(mut status: HttpResponseBuilder, title: &str) -> HttpResponse {
 )]
 pub async fn create_unfreeze_order(
     auth_user: AuthenticatedUser,
-    payment_service: web::Data<Arc<dyn jambo_core::payment::PaymentServiceTrait>>,
+    payment_service: web::Data<Arc<dyn PaymentServiceTrait>>,
     config: web::Data<Config>,
     redis: web::Data<Option<RedisClient>>,
     db: web::Data<sea_orm::DatabaseConnection>,
@@ -65,6 +76,10 @@ pub async fn create_unfreeze_order(
     if !payment_service.is_configured() {
         return AppError::Internal("Payment service is not configured".into()).error_response();
     }
+
+    let provider = payment_service.provider();
+    let amount_eur_cents = unfreeze_amount_cents(provider, &config);
+    let credit = config.unfreeze_credit_with_payment;
 
     let topup_repo = TopupTransactionRepository::new(db.get_ref().clone());
     let spent_cents = match topup_repo
@@ -74,30 +89,33 @@ pub async fn create_unfreeze_order(
         Ok(cents) => cents,
         Err(e) => return AppError::Database(e).error_response(),
     };
-    let upcoming_cents = parse_eur_to_cents(&config.paypal_unfreeze_amount_eur);
     if monthly_limit_exceeded(
         spent_cents,
-        upcoming_cents,
+        amount_eur_cents,
         config.topup_monthly_limit_eur_cents,
     ) {
         return AppError::BadRequest("payment.monthly_limit_reached").error_response();
     }
 
-    let return_url = format!(
-        "{}/api/paypal/return",
-        config.frontend_url.trim_end_matches('/')
-    );
-    let cancel_url = format!(
-        "{}/api/paypal/cancel",
-        config.frontend_url.trim_end_matches('/')
-    );
+    let (return_url, cancel_url) = return_cancel_urls(&config, provider);
+
+    let ctx = CheckoutContext::new(
+        amount_eur_cents,
+        "Account unfreeze - 1 hour access",
+        &return_url,
+        &cancel_url,
+    )
+    .with_client_reference_id(auth_user.user_id.to_string())
+    .with_metadata(META_KIND, META_VALUE_UNFREEZE)
+    .with_metadata(META_AMOUNT_CENTS, amount_eur_cents.to_string())
+    .with_metadata(META_CREDITS, credit.to_string());
 
     let create_start = Instant::now();
-    let order = match payment_service.create_order(&return_url, &cancel_url).await {
+    let order = match payment_service.create_checkout(&ctx).await {
         Ok(o) => o,
         Err(e) => {
             tracing::error!(
-                "PayPal create order failed for user {}: {}",
+                "create unfreeze order failed for user {}: {}",
                 auth_user.user_id,
                 e
             );
@@ -126,7 +144,7 @@ pub async fn create_unfreeze_order(
 
     HttpResponse::Ok().json(UnfreezeOrderResponse {
         order_id: order.order_id,
-        approval_url: order.approval_url,
+        redirect_url: order.redirect_url,
     })
 }
 
@@ -152,6 +170,9 @@ pub async fn capture_unfreeze_order(
 ) -> HttpResponse {
     if !payment_service.is_configured() {
         return AppError::Internal("Payment service is not configured".into()).error_response();
+    }
+    if payment_service.provider() != PaymentProviderKind::Paypal {
+        return AppError::BadRequest("payment.capture_not_applicable").error_response();
     }
 
     let order_id = &body.order_id;
@@ -352,6 +373,26 @@ pub async fn paypal_return(
     responses((status = 200, description = "Payment cancelled page", content_type = "text/html"))
 )]
 pub async fn paypal_cancel() -> HttpResponse {
+    close_window_html("Payment Cancelled")
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stripe/return",
+    tag = "payments",
+    responses((status = 200, description = "Payment result page", content_type = "text/html"))
+)]
+pub async fn stripe_return() -> HttpResponse {
+    close_window_html("Payment Complete — Account Unfrozen")
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/stripe/cancel",
+    tag = "payments",
+    responses((status = 200, description = "Payment cancelled page", content_type = "text/html"))
+)]
+pub async fn stripe_cancel() -> HttpResponse {
     close_window_html("Payment Cancelled")
 }
 

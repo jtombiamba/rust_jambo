@@ -13,7 +13,7 @@ use jambo_api::auth::middleware::AuthMiddleware;
 use jambo_api::websocket::manager::WebSocketManager;
 use jambo_core::config::Config;
 use jambo_core::i18n::Translator;
-use jambo_core::payment::{PaymentService, PaymentServiceTrait};
+use jambo_core::payment::{payment_service_from_config, PaymentServiceTrait};
 use jambo_db::repositories::{
     CashoutRepository, DashboardRepository, GameCardRepository, GameRepository, UserRepository,
 };
@@ -193,15 +193,7 @@ pub async fn bootstrap(config: &Config) -> Result<AppState, Box<dyn std::error::
     let auth_middleware = AuthMiddleware::new(redis_client.clone(), translator.clone());
     let rate_limit_configs = RateLimitConfigs::from_config(config);
 
-    let payment_service: Arc<dyn PaymentServiceTrait> = Arc::new(PaymentService::new(
-        config.paypal_client_id.clone(),
-        config.paypal_client_secret.clone(),
-        config.paypal_mode.clone(),
-        config.paypal_unfreeze_amount_eur.clone(),
-        config.paypal_topup_amount_eur.clone(),
-        config.paypal_sandbox_url.clone(),
-        config.paypal_live_url.clone(),
-    ));
+    let payment_service: Arc<dyn PaymentServiceTrait> = payment_service_from_config(config);
 
     let room_service_concrete = Arc::new(RoomService::new(
         db_connection.clone(),

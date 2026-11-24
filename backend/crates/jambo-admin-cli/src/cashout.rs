@@ -1,7 +1,8 @@
 use uuid::Uuid;
 
 use jambo_core::config::Config;
-use jambo_db::models::CashoutStatus;
+use jambo_core::payment::{PaymentService, StripeService};
+use jambo_db::models::{CashoutStatus, PayoutMethod};
 use jambo_db::repositories::{AdminReportRepository, CashoutRepository, UserRepository};
 
 use super::refund::{print_report_table, resolve_user};
@@ -39,7 +40,8 @@ pub(crate) async fn cashout_list(
                 "credits": r.credits,
                 "amount_eur_cents": r.amount_eur_cents,
                 "status": r.status.to_string(),
-                "paypal_email": r.paypal_email,
+                "payout_method": r.payout_method.to_string(),
+                "payout_destination": r.payout_destination,
                 "created_at": r.created_at.to_rfc3339(),
                 "processed_at": r.processed_at.map(|t| t.to_rfc3339()),
             })
@@ -54,8 +56,14 @@ pub(crate) async fn cashout_list(
     } else {
         for r in &requests {
             println!(
-                "{}\t{}\t{}\t{} credits\t{}\t{}",
-                r.id, r.user_id, r.status, r.credits, r.paypal_email, r.created_at
+                "{}\t{}\t{}\t{} credits\t{}\t{}\t{}",
+                r.id,
+                r.user_id,
+                r.status,
+                r.credits,
+                r.payout_method,
+                r.payout_destination,
+                r.created_at
             );
         }
     }
@@ -83,7 +91,8 @@ pub(crate) async fn cashout_show(
                 "credits": request.credits,
                 "amount_eur_cents": request.amount_eur_cents,
                 "status": request.status.to_string(),
-                "paypal_email": request.paypal_email,
+                "payout_method": request.payout_method.to_string(),
+                "payout_destination": request.payout_destination,
                 "created_at": request.created_at.to_rfc3339(),
             }))
             .map_err(|e| e.to_string())?
@@ -97,7 +106,8 @@ pub(crate) async fn cashout_show(
             request.amount_eur_cents as f64 / 100.0
         );
         println!("  status:    {}", request.status);
-        println!("  paypal:    {}", request.paypal_email);
+        println!("  method:    {}", request.payout_method);
+        println!("  destination: {}", request.payout_destination);
         println!("  created:   {}", request.created_at);
     }
 
@@ -132,28 +142,47 @@ pub(crate) async fn cashout_pay(
         return Err("request must be approved before it can be paid".to_string());
     }
 
-    let payment = jambo_core::payment::PaymentService::new(
-        config.paypal_client_id.clone(),
-        config.paypal_client_secret.clone(),
-        config.paypal_mode.clone(),
-        config.paypal_unfreeze_amount_eur.clone(),
-        config.paypal_topup_amount_eur.clone(),
-        config.paypal_sandbox_url.clone(),
-        config.paypal_live_url.clone(),
-    );
-    let batch_id = payment
-        .create_payout(
-            &request.paypal_email,
-            request.amount_eur_cents,
-            &request.id.to_string(),
-        )
-        .await
-        .map_err(|e| format!("paypal payout failed: {e}"))?;
-
-    repo.mark_paid(id, &batch_id, admin)
-        .await
-        .map_err(|e| format!("mark paid failed: {e}"))?;
-    println!("paid {id} (payout batch {batch_id})");
+    match request.payout_method {
+        PayoutMethod::PaypalEmail => {
+            let payment = PaymentService::new(
+                config.paypal_client_id.clone(),
+                config.paypal_client_secret.clone(),
+                config.paypal_mode.clone(),
+                config.paypal_sandbox_url.clone(),
+                config.paypal_live_url.clone(),
+            );
+            let reference = payment
+                .create_payout(
+                    &request.payout_destination,
+                    request.amount_eur_cents,
+                    &request.id.to_string(),
+                )
+                .await
+                .map_err(|e| format!("paypal payout failed: {e}"))?;
+            repo.mark_paid(id, &reference, admin)
+                .await
+                .map_err(|e| format!("mark paid failed: {e}"))?;
+            println!("paid {id} (payout reference {reference})");
+        }
+        PayoutMethod::StripeConnect => {
+            let stripe = StripeService::new(
+                config.stripe_secret_key.clone(),
+                config.stripe_connect_client_id.clone(),
+            );
+            let reference = stripe
+                .create_transfer(
+                    &request.payout_destination,
+                    request.amount_eur_cents,
+                    &request.id.to_string(),
+                )
+                .await
+                .map_err(|e| format!("stripe transfer failed: {e}"))?;
+            repo.mark_processing(id, &reference, admin)
+                .await
+                .map_err(|e| format!("mark processing failed: {e}"))?;
+            println!("processing {id} (transfer {reference})");
+        }
+    }
     Ok(())
 }
 

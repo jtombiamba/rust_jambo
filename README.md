@@ -1,6 +1,6 @@
 # Jambo — Real-Time Multiplayer Card Game
 
-A full-stack, real-time trick-taking card game built with **Rust** and **React**. Supports solo play against AI bots, multiplayer games with invitations, persistent rooms with game runs, PayPal payments, and end-to-end observability.
+A full-stack, real-time trick-taking card game built with **Rust** and **React**. Supports solo play against AI bots, multiplayer games with invitations, persistent rooms with game runs, Stripe/PayPal payments, and end-to-end observability.
 
 This project is a complete rewrite of the original Python/Django **Jambo** implementation, ported to Rust for performance, safety, and scalability.
 
@@ -14,7 +14,7 @@ This project is a complete rewrite of the original Python/Django **Jambo** imple
 - **6 AI strategies** — zone-based bot opponents (LongUp/Down, MidUp/Down, ShortUp/Down)
 - **Real‑time WebSockets** — Redis Pub/Sub with sharded subscribers for game and room events
 - **KORA / DOUBLE_KORA** — special game-ending conditions with multiplied stakes
-- **PayPal integration** — account unfreeze and credit topup
+- **Stripe / PayPal integration** — account unfreeze and credit topup (configurable `PAYMENT_PROVIDER`)
 - **Rate limiting** — Redis-backed sliding window per endpoint
 - **Idempotency** — per-player request deduplication
 - **Internationalization** — English and French (backend + frontend)
@@ -57,7 +57,7 @@ continue. A winner holding an unclaimed combination ends the game as a Kora.
 - Request a cashout from your profile and choose how many credits to withdraw.
 - 250 credits = 1 EUR; amounts must be a whole multiple of 250 (min 250 credits).
 - Starting cap: €20 per payout.
-- You provide a PayPal email to receive the money.
+- Payouts go to a PayPal email or a linked Stripe Connect bank account.
 - While a request is pending, the credits are reserved and your account is
   locked from playing until an admin approves or rejects it (auto-rejected and
   refunded after 1 day with no decision).
@@ -266,8 +266,9 @@ Builds and starts all services with health checks and dependency ordering.
 | `GET` | `/active-game` | Current active game |
 | `GET` | `/invitations` | Pending invitations |
 | `GET` | `/leaderboard` | Global leaderboard |
-| `POST` | `/unfreeze` + `/unfreeze/capture` | PayPal unfreeze |
-| `POST` | `/topup` + `/topup/capture` | PayPal topup |
+| `POST` | `/unfreeze` + `/unfreeze/capture` | Unfreeze account (Stripe/PayPal) |
+| `POST` | `/topup` + `/topup/capture` | Credit topup (Stripe/PayPal) |
+| `POST` | `/webhooks/stripe` | Stripe webhook (checkout + connect) |
 | `POST` / `GET` | `/rooms` | Create / list rooms |
 | `POST` | `/rooms/join` | Join room by code |
 | `GET` | `/rooms/{id}` | Room details |
@@ -329,8 +330,9 @@ jambo/
 │   │   │   ├── game.rs         #   Legacy play endpoint
 │   │   │   ├── quickie.rs      #   Anonymous quick game
 │   │   │   ├── room.rs         #   Room + game run management
-│   │   │   ├── topup.rs        #   PayPal topup
-│   │   │   ├── unfreeze.rs     #   PayPal unfreeze
+│   │   │   ├── topup.rs        #   Credit topup (Stripe/PayPal)
+│   │   │   ├── unfreeze.rs     #   Account unfreeze (Stripe/PayPal)
+│   │   │   ├── webhooks.rs     #   Stripe webhook receiver
 │   │   │   ├── middleware/     #   Rate limiter, idempotency, IP forward
 │   │   │   ├── dto/            #   Request/response structs
 │   │   │   └── services/       #   Auth, dashboard, room services
@@ -354,7 +356,7 @@ jambo/
 │   │   ├── auth/               # JWT + auth middleware
 │   │   ├── i18n/               # Translator + language endpoints
 │   │   ├── mailer/             # SMTP + email templates
-│   │   ├── payment/            # PayPal integration
+│   │   ├── payment/            # Payment provider abstraction (Stripe + PayPal)
 │   │   ├── observability/      # Metrics (40+ families), CorrelationId, tracing
 │   │   ├── error/              # AppError, GameError, ValidationError
 │   │   └── bin/                # ai-worker, scheduler-worker, load-test binaries
@@ -433,6 +435,7 @@ The backend accepts **68 environment variables** (see `backend/src/config.rs`). 
 | Game | `GAME_STALENESS_THRESHOLD_SECS`, staleness alert/kick timers |
 | Credits | `DEFAULT_CREDIT`, `FREEZE_DURATION_SECS`, unfreeze/topup amounts (`TOPUP_CREDIT_AMOUNT`, `TOPUP_MONTHLY_LIMIT_EUR_CENTS`) |
 | PayPal | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MODE` |
+| Stripe | `PAYMENT_PROVIDER`, `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_CLIENT_ID`, `STRIPE_TOPUP_BUNDLES_EUR_CENTS`, `STRIPE_UNFREEZE_AMOUNT_EUR` |
 | Rate Limits | 12 parameters for auth/contact endpoints |
 | CORS | `CORS_ALLOWED_ORIGINS` |
 | Monitoring | `PROMETHEUS_USER`, `PROMETHEUS_PASSWORD`, `DOZZLE_USER`, `DOZZLE_PASSWORD` |

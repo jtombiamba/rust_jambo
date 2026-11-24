@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::models::game_invite;
 use crate::models::{
     CashoutRequest, Game, GameCard, GameRun, GameRunEvent, GameRunGame, GameRunPlayer, GameStatus,
-    Player, PlayerProfile, PlayerType, RunStatus, User,
+    PayoutMethod, Player, PlayerProfile, PlayerType, RunStatus, User,
 };
 
 use jambo_types::dashboard::GameFilter;
@@ -305,6 +305,7 @@ pub trait CashoutRepoTrait: Send + Sync {
         user_id: Uuid,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_method: PayoutMethod,
+        payout_destination: &str,
     ) -> Result<CashoutRequest, CashoutRequestError>;
 }

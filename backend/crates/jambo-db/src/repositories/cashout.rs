@@ -4,12 +4,12 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::models::{cashout_request, player_profile, CashoutRequest, CashoutStatus};
+use crate::models::{cashout_request, player_profile, CashoutRequest, CashoutStatus, PayoutMethod};
 use crate::traits::{CashoutRepoTrait, CashoutRequestError};
 
 #[derive(Debug, Clone)]
 pub struct CashoutRepository {
-    connection: DatabaseConnection,
+    pub(crate) connection: DatabaseConnection,
 }
 
 #[allow(dead_code)]
@@ -25,7 +25,8 @@ impl CashoutRepository {
         user_id: Uuid,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_method: PayoutMethod,
+        payout_destination: &str,
     ) -> Result<CashoutRequest, CashoutRequestError> {
         let txn = self.connection.begin().await?;
 
@@ -49,7 +50,14 @@ impl CashoutRepository {
         }
 
         let request = self
-            .create_in_txn(&txn, user_id, credits, amount_eur_cents, paypal_email)
+            .create_in_txn(
+                &txn,
+                user_id,
+                credits,
+                amount_eur_cents,
+                payout_method,
+                payout_destination,
+            )
             .await?;
 
         self.lock_user_in_txn(&txn, user_id, now).await?;
@@ -103,7 +111,8 @@ impl CashoutRepository {
         user_id: Uuid,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_method: PayoutMethod,
+        payout_destination: &str,
     ) -> Result<CashoutRequest, DbErr> {
         let now = chrono::Utc::now();
         cashout_request::ActiveModel {
@@ -112,8 +121,9 @@ impl CashoutRepository {
             credits: Set(credits),
             amount_eur_cents: Set(amount_eur_cents),
             status: Set(CashoutStatus::Requested),
-            paypal_email: Set(paypal_email.to_string()),
-            paypal_payout_batch_id: Set(None),
+            payout_method: Set(payout_method),
+            payout_destination: Set(payout_destination.to_string()),
+            payout_reference: Set(None),
             admin_note: Set(None),
             processed_by: Set(None),
             created_at: Set(now),
@@ -259,9 +269,10 @@ impl CashoutRepository {
         Ok(())
     }
 
-    /// Mark a request paid with the PayPal payout batch id.
+    /// Mark a request paid with the payout reference (PayPal batch id or Stripe
+    /// transfer id).
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
-    pub async fn mark_paid(&self, id: Uuid, payout_batch_id: &str, by: &str) -> Result<(), DbErr> {
+    pub async fn mark_paid(&self, id: Uuid, payout_reference: &str, by: &str) -> Result<(), DbErr> {
         let txn = self.connection.begin().await?;
         let request = self
             .find_by_id_in_txn(&txn, id)
@@ -273,7 +284,7 @@ impl CashoutRepository {
                 "request must be 'approved' before it can be paid".to_string(),
             ));
         }
-        self.mark_paid_in_txn(&txn, &request, payout_batch_id, by)
+        self.mark_paid_in_txn(&txn, &request, payout_reference, by)
             .await?;
         txn.commit().await?;
         Ok(())
@@ -308,13 +319,14 @@ impl CashoutRepository {
             .await
     }
 
-    /// Mark a request paid with the PayPal payout batch id.
+    /// Mark a request paid with the payout reference (PayPal batch id or Stripe
+    /// transfer id).
     #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
     pub async fn mark_paid_in_txn(
         &self,
         txn: &DatabaseTransaction,
         request: &CashoutRequest,
-        payout_batch_id: &str,
+        payout_reference: &str,
         processed_by: &str,
     ) -> Result<(), DbErr> {
         let now = chrono::Utc::now();
@@ -329,8 +341,8 @@ impl CashoutRepository {
                 ),
             )
             .col_expr(
-                cashout_request::Column::PaypalPayoutBatchId,
-                sea_orm::sea_query::Expr::value(payout_batch_id.to_string()),
+                cashout_request::Column::PayoutReference,
+                sea_orm::sea_query::Expr::value(payout_reference.to_string()),
             )
             .col_expr(
                 cashout_request::Column::ProcessedBy,
@@ -350,7 +362,7 @@ impl CashoutRepository {
         Ok(())
     }
 
-    async fn finalize_in_txn(
+    pub(crate) async fn finalize_in_txn(
         &self,
         txn: &DatabaseTransaction,
         request: &CashoutRequest,
@@ -394,7 +406,7 @@ impl CashoutRepository {
         Ok(())
     }
 
-    async fn credit_user_in_txn(
+    pub(crate) async fn credit_user_in_txn(
         &self,
         txn: &DatabaseTransaction,
         user_id: Uuid,
@@ -416,7 +428,7 @@ impl CashoutRepository {
         Ok(())
     }
 
-    async fn unlock_user_in_txn(
+    pub(crate) async fn unlock_user_in_txn(
         &self,
         txn: &DatabaseTransaction,
         user_id: Uuid,
@@ -453,9 +465,16 @@ impl CashoutRepoTrait for CashoutRepository {
         user_id: Uuid,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_method: PayoutMethod,
+        payout_destination: &str,
     ) -> Result<CashoutRequest, CashoutRequestError> {
-        self.request(user_id, credits, amount_eur_cents, paypal_email)
-            .await
+        self.request(
+            user_id,
+            credits,
+            amount_eur_cents,
+            payout_method,
+            payout_destination,
+        )
+        .await
     }
 }

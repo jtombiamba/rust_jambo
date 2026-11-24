@@ -497,6 +497,8 @@ mod tests {
             password_hash: jambo_core::password::hash_password("password1").unwrap(),
             last_ip_hash: None,
             language: "en".to_string(),
+            stripe_connect_account_id: None,
+            stripe_connect_account_status: jambo_db::models::ConnectAccountStatus::NotCreated,
             created_at: now,
             updated_at: now,
             deletion_requested_at: None,

@@ -3,7 +3,6 @@ use std::sync::Mutex;
 
 use jambo_core::error::auth::AuthError;
 use jambo_core::i18n::Lang;
-use jambo_core::payment::{CaptureResult, OrderCreated, PaymentServiceTrait};
 use jambo_domain::room::dto::{
     ActiveRunResponse, CreateRunResponse, CurrentGameResponse, JoinRunResponse, RoomDetailResponse,
     RoomListItem, RunListItem, StartNextGameResponse,
@@ -11,6 +10,9 @@ use jambo_domain::room::dto::{
 use jambo_domain::room::error::RoomServiceError;
 use jambo_domain::room::service_trait::RoomServiceTrait;
 use jambo_mailer::Mailer;
+
+mod mock_payment;
+pub use mock_payment::MockPaymentService;
 
 /// Configurable `Mailer` mock used across API handler tests.
 ///
@@ -112,7 +114,7 @@ impl Mailer for MockMailer {
         _to_email: &str,
         _credits: i32,
         _amount_eur_cents: i32,
-        _paypal_email: &str,
+        _payout_destination: &str,
         _lang: Lang,
     ) -> Result<(), String> {
         self.result.lock().unwrap().take().unwrap_or(Ok(()))
@@ -135,7 +137,49 @@ impl Mailer for MockMailer {
         _email: &str,
         _credits: i32,
         _amount_eur_cents: i32,
-        _paypal_email: &str,
+        _payout_destination: &str,
+    ) -> Result<(), String> {
+        self.result.lock().unwrap().take().unwrap_or(Ok(()))
+    }
+
+    async fn send_cashout_paid(
+        &self,
+        _to_email: &str,
+        _amount_eur_cents: i32,
+        _lang: Lang,
+    ) -> Result<(), String> {
+        self.result.lock().unwrap().take().unwrap_or(Ok(()))
+    }
+
+    async fn send_cashout_failed(
+        &self,
+        _to_email: &str,
+        _amount_eur_cents: i32,
+        _lang: Lang,
+    ) -> Result<(), String> {
+        self.result.lock().unwrap().take().unwrap_or(Ok(()))
+    }
+
+    async fn send_connect_account_verified(
+        &self,
+        _to_email: &str,
+        _lang: Lang,
+    ) -> Result<(), String> {
+        self.result.lock().unwrap().take().unwrap_or(Ok(()))
+    }
+
+    async fn send_connect_account_verification_failed(
+        &self,
+        _to_email: &str,
+        _lang: Lang,
+    ) -> Result<(), String> {
+        self.result.lock().unwrap().take().unwrap_or(Ok(()))
+    }
+
+    async fn send_connect_account_onboarding_interrupted(
+        &self,
+        _to_email: &str,
+        _lang: Lang,
     ) -> Result<(), String> {
         self.result.lock().unwrap().take().unwrap_or(Ok(()))
     }
@@ -431,109 +475,6 @@ impl RoomServiceTrait for MockRoomService {
             .unwrap()
             .take()
             .unwrap_or(Ok(true))
-    }
-}
-
-// ── Payment service mock ────────────────────────────────────────────────
-
-pub struct MockPaymentService {
-    configured: bool,
-    create_order_result: Mutex<Option<Result<OrderCreated, String>>>,
-    create_topup_order_result: Mutex<Option<Result<OrderCreated, String>>>,
-    capture_order_result: Mutex<Option<Result<CaptureResult, String>>>,
-}
-
-impl MockPaymentService {
-    pub fn configured() -> Self {
-        Self {
-            configured: true,
-            create_order_result: Mutex::new(None),
-            create_topup_order_result: Mutex::new(None),
-            capture_order_result: Mutex::new(None),
-        }
-    }
-
-    pub fn unconfigured() -> Self {
-        Self {
-            configured: false,
-            create_order_result: Mutex::new(None),
-            create_topup_order_result: Mutex::new(None),
-            capture_order_result: Mutex::new(None),
-        }
-    }
-
-    pub fn set_capture_order_result(&self, r: Result<CaptureResult, String>) {
-        *self.capture_order_result.lock().unwrap() = Some(r);
-    }
-
-    pub fn set_create_order_result(&self, r: Result<OrderCreated, String>) {
-        *self.create_order_result.lock().unwrap() = Some(r);
-    }
-
-    pub fn set_create_topup_order_result(&self, r: Result<OrderCreated, String>) {
-        *self.create_topup_order_result.lock().unwrap() = Some(r);
-    }
-}
-
-fn default_order() -> OrderCreated {
-    OrderCreated {
-        order_id: "ORDER_1".into(),
-        approval_url: "https://approve".into(),
-    }
-}
-
-#[async_trait]
-impl PaymentServiceTrait for MockPaymentService {
-    fn is_configured(&self) -> bool {
-        self.configured
-    }
-
-    async fn create_order(
-        &self,
-        _return_url: &str,
-        _cancel_url: &str,
-    ) -> Result<OrderCreated, String> {
-        self.create_order_result
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or(Ok(default_order()))
-    }
-
-    async fn create_topup_order(
-        &self,
-        _return_url: &str,
-        _cancel_url: &str,
-    ) -> Result<OrderCreated, String> {
-        self.create_topup_order_result
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or(Ok(default_order()))
-    }
-
-    async fn capture_order(
-        &self,
-        _order_id: &str,
-        _idempotency_key: Option<&str>,
-    ) -> Result<CaptureResult, String> {
-        self.capture_order_result
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap_or(Ok(CaptureResult {
-                success: true,
-                order_id: "ORDER_1".into(),
-            }))
-    }
-
-    async fn create_payout(
-        &self,
-        _paypal_email: &str,
-        _amount_eur_cents: i32,
-        _item_id: &str,
-    ) -> Result<String, String> {
-        Ok("batch-id".into())
     }
 }
 

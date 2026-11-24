@@ -2,7 +2,7 @@ use crate::api::services::cashout_service::{is_valid_email, validate_credits, Ca
 use async_trait::async_trait;
 use jambo_core::config::Config;
 use jambo_core::error::AppError;
-use jambo_db::models::{CashoutRequest, CashoutStatus};
+use jambo_db::models::{CashoutRequest, CashoutStatus, PayoutMethod};
 use jambo_db::traits::{CashoutRepoTrait, CashoutRequestError};
 use sea_orm::DbErr;
 use std::sync::{Arc, Mutex};
@@ -77,8 +77,9 @@ fn request(credits: i32, status: CashoutStatus) -> jambo_db::models::CashoutRequ
         credits,
         amount_eur_cents: credits / 250 * 100,
         status,
-        paypal_email: "a@b.co".to_string(),
-        paypal_payout_batch_id: None,
+        payout_method: PayoutMethod::PaypalEmail,
+        payout_destination: "a@b.co".to_string(),
+        payout_reference: None,
         admin_note: None,
         processed_by: None,
         created_at: chrono::Utc::now(),
@@ -105,7 +106,8 @@ impl CashoutRepoTrait for MockRepo {
         _user_id: Uuid,
         _credits: i32,
         _amount_eur_cents: i32,
-        _paypal_email: &str,
+        _payout_method: PayoutMethod,
+        _payout_destination: &str,
     ) -> Result<jambo_db::models::CashoutRequest, CashoutRequestError> {
         if *self.fail.lock().unwrap() {
             return Err(CashoutRequestError::Locked);
@@ -131,7 +133,7 @@ async fn request_cashout_disabled_returns_forbidden() {
     });
     let service = CashoutService::new(repo, cfg);
     let err = service
-        .request_cashout(Uuid::new_v4(), 250, "a@b.co")
+        .request_cashout(Uuid::new_v4(), 250, PayoutMethod::PaypalEmail, "a@b.co")
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::Forbidden(_)));
@@ -146,7 +148,7 @@ async fn request_cashout_success_maps_response() {
     });
     let service = CashoutService::new(repo, enabled_config());
     let resp = service
-        .request_cashout(Uuid::new_v4(), 250, "a@b.co")
+        .request_cashout(Uuid::new_v4(), 250, PayoutMethod::PaypalEmail, "a@b.co")
         .await
         .unwrap();
     assert_eq!(resp.credits, 250);
@@ -163,7 +165,7 @@ async fn request_cashout_maps_locked_error() {
     });
     let service = CashoutService::new(repo, enabled_config());
     let err = service
-        .request_cashout(Uuid::new_v4(), 250, "a@b.co")
+        .request_cashout(Uuid::new_v4(), 250, PayoutMethod::PaypalEmail, "a@b.co")
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::Conflict(_)));

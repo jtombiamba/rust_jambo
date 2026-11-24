@@ -516,7 +516,7 @@ async fn check_cashout_auto_reject(
                     &user_model.email,
                     request.credits,
                     request.amount_eur_cents,
-                    &request.paypal_email,
+                    &request.payout_destination,
                 )
                 .await;
         }

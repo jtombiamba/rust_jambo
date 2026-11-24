@@ -422,7 +422,8 @@ impl CashoutServiceTrait for MockCashoutService {
         &self,
         _user_id: uuid::Uuid,
         _credits: i32,
-        _paypal_email: &str,
+        _payout_method: jambo_db::models::PayoutMethod,
+        _payout_destination: &str,
     ) -> Result<CashoutRequestResponse, AppError> {
         self.request_result
             .lock()

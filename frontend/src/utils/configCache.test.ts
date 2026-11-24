@@ -4,7 +4,6 @@ import { getCachedConfig, saveConfig, type ClientConfig } from './configCache'
 const CACHE_KEY = 'app_config'
 
 const validConfig: ClientConfig = {
-  paypal_donate_url: 'https://www.paypal.com/donate',
   bot_thinking_delay_ms: 1500,
   round_pause_delay_ms: 2500,
   cashout_enabled: true,
@@ -50,7 +49,7 @@ describe('configCache', () => {
     localStorage.setItem(
       CACHE_KEY,
       JSON.stringify({
-        value: { paypal_donate_url: 42, bot_thinking_delay_ms: 'x', round_pause_delay_ms: 'y' },
+        value: { bot_thinking_delay_ms: 'x', round_pause_delay_ms: 'y' },
         expiresAt: Date.now() + 60 * 60 * 1000,
       }),
     )

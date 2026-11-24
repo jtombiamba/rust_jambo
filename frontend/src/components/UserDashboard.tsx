@@ -40,7 +40,8 @@ interface CashoutHistoryItem {
   credits: number
   amount_eur_cents: number
   status: string
-  paypal_email: string
+  payout_method: string
+  payout_destination: string
   created_at: string
   processed_at: string | null
 }
@@ -139,7 +140,9 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
   const [cashoutConfig, setCashoutConfig] = useState<CashoutConfig | null>(null)
   const [cashoutOpen, setCashoutOpen] = useState(false)
   const [cashoutCredits, setCashoutCredits] = useState('')
-  const [cashoutPaypalEmail, setCashoutPaypalEmail] = useState('')
+  const [cashoutMethod, setCashoutMethod] = useState<'paypal_email' | 'stripe_connect'>('paypal_email')
+  const [cashoutDestination, setCashoutDestination] = useState('')
+  const [cashoutConnecting, setCashoutConnecting] = useState(false)
   const [cashoutSubmitting, setCashoutSubmitting] = useState(false)
   const [cashoutError, setCashoutError] = useState<string | null>(null)
   const [showCashoutHistory, setShowCashoutHistory] = useState(false)
@@ -272,19 +275,19 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     setPage(1)
   }, [statusFilter, sortField, sortDir, perPage])
 
-  const handleTopUp = async () => {
+  const handleTopUp = async (amountEurCents: number) => {
     setToppingUp(true)
     try {
-      const orderRes = await axios.post('/api/me/topup')
-      const { approval_url } = orderRes.data as { order_id: string; approval_url: string }
+      const orderRes = await axios.post('/api/me/topup', { amount_eur_cents: amountEurCents })
+      const { redirect_url } = orderRes.data as { order_id: string; redirect_url: string }
 
       const width = 500
       const height = 600
       const left = window.screenX + (window.outerWidth - width) / 2
       const top = window.screenY + (window.outerHeight - height) / 2
       const popup = window.open(
-        approval_url,
-        'paypal_topup',
+        redirect_url,
+        'payment_topup',
         `width=${width},height=${height},left=${left},top=${top},popup=yes`
       )
 
@@ -331,15 +334,15 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
     setUnfreezing(true)
     try {
       const orderRes = await axios.post('/api/me/unfreeze')
-      const { approval_url } = orderRes.data as { order_id: string; approval_url: string }
+      const { redirect_url } = orderRes.data as { order_id: string; redirect_url: string }
 
       const width = 500
       const height = 600
       const left = window.screenX + (window.outerWidth - width) / 2
       const top = window.screenY + (window.outerHeight - height) / 2
       const popup = window.open(
-        approval_url,
-        'paypal_unfreeze',
+        redirect_url,
+        'payment_unfreeze',
         `width=${width},height=${height},left=${left},top=${top},popup=yes`
       )
 
@@ -384,9 +387,22 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
 
   const openCashoutModal = () => {
     setCashoutCredits('')
-    setCashoutPaypalEmail('')
+    setCashoutMethod('paypal_email')
+    setCashoutDestination('')
     setCashoutError(null)
     setCashoutOpen(true)
+  }
+
+  const handleConnectBank = async () => {
+    setCashoutConnecting(true)
+    setCashoutError(null)
+    try {
+      const res = await axios.post<{ url: string }>('/api/me/payout/onboarding')
+      window.location.href = res.data.url
+    } catch (err: unknown) {
+      setCashoutError(extractApiError(err).message || t('dashboard.cashoutConnectFailed'))
+      setCashoutConnecting(false)
+    }
   }
 
   const handleCashoutSubmit = async () => {
@@ -410,15 +426,21 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
       setCashoutError(t('dashboard.cashoutMax', { eur: (cashoutConfig.maxEurCents / 100).toFixed(2) }))
       return
     }
-    const email = cashoutPaypalEmail.trim()
-    if (!email.includes('@') || !email.includes('.')) {
-      setCashoutError(t('dashboard.cashoutInvalidEmail'))
-      return
+    if (cashoutMethod === 'paypal_email') {
+      const email = cashoutDestination.trim()
+      if (!email.includes('@') || !email.includes('.')) {
+        setCashoutError(t('dashboard.cashoutInvalidEmail'))
+        return
+      }
     }
 
     setCashoutSubmitting(true)
     try {
-      await axios.post('/api/me/cashout', { credits, paypal_email: email })
+      await axios.post('/api/me/cashout', {
+        credits,
+        payout_method: cashoutMethod,
+        payout_destination: cashoutMethod === 'paypal_email' ? cashoutDestination.trim() : '',
+      })
       setCashoutOpen(false)
       showToast(t('dashboard.cashoutSuccess'))
       await fetchData()
@@ -719,19 +741,16 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                 <button
                   className="px-4 sm:px-6 py-2 sm:py-3 bg-[#0070ba] hover:bg-[#005ea6] text-white text-sm sm:text-base font-semibold rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
                   disabled={toppingUp}
-                  onClick={handleTopUp}
+                  onClick={() => handleTopUp(500)}
                 >
-                  {toppingUp ? (
-                    <>
-                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                      </svg>
-                      {t('dashboard.processing')}
-                    </>
-                  ) : (
-                    t('dashboard.topUp')
-                  )}
+                  {toppingUp ? t('dashboard.processing') : t('dashboard.topUpAmount', {amount: '5'})}
+                </button>
+                <button
+                  className="px-4 sm:px-6 py-2 sm:py-3 bg-[#0070ba] hover:bg-[#005ea6] text-white text-sm sm:text-base font-semibold rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+                  disabled={toppingUp}
+                  onClick={() => handleTopUp(1000)}
+                >
+                  {toppingUp ? t('dashboard.processing') : t('dashboard.topUpAmount', {amount: '10'})}
                 </button>
                 {cashoutConfig?.enabled && !profile?.cashout_locked && (
                   <button
@@ -997,7 +1016,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                       <th className="py-2 pr-4">{t('dashboard.date')}</th>
                       <th className="py-2 pr-4">{t('dashboard.cashoutAmount')}</th>
                       <th className="py-2 pr-4">{t('dashboard.status')}</th>
-                      <th className="py-2">{t('dashboard.cashoutEmail')}</th>
+                      <th className="py-2">{t('dashboard.cashoutDestination')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1025,7 +1044,7 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
                             {item.status}
                           </span>
                         </td>
-                        <td className="py-2 text-gray-500 text-xs">{item.paypal_email}</td>
+                        <td className="py-2 text-gray-500 text-xs">{item.payout_destination}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1206,18 +1225,46 @@ export default function UserDashboard({ onStartGame, onStartMultiplayerGame, onR
             </div>
 
             <div className="mb-4">
-              <label htmlFor="cashout-paypal-email" className="block text-sm font-medium text-gray-700 mb-1">
-                {t('dashboard.cashoutPaypalEmail')}
+              <label htmlFor="cashout-method" className="block text-sm font-medium text-gray-700 mb-1">
+                {t('dashboard.cashoutMethod')}
               </label>
-              <input
-                id="cashout-paypal-email"
-                type="email"
-                value={cashoutPaypalEmail}
-                onChange={(e) => setCashoutPaypalEmail(e.target.value)}
-                placeholder="you@example.com"
+              <select
+                id="cashout-method"
+                value={cashoutMethod}
+                onChange={(e) => setCashoutMethod(e.target.value as 'paypal_email' | 'stripe_connect')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-              />
+              >
+                <option value="paypal_email">{t('dashboard.cashoutMethodPaypal')}</option>
+                <option value="stripe_connect">{t('dashboard.cashoutMethodBank')}</option>
+              </select>
             </div>
+
+            {cashoutMethod === 'paypal_email' ? (
+              <div className="mb-4">
+                <label htmlFor="cashout-paypal-email" className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('dashboard.cashoutPaypalEmail')}
+                </label>
+                <input
+                  id="cashout-paypal-email"
+                  type="email"
+                  value={cashoutDestination}
+                  onChange={(e) => setCashoutDestination(e.target.value)}
+                  placeholder="you@example.com"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                />
+              </div>
+            ) : (
+              <div className="mb-4">
+                <button
+                  type="button"
+                  onClick={handleConnectBank}
+                  disabled={cashoutConnecting}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {cashoutConnecting ? t('dashboard.processing') : t('dashboard.cashoutConnectBank')}
+                </button>
+              </div>
+            )}
 
             {cashoutError && (
               <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">

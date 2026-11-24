@@ -27,6 +27,8 @@ fn make_user(user_id: Uuid) -> User {
         password_hash: "hash".to_string(),
         last_ip_hash: None,
         language: "en".to_string(),
+        stripe_connect_account_id: None,
+        stripe_connect_account_status: jambo_db::models::ConnectAccountStatus::NotCreated,
         created_at: now,
         updated_at: now,
         deletion_requested_at: None,
@@ -66,7 +68,7 @@ async fn request_cashout_success() {
     let user = authenticated_user();
     let req = test::TestRequest::post()
         .uri("/cashout")
-        .set_json(serde_json::json!({ "credits": 250, "paypal_email": "a@b.co" }))
+        .set_json(serde_json::json!({ "credits": 250, "payout_method": "paypal_email", "payout_destination": "a@b.co" }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = test::call_service(&app, req).await;
@@ -83,7 +85,7 @@ async fn request_cashout_forbidden_returns_error() {
     let user = authenticated_user();
     let req = test::TestRequest::post()
         .uri("/cashout")
-        .set_json(serde_json::json!({ "credits": 250, "paypal_email": "a@b.co" }))
+        .set_json(serde_json::json!({ "credits": 250, "payout_method": "paypal_email", "payout_destination": "a@b.co" }))
         .to_request();
     req.extensions_mut().insert(user);
     let resp = test::call_service(&app, req).await;
@@ -125,7 +127,7 @@ async fn request_cashout_success_enqueues_confirmation_email() {
 
     let req = test::TestRequest::post()
         .uri("/cashout")
-        .set_json(serde_json::json!({ "credits": 250, "paypal_email": "a@b.co" }))
+        .set_json(serde_json::json!({ "credits": 250, "payout_method": "paypal_email", "payout_destination": "a@b.co" }))
         .to_request();
     req.extensions_mut().insert(user.clone());
     let resp = test::call_service(&app, req).await;
@@ -138,12 +140,12 @@ async fn request_cashout_success_enqueues_confirmation_email() {
         EmailJob::CashoutRequested {
             to_email,
             credits,
-            paypal_email,
+            payout_destination,
             ..
         } => {
             assert_eq!(to_email, "a@b.co");
             assert_eq!(credits, 250);
-            assert_eq!(paypal_email, "a@b.co");
+            assert_eq!(payout_destination, "a@b.co");
         }
         other => panic!("expected CashoutRequested job, got {:?}", other),
     }

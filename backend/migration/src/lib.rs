@@ -19,6 +19,8 @@ mod m20260922_000001_cashout;
 mod m20260923_000001_topup_transactions;
 mod m20260924_000001_topup_order_id_unique;
 mod m20261117_000001_user_soft_delete;
+mod m20261119_000001_cashout_payout_generalize;
+mod m20261120_000001_stripe_connect_status;
 
 pub struct Migrator;
 
@@ -45,6 +47,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20260923_000001_topup_transactions::Migration),
             Box::new(m20260924_000001_topup_order_id_unique::Migration),
             Box::new(m20261117_000001_user_soft_delete::Migration),
+            Box::new(m20261119_000001_cashout_payout_generalize::Migration),
+            Box::new(m20261120_000001_stripe_connect_status::Migration),
         ]
     }
 }

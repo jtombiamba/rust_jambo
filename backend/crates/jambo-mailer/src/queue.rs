@@ -40,7 +40,7 @@ pub enum EmailJob {
         to_email: String,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: String,
+        payout_destination: String,
         lang: Lang,
     },
     CashoutAdminAlert {
@@ -49,7 +49,29 @@ pub enum EmailJob {
         email: String,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: String,
+        payout_destination: String,
+    },
+    CashoutPaid {
+        to_email: String,
+        amount_eur_cents: i32,
+        lang: Lang,
+    },
+    CashoutFailed {
+        to_email: String,
+        amount_eur_cents: i32,
+        lang: Lang,
+    },
+    ConnectAccountVerified {
+        to_email: String,
+        lang: Lang,
+    },
+    ConnectAccountVerificationFailed {
+        to_email: String,
+        lang: Lang,
+    },
+    ConnectAccountOnboardingInterrupted {
+        to_email: String,
+        lang: Lang,
     },
     StallKicked {
         to_email: String,
@@ -83,6 +105,15 @@ impl EmailJob {
             EmailJob::FreezeExpired { .. } => "unfreeze",
             EmailJob::CashoutRequested { .. } => "cashout_requested",
             EmailJob::CashoutAdminAlert { .. } => "cashout_admin_alert",
+            EmailJob::CashoutPaid { .. } => "cashout_paid",
+            EmailJob::CashoutFailed { .. } => "cashout_failed",
+            EmailJob::ConnectAccountVerified { .. } => "connect_account_verified",
+            EmailJob::ConnectAccountVerificationFailed { .. } => {
+                "connect_account_verification_failed"
+            }
+            EmailJob::ConnectAccountOnboardingInterrupted { .. } => {
+                "connect_account_onboarding_interrupted"
+            }
             EmailJob::StallKicked { .. } => "stall_kicked",
             EmailJob::StallWarning { .. } => "stall_warning",
             EmailJob::RoomInvitation { .. } => "room_invitation",
@@ -182,11 +213,17 @@ async fn dispatch(mailer: &dyn Mailer, job: &EmailJob) -> Result<(), String> {
             to_email,
             credits,
             amount_eur_cents,
-            paypal_email,
+            payout_destination,
             lang,
         } => {
             mailer
-                .send_cashout_requested(to_email, *credits, *amount_eur_cents, paypal_email, *lang)
+                .send_cashout_requested(
+                    to_email,
+                    *credits,
+                    *amount_eur_cents,
+                    payout_destination,
+                    *lang,
+                )
                 .await
         }
         EmailJob::CashoutAdminAlert {
@@ -195,7 +232,7 @@ async fn dispatch(mailer: &dyn Mailer, job: &EmailJob) -> Result<(), String> {
             email,
             credits,
             amount_eur_cents,
-            paypal_email,
+            payout_destination,
         } => {
             mailer
                 .send_cashout_admin_alert(
@@ -204,8 +241,39 @@ async fn dispatch(mailer: &dyn Mailer, job: &EmailJob) -> Result<(), String> {
                     email,
                     *credits,
                     *amount_eur_cents,
-                    paypal_email,
+                    payout_destination,
                 )
+                .await
+        }
+        EmailJob::CashoutPaid {
+            to_email,
+            amount_eur_cents,
+            lang,
+        } => {
+            mailer
+                .send_cashout_paid(to_email, *amount_eur_cents, *lang)
+                .await
+        }
+        EmailJob::CashoutFailed {
+            to_email,
+            amount_eur_cents,
+            lang,
+        } => {
+            mailer
+                .send_cashout_failed(to_email, *amount_eur_cents, *lang)
+                .await
+        }
+        EmailJob::ConnectAccountVerified { to_email, lang } => {
+            mailer.send_connect_account_verified(to_email, *lang).await
+        }
+        EmailJob::ConnectAccountVerificationFailed { to_email, lang } => {
+            mailer
+                .send_connect_account_verification_failed(to_email, *lang)
+                .await
+        }
+        EmailJob::ConnectAccountOnboardingInterrupted { to_email, lang } => {
+            mailer
+                .send_connect_account_onboarding_interrupted(to_email, *lang)
                 .await
         }
         EmailJob::StallKicked {
@@ -326,7 +394,7 @@ mod tests {
             _to_email: &str,
             _credits: i32,
             _amount_eur_cents: i32,
-            _paypal_email: &str,
+            _payout_destination: &str,
             _lang: Lang,
         ) -> Result<(), String> {
             Ok(())
@@ -347,7 +415,49 @@ mod tests {
             _email: &str,
             _credits: i32,
             _amount_eur_cents: i32,
-            _paypal_email: &str,
+            _payout_destination: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn send_cashout_paid(
+            &self,
+            _to_email: &str,
+            _amount_eur_cents: i32,
+            _lang: Lang,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn send_cashout_failed(
+            &self,
+            _to_email: &str,
+            _amount_eur_cents: i32,
+            _lang: Lang,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn send_connect_account_verified(
+            &self,
+            _to_email: &str,
+            _lang: Lang,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn send_connect_account_verification_failed(
+            &self,
+            _to_email: &str,
+            _lang: Lang,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn send_connect_account_onboarding_interrupted(
+            &self,
+            _to_email: &str,
+            _lang: Lang,
         ) -> Result<(), String> {
             Ok(())
         }

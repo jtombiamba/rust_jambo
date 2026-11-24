@@ -1,4 +1,7 @@
-use crate::api::payment_limits::{current_month_start, monthly_limit_exceeded, parse_eur_to_cents};
+use crate::api::payment_limits::{
+    credits_for_amount, current_month_start, monthly_limit_exceeded, parse_bundles_eur_cents,
+    parse_eur_to_cents,
+};
 use chrono::{TimeZone, Utc};
 
 fn month_start(year: i32, month: u32) -> chrono::DateTime<Utc> {
@@ -77,4 +80,25 @@ fn limit_exceeded_when_above_cap() {
 #[test]
 fn limit_saturates_on_overflow() {
     assert!(monthly_limit_exceeded(i32::MAX, 1, 10000));
+}
+
+#[test]
+fn credits_for_amount_maps_at_rate() {
+    assert_eq!(credits_for_amount(500, 250), 1250);
+    assert_eq!(credits_for_amount(1000, 250), 2500);
+    assert_eq!(credits_for_amount(125, 250), 312);
+}
+
+#[test]
+fn credits_for_amount_guards_invalid_rate() {
+    assert_eq!(credits_for_amount(500, 0), 0);
+    assert_eq!(credits_for_amount(500, -1), 0);
+}
+
+#[test]
+fn parse_bundles_extracts_positive_cent_amounts() {
+    assert_eq!(parse_bundles_eur_cents("500,1000"), vec![500, 1000]);
+    assert_eq!(parse_bundles_eur_cents(" 500 , 1000 "), vec![500, 1000]);
+    assert_eq!(parse_bundles_eur_cents("500,abc,1000"), vec![500, 1000]);
+    assert_eq!(parse_bundles_eur_cents(""), Vec::<i32>::new());
 }

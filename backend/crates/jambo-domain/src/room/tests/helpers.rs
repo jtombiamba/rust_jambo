@@ -515,6 +515,8 @@ pub(super) fn make_user_model(id: Uuid, pseudo: &str) -> jambo_db::models::user:
         password_hash: "hash".to_string(),
         last_ip_hash: None,
         language: "en".to_string(),
+        stripe_connect_account_id: None,
+        stripe_connect_account_status: jambo_db::models::ConnectAccountStatus::NotCreated,
         created_at: DateTime::from_timestamp(0, 0).unwrap(),
         updated_at: DateTime::from_timestamp(0, 0).unwrap(),
         deletion_requested_at: None,

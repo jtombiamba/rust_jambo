@@ -63,7 +63,8 @@
     "startGameLoading": "Starting game...",
     "soloGame": "Solo Game",
     "multiplayerGame": "Multiplayer Game",
-    "topUp": "Top Up (+250)",
+    "topUp": "Top Up",
+    "topUpAmount": "Top Up €{{amount}}",
     "games": "Games",
     "hideGames": "Hide Games",
     "leaderboard": "Leaderboard",
@@ -123,6 +124,12 @@
     "cashoutLockedNotice": "Your account is locked pending a cashout request.",
     "cashoutCredits": "Credits to withdraw",
     "cashoutPaypalEmail": "PayPal email",
+    "cashoutMethod": "Payout method",
+    "cashoutMethodPaypal": "PayPal email",
+    "cashoutMethodBank": "Bank account (Stripe)",
+    "cashoutConnectBank": "Connect bank account",
+    "cashoutConnectFailed": "Failed to start bank connection",
+    "cashoutDestination": "Destination",
     "cashoutRate": "{credits} credits = {eur} EUR",
     "cashoutMin": "Minimum {credits} credits ({eur} EUR)",
     "cashoutMultiple": "Amount must be a multiple of {credits} credits",
@@ -136,7 +143,7 @@
     "cashoutHideHistory": "Hide Cashout History",
     "cashoutNoHistory": "No cashout requests yet.",
     "cashoutAmount": "Amount",
-    "cashoutEmail": "PayPal email"
+    "cashoutEmail": "Destination"
   },
   "game": {
     "gameTable": "Game Table",

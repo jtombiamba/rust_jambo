@@ -14,6 +14,14 @@ pub mod en {
     pub static CASHOUT_REQUESTED: &str = include_str!("../templates/en/cashout_requested.hbs");
     pub static CASHOUT_REJECTED: &str = include_str!("../templates/en/cashout_rejected.hbs");
     pub static CASHOUT_ADMIN_ALERT: &str = include_str!("../templates/en/cashout_admin_alert.hbs");
+    pub static CASHOUT_PAID: &str = include_str!("../templates/en/cashout_paid.hbs");
+    pub static CASHOUT_FAILED: &str = include_str!("../templates/en/cashout_failed.hbs");
+    pub static CONNECT_ACCOUNT_VERIFIED: &str =
+        include_str!("../templates/en/connect_account_verified.hbs");
+    pub static CONNECT_ACCOUNT_VERIFICATION_FAILED: &str =
+        include_str!("../templates/en/connect_account_verification_failed.hbs");
+    pub static CONNECT_ACCOUNT_ONBOARDING_INTERRUPTED: &str =
+        include_str!("../templates/en/connect_account_onboarding_interrupted.hbs");
     pub static DELETION_CONFIRM: &str = include_str!("../templates/en/deletion_confirm.hbs");
 }
 
@@ -27,5 +35,13 @@ pub mod fr {
     pub static ROOM_INVITATION: &str = include_str!("../templates/fr/room_invitation.hbs");
     pub static CASHOUT_REQUESTED: &str = include_str!("../templates/fr/cashout_requested.hbs");
     pub static CASHOUT_REJECTED: &str = include_str!("../templates/fr/cashout_rejected.hbs");
+    pub static CASHOUT_PAID: &str = include_str!("../templates/fr/cashout_paid.hbs");
+    pub static CASHOUT_FAILED: &str = include_str!("../templates/fr/cashout_failed.hbs");
+    pub static CONNECT_ACCOUNT_VERIFIED: &str =
+        include_str!("../templates/fr/connect_account_verified.hbs");
+    pub static CONNECT_ACCOUNT_VERIFICATION_FAILED: &str =
+        include_str!("../templates/fr/connect_account_verification_failed.hbs");
+    pub static CONNECT_ACCOUNT_ONBOARDING_INTERRUPTED: &str =
+        include_str!("../templates/fr/connect_account_onboarding_interrupted.hbs");
     pub static DELETION_CONFIRM: &str = include_str!("../templates/fr/deletion_confirm.hbs");
 }

@@ -38,3 +38,24 @@ pub fn parse_eur_to_cents(amount: &str) -> i32 {
 pub fn monthly_limit_exceeded(spent_cents: i32, upcoming_cents: i32, limit_cents: i32) -> bool {
     spent_cents.saturating_add(upcoming_cents) > limit_cents
 }
+
+/// Credits granted for a euro-cent amount at the canonical credits-per-euro
+/// rate (e.g. 500 cents at 250 credits/€ = 1250 credits).
+pub fn credits_for_amount(amount_eur_cents: i32, credits_per_eur: i32) -> i32 {
+    if credits_per_eur <= 0 {
+        return 0;
+    }
+    amount_eur_cents.saturating_mul(credits_per_eur) / 100
+}
+
+/// Parse a comma-separated list of euro-cent bundle amounts (e.g. "500,1000").
+/// Empty and malformed entries are ignored.
+pub fn parse_bundles_eur_cents(bundles: &str) -> Vec<i32> {
+    bundles
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<i32>().ok())
+        .filter(|c| *c > 0)
+        .collect()
+}

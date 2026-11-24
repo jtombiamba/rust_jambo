@@ -3,8 +3,8 @@ use handlebars::Handlebars;
 use std::sync::Arc;
 
 use super::{
-    ContactFormEmail, FreezeExpiredEmail, InvitationEmail, MailerConfig, PasswordResetEmail,
-    StallKickedEmail, StallWarningEmail,
+    CashoutResultEmail, ConnectAccountStatusEmail, ContactFormEmail, FreezeExpiredEmail,
+    InvitationEmail, MailerConfig, PasswordResetEmail, StallKickedEmail, StallWarningEmail,
 };
 use crate::Mailer;
 use jambo_i18n::{Lang, Translator};
@@ -97,6 +97,24 @@ impl NoopMailer {
 
     fn template_name(&self, name: &str, lang: Lang) -> String {
         format!("{}_{name}", lang.as_str())
+    }
+
+    fn send_connect_account_status(
+        &self,
+        to_email: &str,
+        lang: Lang,
+        template: &str,
+    ) -> Result<(), String> {
+        let data = ConnectAccountStatusEmail {
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+        let html = self
+            .handlebars
+            .render(&self.template_name(template, lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+        tracing::info!("[MAILER] Connect account status email for {to_email}:\nHTML:\n{html}");
+        Ok(())
     }
 }
 
@@ -300,13 +318,13 @@ impl Mailer for NoopMailer {
         to_email: &str,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_destination: &str,
         lang: Lang,
     ) -> Result<(), String> {
         let data = super::CashoutRequestedEmail {
             credits,
             amount_eur: super::format_cents(amount_eur_cents),
-            paypal_email: paypal_email.to_string(),
+            payout_destination: payout_destination.to_string(),
             frontend_url: self.config.frontend_url.clone(),
             app_name: self.config.smtp_from_name.clone(),
         };
@@ -354,14 +372,14 @@ impl Mailer for NoopMailer {
         email: &str,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_destination: &str,
     ) -> Result<(), String> {
         let data = super::CashoutAdminAlertEmail {
             pseudo: pseudo.to_string(),
             email: email.to_string(),
             credits,
             amount_eur: super::format_cents(amount_eur_cents),
-            paypal_email: paypal_email.to_string(),
+            payout_destination: payout_destination.to_string(),
         };
 
         let html = self
@@ -373,6 +391,68 @@ impl Mailer for NoopMailer {
             "[MAILER] Cashout admin alert to {to_email} (player {pseudo}, credits={credits}):\nHTML:\n{html}"
         );
         Ok(())
+    }
+
+    async fn send_cashout_paid(
+        &self,
+        to_email: &str,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = CashoutResultEmail {
+            amount_eur: super::format_cents(amount_eur_cents),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_paid", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+        tracing::info!("[MAILER] Cashout paid email for {to_email}:\nHTML:\n{html}");
+        Ok(())
+    }
+
+    async fn send_cashout_failed(
+        &self,
+        to_email: &str,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = CashoutResultEmail {
+            amount_eur: super::format_cents(amount_eur_cents),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+        let html = self
+            .handlebars
+            .render(&self.template_name("cashout_failed", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+        tracing::info!("[MAILER] Cashout failed email for {to_email}:\nHTML:\n{html}");
+        Ok(())
+    }
+
+    async fn send_connect_account_verified(
+        &self,
+        to_email: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        self.send_connect_account_status(to_email, lang, "connect_account_verified")
+    }
+
+    async fn send_connect_account_verification_failed(
+        &self,
+        to_email: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        self.send_connect_account_status(to_email, lang, "connect_account_verification_failed")
+    }
+
+    async fn send_connect_account_onboarding_interrupted(
+        &self,
+        to_email: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        self.send_connect_account_status(to_email, lang, "connect_account_onboarding_interrupted")
     }
 
     async fn send_deletion_confirmation(

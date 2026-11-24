@@ -17,6 +17,7 @@ mod room_tests;
 mod system_tests;
 mod topup_tests;
 mod unfreeze_tests;
+mod webhook_tests;
 
 mod dto;
 mod middleware;

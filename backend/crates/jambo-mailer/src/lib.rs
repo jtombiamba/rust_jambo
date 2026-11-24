@@ -10,6 +10,7 @@ use jambo_i18n::Lang;
 pub mod noop;
 pub mod queue;
 pub mod smtp;
+mod smtp_payout;
 pub use noop::NoopMailer;
 pub use queue::{EmailJob, EmailQueue};
 pub use smtp::SmtpMailer;
@@ -146,7 +147,7 @@ pub struct RoomInvitationEmail {
 pub struct CashoutRequestedEmail {
     pub credits: i32,
     pub amount_eur: String,
-    pub paypal_email: String,
+    pub payout_destination: String,
     pub frontend_url: String,
     pub app_name: String,
 }
@@ -166,7 +167,20 @@ pub struct CashoutAdminAlertEmail {
     pub email: String,
     pub credits: i32,
     pub amount_eur: String,
-    pub paypal_email: String,
+    pub payout_destination: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CashoutResultEmail {
+    pub amount_eur: String,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConnectAccountStatusEmail {
+    pub frontend_url: String,
+    pub app_name: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -240,7 +254,7 @@ pub trait Mailer: Send + Sync {
         to_email: &str,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_destination: &str,
         lang: Lang,
     ) -> Result<(), String>;
 
@@ -260,7 +274,36 @@ pub trait Mailer: Send + Sync {
         email: &str,
         credits: i32,
         amount_eur_cents: i32,
-        paypal_email: &str,
+        payout_destination: &str,
+    ) -> Result<(), String>;
+
+    async fn send_cashout_paid(
+        &self,
+        to_email: &str,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_cashout_failed(
+        &self,
+        to_email: &str,
+        amount_eur_cents: i32,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_connect_account_verified(&self, to_email: &str, lang: Lang)
+        -> Result<(), String>;
+
+    async fn send_connect_account_verification_failed(
+        &self,
+        to_email: &str,
+        lang: Lang,
+    ) -> Result<(), String>;
+
+    async fn send_connect_account_onboarding_interrupted(
+        &self,
+        to_email: &str,
+        lang: Lang,
     ) -> Result<(), String>;
 
     async fn send_deletion_confirmation(
@@ -292,6 +335,52 @@ pub fn register_cashout_templates(hb: &mut handlebars::Handlebars<'static>) -> R
         jambo_templates::en::CASHOUT_ADMIN_ALERT,
     )
     .map_err(|e| format!("Failed to register en/cashout_admin_alert template: {e}"))?;
+    hb.register_template_string("en_cashout_paid", jambo_templates::en::CASHOUT_PAID)
+        .map_err(|e| format!("Failed to register en/cashout_paid template: {e}"))?;
+    hb.register_template_string("fr_cashout_paid", jambo_templates::fr::CASHOUT_PAID)
+        .map_err(|e| format!("Failed to register fr/cashout_paid template: {e}"))?;
+    hb.register_template_string("en_cashout_failed", jambo_templates::en::CASHOUT_FAILED)
+        .map_err(|e| format!("Failed to register en/cashout_failed template: {e}"))?;
+    hb.register_template_string("fr_cashout_failed", jambo_templates::fr::CASHOUT_FAILED)
+        .map_err(|e| format!("Failed to register fr/cashout_failed template: {e}"))?;
+    hb.register_template_string(
+        "en_connect_account_verified",
+        jambo_templates::en::CONNECT_ACCOUNT_VERIFIED,
+    )
+    .map_err(|e| format!("Failed to register en/connect_account_verified template: {e}"))?;
+    hb.register_template_string(
+        "fr_connect_account_verified",
+        jambo_templates::fr::CONNECT_ACCOUNT_VERIFIED,
+    )
+    .map_err(|e| format!("Failed to register fr/connect_account_verified template: {e}"))?;
+    hb.register_template_string(
+        "en_connect_account_verification_failed",
+        jambo_templates::en::CONNECT_ACCOUNT_VERIFICATION_FAILED,
+    )
+    .map_err(|e| {
+        format!("Failed to register en/connect_account_verification_failed template: {e}")
+    })?;
+    hb.register_template_string(
+        "fr_connect_account_verification_failed",
+        jambo_templates::fr::CONNECT_ACCOUNT_VERIFICATION_FAILED,
+    )
+    .map_err(|e| {
+        format!("Failed to register fr/connect_account_verification_failed template: {e}")
+    })?;
+    hb.register_template_string(
+        "en_connect_account_onboarding_interrupted",
+        jambo_templates::en::CONNECT_ACCOUNT_ONBOARDING_INTERRUPTED,
+    )
+    .map_err(|e| {
+        format!("Failed to register en/connect_account_onboarding_interrupted template: {e}")
+    })?;
+    hb.register_template_string(
+        "fr_connect_account_onboarding_interrupted",
+        jambo_templates::fr::CONNECT_ACCOUNT_ONBOARDING_INTERRUPTED,
+    )
+    .map_err(|e| {
+        format!("Failed to register fr/connect_account_onboarding_interrupted template: {e}")
+    })?;
     Ok(())
 }
 
@@ -303,9 +392,25 @@ pub fn cashout_subject(kind: &str, lang: Lang) -> String {
     match (kind, lang) {
         ("cashout_requested", Lang::Fr) => "Demande de retrait reçue".to_string(),
         ("cashout_rejected", Lang::Fr) => "Retrait rejeté".to_string(),
+        ("cashout_paid", Lang::Fr) => "Paiement crédité".to_string(),
+        ("cashout_failed", Lang::Fr) => "Retrait échoué".to_string(),
         ("cashout_requested", _) => "Cashout request received".to_string(),
         ("cashout_rejected", _) => "Cashout rejected".to_string(),
+        ("cashout_paid", _) => "Payment credited".to_string(),
+        ("cashout_failed", _) => "Payout failed".to_string(),
         _ => "Cashout update".to_string(),
+    }
+}
+
+pub fn connect_account_subject(kind: &str, lang: Lang) -> String {
+    match (kind, lang) {
+        ("verified", Lang::Fr) => "Compte de paiement vérifié".to_string(),
+        ("verification_failed", Lang::Fr) => "Compte de paiement refusé".to_string(),
+        ("onboarding_interrupted", Lang::Fr) => "Procédure de paiement interrompue".to_string(),
+        ("verified", _) => "Payment account verified".to_string(),
+        ("verification_failed", _) => "Payment account failed".to_string(),
+        ("onboarding_interrupted", _) => "Payment onboarding interrupted".to_string(),
+        _ => "Payment account update".to_string(),
     }
 }
 

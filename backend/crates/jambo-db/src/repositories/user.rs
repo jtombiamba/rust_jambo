@@ -6,7 +6,9 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::models::{player, player_profile, user, PlayerProfile, PlayerType, User};
+use crate::models::{
+    player, player_profile, user, ConnectAccountStatus, PlayerProfile, PlayerType, User,
+};
 use crate::traits::UserRepoTrait;
 
 /// Display name substituted for every `players.name` row belonging to a
@@ -114,6 +116,8 @@ impl UserRepository {
                         password_hash: Set(password_hash),
                         last_ip_hash: Set(ip_hash),
                         language: Set("en".to_string()),
+                        stripe_connect_account_id: ActiveValue::NotSet,
+                        stripe_connect_account_status: Set(ConnectAccountStatus::NotCreated),
                         created_at: Set(now),
                         updated_at: Set(now),
                         deletion_requested_at: ActiveValue::NotSet,
@@ -182,6 +186,55 @@ impl UserRepository {
             .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
         let mut active: user::ActiveModel = user_model.into();
         active.language = Set(language.to_string());
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
+    /// Persist the opaque Stripe Connect account id for a user after onboarding
+    /// is initiated (or completed via webhook).
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn set_stripe_connect_account_id(
+        &self,
+        id: Uuid,
+        account_id: &str,
+    ) -> Result<User, DbErr> {
+        let user_model = user::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+        let mut active: user::ActiveModel = user_model.into();
+        active.stripe_connect_account_id = Set(Some(account_id.to_string()));
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
+    /// Look up a user by their Stripe Connect account id (used to resolve the
+    /// `account.updated` webhook back to a local user).
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn find_by_stripe_connect_account_id(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<User>, DbErr> {
+        user::Entity::find()
+            .filter(user::Column::StripeConnectAccountId.eq(account_id))
+            .one(&self.connection)
+            .await
+    }
+
+    /// Persist the onboarding/verification lifecycle status of a user's Stripe
+    /// Connect account.
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn set_stripe_connect_account_status(
+        &self,
+        id: Uuid,
+        status: ConnectAccountStatus,
+    ) -> Result<User, DbErr> {
+        let user_model = user::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+        let mut active: user::ActiveModel = user_model.into();
+        active.stripe_connect_account_status = Set(status);
         active.updated_at = Set(chrono::Utc::now());
         active.update(&self.connection).await
     }
@@ -327,6 +380,8 @@ mod tests {
             password_hash: "hash".to_string(),
             last_ip_hash: None,
             language: "en".to_string(),
+            stripe_connect_account_id: None,
+            stripe_connect_account_status: ConnectAccountStatus::NotCreated,
             created_at: now(),
             updated_at: now(),
             deletion_requested_at: None,

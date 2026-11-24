@@ -135,8 +135,6 @@ fn unconfigured_payment_service() -> Arc<dyn jambo_core::payment::PaymentService
         "".to_string(),
         "".to_string(),
         "sandbox".to_string(),
-        "1.00".to_string(),
-        "1.00".to_string(),
         "https://api-m.sandbox.paypal.com".to_string(),
         "https://api-m.paypal.com".to_string(),
     ))
@@ -364,7 +362,7 @@ async fn paypal_return_session_expired_returns_html() {
 #[actix_web::test]
 async fn create_unfreeze_order_paypal_failure_returns_500() {
     let payment = Arc::new(jambo_test_helpers::MockPaymentService::configured());
-    payment.set_create_order_result(Err("paypal down".to_string()));
+    payment.set_create_checkout_result(Err("paypal down".to_string()));
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results(vec![Vec::<TopupTransaction>::new()])
         .into_connection();

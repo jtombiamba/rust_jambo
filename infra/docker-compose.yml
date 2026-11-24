@@ -140,6 +140,11 @@ services:
       SMTP_FROM_NAME: "Jambo Game"
       FREEZE_DURATION_SECS: 1800  # 86400
       # PayPal credentials come from the gitignored .env file (see .env.example).
+      CASHOUT_ENABLED: "${CASHOUT_ENABLED:-false}"
+      CASHOUT_CREDITS_PER_EUR: "${CASHOUT_CREDITS_PER_EUR:-250}"
+      CASHOUT_MIN_CREDITS: "${CASHOUT_MIN_CREDITS:-250}"
+      CASHOUT_MAX_EUR_CENTS: "${CASHOUT_MAX_EUR_CENTS:-2000}"
+      PAYMENT_PROVIDER: "${PAYMENT_PROVIDER:-paypal}"
       PAYPAL_CLIENT_ID: "${PAYPAL_CLIENT_ID:-}"
       PAYPAL_CLIENT_SECRET: "${PAYPAL_CLIENT_SECRET:-}"
       PAYPAL_MODE: sandbox
@@ -153,6 +158,12 @@ services:
       BENCHMARK_MODE: "${BENCHMARK_MODE:-false}"
       BENCHMARK_API_TOKEN: "${BENCHMARK_API_TOKEN:-}"
       BENCHMARK_SKIP_CREDIT_CHECK: "${BENCHMARK_SKIP_CREDIT_CHECK:-true}"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
+      STRIPE_PUBLISHABLE_KEY: "${STRIPE_PUBLISHABLE_KEY:-}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
+      STRIPE_CONNECT_CLIENT_ID: "${STRIPE_CONNECT_CLIENT_ID:-}"
+      STRIPE_TOPUP_BUNDLES_EUR_CENTS: "${STRIPE_TOPUP_BUNDLES_EUR_CENTS:-}"
+      STRIPE_UNFREEZE_AMOUNT_EUR: "${STRIPE_UNFREEZE_AMOUNT_EUR:-}"
     ports:
       - "5000:5000"
     volumes:
@@ -271,6 +282,8 @@ services:
       pgbouncer:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      backend:
         condition: service_healthy
       mailhog:
         condition: service_started

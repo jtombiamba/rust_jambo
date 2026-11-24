@@ -10,7 +10,6 @@ test.describe('Special cards claim flow', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          paypal_donate_url: 'https://paypal.com/donate',
           bot_thinking_delay_ms: 800,
           round_pause_delay_ms: 2500,
         }),

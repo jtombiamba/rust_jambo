@@ -63,7 +63,8 @@
     "startGameLoading": "Démarrage de la partie...",
     "soloGame": "Partie solo",
     "multiplayerGame": "Partie multijoueur",
-    "topUp": "Recharger (+250)",
+    "topUp": "Recharger",
+    "topUpAmount": "Recharger €{{amount}}",
     "games": "Parties",
     "hideGames": "Masquer les parties",
     "leaderboard": "Classement",
@@ -123,6 +124,12 @@
     "cashoutLockedNotice": "Votre compte est verrouillé en attendant le traitement de votre demande de retrait.",
     "cashoutCredits": "Crédits à retirer",
     "cashoutPaypalEmail": "Email PayPal",
+    "cashoutMethod": "Méthode de retrait",
+    "cashoutMethodPaypal": "Email PayPal",
+    "cashoutMethodBank": "Compte bancaire (Stripe)",
+    "cashoutConnectBank": "Connecter un compte bancaire",
+    "cashoutConnectFailed": "Échec de la connexion bancaire",
+    "cashoutDestination": "Destination",
     "cashoutRate": "{credits} crédits = {eur} EUR",
     "cashoutMin": "Minimum {credits} crédits ({eur} EUR)",
     "cashoutMultiple": "Le montant doit être un multiple de {credits} crédits",
@@ -136,7 +143,7 @@
     "cashoutHideHistory": "Masquer l'historique des retraits",
     "cashoutNoHistory": "Aucune demande de retrait pour le moment.",
     "cashoutAmount": "Montant",
-    "cashoutEmail": "Email PayPal"
+    "cashoutEmail": "Destination"
   },
   "game": {
     "gameTable": "Table de jeu",

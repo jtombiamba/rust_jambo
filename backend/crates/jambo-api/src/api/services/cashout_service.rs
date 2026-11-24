@@ -6,6 +6,7 @@ use crate::api::dto::responses::{
 };
 use jambo_core::config::Config;
 use jambo_core::error::AppError;
+use jambo_db::models::PayoutMethod;
 use jambo_db::traits::{CashoutRepoTrait, CashoutRequestError};
 
 pub struct CashoutService<R: CashoutRepoTrait> {
@@ -20,7 +21,8 @@ pub trait CashoutServiceTrait: Send + Sync {
         &self,
         user_id: Uuid,
         credits: i32,
-        paypal_email: &str,
+        payout_method: PayoutMethod,
+        payout_destination: &str,
     ) -> Result<CashoutRequestResponse, AppError>;
 
     async fn list_cashouts(
@@ -40,7 +42,8 @@ impl<R: CashoutRepoTrait> CashoutService<R> {
         &self,
         user_id: Uuid,
         credits: i32,
-        paypal_email: &str,
+        payout_method: PayoutMethod,
+        payout_destination: &str,
     ) -> Result<CashoutRequestResponse, AppError> {
         if !self.config.cashout_enabled {
             return Err(AppError::Forbidden("cashout.unavailable"));
@@ -48,14 +51,29 @@ impl<R: CashoutRepoTrait> CashoutService<R> {
 
         validate_cashout_credits(credits, &self.config)?;
 
-        if !is_valid_email(paypal_email) {
-            return Err(AppError::BadRequest("cashout.invalid_email"));
+        match payout_method {
+            PayoutMethod::PaypalEmail => {
+                if !is_valid_email(payout_destination) {
+                    return Err(AppError::BadRequest("cashout.invalid_email"));
+                }
+            }
+            PayoutMethod::StripeConnect => {
+                if payout_destination.trim().is_empty() {
+                    return Err(AppError::BadRequest("cashout.missing_bank_account"));
+                }
+            }
         }
 
         let amount_eur_cents = credits / self.config.cashout_credits_per_eur * 100;
         let request = self
             .repo
-            .request(user_id, credits, amount_eur_cents, paypal_email)
+            .request(
+                user_id,
+                credits,
+                amount_eur_cents,
+                payout_method,
+                payout_destination,
+            )
             .await
             .map_err(map_request_error)?;
 
@@ -86,7 +104,8 @@ impl<R: CashoutRepoTrait> CashoutService<R> {
                 credits: r.credits,
                 amount_eur_cents: r.amount_eur_cents,
                 status: r.status.to_string(),
-                paypal_email: r.paypal_email,
+                payout_method: r.payout_method.to_string(),
+                payout_destination: r.payout_destination,
                 created_at: r.created_at.to_rfc3339(),
                 processed_at: r.processed_at.map(|t| t.to_rfc3339()),
             })
@@ -107,9 +126,11 @@ impl<R: CashoutRepoTrait> CashoutServiceTrait for CashoutService<R> {
         &self,
         user_id: Uuid,
         credits: i32,
-        paypal_email: &str,
+        payout_method: PayoutMethod,
+        payout_destination: &str,
     ) -> Result<CashoutRequestResponse, AppError> {
-        CashoutService::request_cashout(self, user_id, credits, paypal_email).await
+        CashoutService::request_cashout(self, user_id, credits, payout_method, payout_destination)
+            .await
     }
 
     async fn list_cashouts(
