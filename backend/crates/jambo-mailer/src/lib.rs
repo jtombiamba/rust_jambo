@@ -169,6 +169,13 @@ pub struct CashoutAdminAlertEmail {
     pub paypal_email: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DeletionConfirmationEmail {
+    pub confirm_link: String,
+    pub frontend_url: String,
+    pub app_name: String,
+}
+
 #[async_trait]
 pub trait Mailer: Send + Sync {
     async fn send_password_reset(
@@ -254,6 +261,13 @@ pub trait Mailer: Send + Sync {
         credits: i32,
         amount_eur_cents: i32,
         paypal_email: &str,
+    ) -> Result<(), String>;
+
+    async fn send_deletion_confirmation(
+        &self,
+        to_email: &str,
+        confirm_link: &str,
+        lang: Lang,
     ) -> Result<(), String>;
 }
 

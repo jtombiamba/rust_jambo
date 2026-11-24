@@ -5,6 +5,7 @@ mod cashout_tests;
 mod config_tests;
 mod contact_tests;
 mod dashboard_tests;
+mod deletion_tests;
 mod fallback_tests;
 mod game_tests;
 mod integration_tests;

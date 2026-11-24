@@ -134,6 +134,10 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                         .route(web::post().to(jambo_api::api::contact::send_contact)),
                 )
                 .service(
+                    web::resource("/deletion/confirm")
+                        .route(web::get().to(jambo_api::api::deletion::confirm_account_deletion)),
+                )
+                .service(
                     web::scope("/me")
                         .wrap(auth_mw.clone())
                         .route(

@@ -14,6 +14,7 @@ pub mod en {
     pub static CASHOUT_REQUESTED: &str = include_str!("../templates/en/cashout_requested.hbs");
     pub static CASHOUT_REJECTED: &str = include_str!("../templates/en/cashout_rejected.hbs");
     pub static CASHOUT_ADMIN_ALERT: &str = include_str!("../templates/en/cashout_admin_alert.hbs");
+    pub static DELETION_CONFIRM: &str = include_str!("../templates/en/deletion_confirm.hbs");
 }
 
 pub mod fr {
@@ -26,4 +27,5 @@ pub mod fr {
     pub static ROOM_INVITATION: &str = include_str!("../templates/fr/room_invitation.hbs");
     pub static CASHOUT_REQUESTED: &str = include_str!("../templates/fr/cashout_requested.hbs");
     pub static CASHOUT_REJECTED: &str = include_str!("../templates/fr/cashout_rejected.hbs");
+    pub static DELETION_CONFIRM: &str = include_str!("../templates/fr/deletion_confirm.hbs");
 }

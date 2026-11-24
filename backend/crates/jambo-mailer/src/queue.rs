@@ -351,6 +351,15 @@ mod tests {
         ) -> Result<(), String> {
             Ok(())
         }
+
+        async fn send_deletion_confirmation(
+            &self,
+            _to_email: &str,
+            _confirm_link: &str,
+            _lang: Lang,
+        ) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     #[test]

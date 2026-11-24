@@ -139,6 +139,15 @@ impl Mailer for MockMailer {
     ) -> Result<(), String> {
         self.result.lock().unwrap().take().unwrap_or(Ok(()))
     }
+
+    async fn send_deletion_confirmation(
+        &self,
+        _to_email: &str,
+        _confirm_link: &str,
+        _lang: Lang,
+    ) -> Result<(), String> {
+        self.result.lock().unwrap().take().unwrap_or(Ok(()))
+    }
 }
 // ── Room service mock ───────────────────────────────────────────────────
 

@@ -37,6 +37,8 @@ fn make_user(user_id: Uuid) -> User {
         language: "en".to_string(),
         created_at: now,
         updated_at: now,
+        deletion_requested_at: None,
+        deleted_at: None,
     }
 }
 

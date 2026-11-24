@@ -2,6 +2,7 @@
 #![allow(clippy::double_must_use)]
 
 pub mod config;
+pub mod deletion_token;
 pub mod error;
 pub mod i18n;
 pub mod observability;

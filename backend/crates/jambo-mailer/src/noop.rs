@@ -79,6 +79,13 @@ impl NoopMailer {
 
         super::register_cashout_templates(&mut handlebars)?;
 
+        handlebars
+            .register_template_string("en_deletion_confirm", jambo_templates::en::DELETION_CONFIRM)
+            .map_err(|e| format!("Failed to register en/deletion_confirm template: {e}"))?;
+        handlebars
+            .register_template_string("fr_deletion_confirm", jambo_templates::fr::DELETION_CONFIRM)
+            .map_err(|e| format!("Failed to register fr/deletion_confirm template: {e}"))?;
+
         let translator = Arc::new(Translator::new());
 
         Ok(Self {
@@ -364,6 +371,29 @@ impl Mailer for NoopMailer {
 
         tracing::info!(
             "[MAILER] Cashout admin alert to {to_email} (player {pseudo}, credits={credits}):\nHTML:\n{html}"
+        );
+        Ok(())
+    }
+
+    async fn send_deletion_confirmation(
+        &self,
+        to_email: &str,
+        confirm_link: &str,
+        lang: Lang,
+    ) -> Result<(), String> {
+        let data = super::DeletionConfirmationEmail {
+            confirm_link: confirm_link.to_string(),
+            frontend_url: self.config.frontend_url.clone(),
+            app_name: self.config.smtp_from_name.clone(),
+        };
+
+        let html = self
+            .handlebars
+            .render(&self.template_name("deletion_confirm", lang), &data)
+            .map_err(|e| format!("Failed to render template: {e}"))?;
+
+        tracing::info!(
+            "[MAILER] Deletion confirmation email for {to_email}:\nLink: {confirm_link}\nHTML:\n{html}"
         );
         Ok(())
     }
