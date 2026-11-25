@@ -24,3 +24,4 @@ utoipa = { version = "6", features = ["uuid", "chrono", "macros"] }
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
+sea-orm = { version = "2.0.0", features = ["mock"] }

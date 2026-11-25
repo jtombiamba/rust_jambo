@@ -116,7 +116,7 @@ impl CashoutRepository {
         processed_by: &str,
     ) -> Result<(), DbErr> {
         let now = chrono::Utc::now();
-        cashout_request::Entity::update_many()
+        let result = cashout_request::Entity::update_many()
             .col_expr(
                 cashout_request::Column::Status,
                 Expr::cust_with_values(
@@ -143,8 +143,88 @@ impl CashoutRepository {
                 sea_orm::sea_query::Expr::value(now),
             )
             .filter(cashout_request::Column::Id.eq(request.id))
+            .filter(cashout_request::Column::Status.eq(CashoutStatus::Approved))
             .exec(txn)
             .await?;
+        // Optimistic lock: the row must still be in `approved` when the update
+        // runs. If a concurrent request already transitioned it, no row matches
+        // and we must not overwrite its payout reference.
+        if result.rows_affected != 1 {
+            return Err(DbErr::Custom(
+                "request must be 'approved' before it can be marked processing".to_string(),
+            ));
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::PayoutMethod;
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, TransactionTrait};
+
+    fn make_request(status: CashoutStatus) -> CashoutRequest {
+        CashoutRequest {
+            id: Uuid::now_v7(),
+            user_id: Uuid::now_v7(),
+            credits: 100,
+            amount_eur_cents: 1_000,
+            status,
+            payout_method: PayoutMethod::StripeConnect,
+            payout_destination: "acct_123".to_string(),
+            payout_reference: None,
+            admin_note: None,
+            processed_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            processed_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_processing_in_txn_succeeds_when_row_updated() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+        let repo = CashoutRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .mark_processing_in_txn(
+                &txn,
+                &make_request(CashoutStatus::Approved),
+                "tr_1",
+                "admin",
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn mark_processing_in_txn_errors_when_row_not_updated() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 0,
+            }])
+            .into_connection();
+        let repo = CashoutRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .mark_processing_in_txn(
+                &txn,
+                &make_request(CashoutStatus::Approved),
+                "tr_1",
+                "admin",
+            )
+            .await;
+
+        assert!(matches!(result, Err(DbErr::Custom(_))));
     }
 }
