@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::api::topup::finalize_topup;
 use crate::api::unfreeze::finalize_unfreeze;
 use jambo_core::config::Config;
+use jambo_core::error::AppError;
 use jambo_core::i18n::Lang;
 use jambo_core::payment::stripe::verify_stripe_signature;
 use jambo_core::payment::PaymentServiceTrait;
@@ -28,13 +29,39 @@ const STRIPE_EVENT_TRANSFER_CREATED: &str = "transfer.created";
 const STRIPE_EVENT_TRANSFER_PAID: &str = "transfer.paid";
 const STRIPE_EVENT_TRANSFER_FAILED: &str = "transfer.failed";
 
+enum WebhookError {
+    /// The event is malformed in a way that will never change on retry; ack it
+    /// so Stripe stops retrying.
+    Permanent(String),
+    /// A transient failure (DB/Redis/provider down); let Stripe retry.
+    Transient(String),
+}
+
+fn classify_app_error(e: AppError) -> WebhookError {
+    match e {
+        AppError::Database(_)
+        | AppError::Internal(_)
+        | AppError::ExternalService(_)
+        | AppError::Serialization(_)
+        | AppError::Config(_) => WebhookError::Transient(e.to_string()),
+        AppError::Game(_)
+        | AppError::Validation(_)
+        | AppError::NotFound(_)
+        | AppError::Forbidden(_)
+        | AppError::Unauthorized(_)
+        | AppError::Conflict(_)
+        | AppError::BadRequest(_)
+        | AppError::BadRequestParams { .. } => WebhookError::Permanent(e.to_string()),
+    }
+}
+
 /// Stripe webhook receiver. Payment confirmation is webhook-driven for Stripe:
 /// the redirect back to the app is display-only, and credits are applied here
 /// only after the signature is verified and the session is completed.
 ///
-/// Returns `400` only for an invalid signature (Stripe would otherwise retry a
-/// malformed payload indefinitely); every valid event is acknowledged with
-/// `200` so Stripe stops retrying.
+/// Returns `400` only for an invalid signature; permanent malformed events are
+/// acknowledged with `200` so Stripe stops retrying, while transient failures
+/// return `500` so Stripe retries.
 pub async fn stripe_webhook(
     req: HttpRequest,
     body: web::Bytes,
@@ -72,9 +99,15 @@ pub async fn stripe_webhook(
 
     match event_type {
         STRIPE_EVENT_CHECKOUT_COMPLETED => {
-            if let Err(e) = handle_checkout_completed(&event, &db, redis.get_ref().clone()).await {
-                tracing::error!(error = %e, "failed to finalize stripe checkout session");
-                return HttpResponse::InternalServerError().body("finalization failed");
+            match handle_checkout_completed(&event, &db, redis.get_ref().clone()).await {
+                Ok(()) => {}
+                Err(WebhookError::Permanent(msg)) => {
+                    tracing::warn!(error = %msg, "stripe checkout event permanently unprocessable; acknowledging");
+                }
+                Err(WebhookError::Transient(msg)) => {
+                    tracing::error!(error = %msg, "failed to finalize stripe checkout session");
+                    return HttpResponse::InternalServerError().body("finalization failed");
+                }
             }
         }
         STRIPE_EVENT_ACCOUNT_UPDATED => {
@@ -112,22 +145,23 @@ async fn handle_checkout_completed(
     event: &serde_json::Value,
     db: &web::Data<sea_orm::DatabaseConnection>,
     mut redis: Option<RedisClient>,
-) -> Result<(), String> {
+) -> Result<(), WebhookError> {
     let session = event
         .get("data")
         .and_then(|d| d.get("object"))
-        .ok_or_else(|| "missing data.object".to_string())?;
+        .ok_or_else(|| WebhookError::Permanent("missing data.object".to_string()))?;
 
     let order_id = session
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing session id".to_string())?;
+        .ok_or_else(|| WebhookError::Permanent("missing session id".to_string()))?;
 
     let user_id_str = session
         .get("client_reference_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing client_reference_id".to_string())?;
-    let user_id = Uuid::parse_str(user_id_str).map_err(|e| e.to_string())?;
+        .ok_or_else(|| WebhookError::Permanent("missing client_reference_id".to_string()))?;
+    let user_id = Uuid::parse_str(user_id_str)
+        .map_err(|e| WebhookError::Permanent(format!("invalid client_reference_id: {e}")))?;
 
     let metadata = session.get("metadata").cloned().unwrap_or_default();
     let kind = metadata
@@ -138,12 +172,12 @@ async fn handle_checkout_completed(
         .get(META_AMOUNT_CENTS)
         .and_then(|v| v.as_str())
         .and_then(|v| v.parse::<i32>().ok())
-        .ok_or_else(|| "missing metadata amount_eur_cents".to_string())?;
+        .ok_or_else(|| WebhookError::Permanent("missing metadata amount_eur_cents".to_string()))?;
     let credits = metadata
         .get(META_CREDITS)
         .and_then(|v| v.as_str())
         .and_then(|v| v.parse::<i32>().ok())
-        .ok_or_else(|| "missing metadata credits".to_string())?;
+        .ok_or_else(|| WebhookError::Permanent("missing metadata credits".to_string()))?;
 
     match kind {
         META_VALUE_TOPUP => {
@@ -158,12 +192,12 @@ async fn handle_checkout_completed(
                 amount_eur_cents,
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(classify_app_error)?;
         }
         META_VALUE_UNFREEZE => {
             finalize_unfreeze(user_id, db, credits, amount_eur_cents)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(classify_app_error)?;
         }
         other => {
             tracing::warn!(session = %order_id, kind = %other, "unknown checkout metadata kind");
@@ -380,5 +414,28 @@ async fn notify_payout_result(
         Err(e) => {
             tracing::error!(user_id = %user_id, error = %e, "failed to load user for payout notification");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_app_error;
+    use super::WebhookError;
+    use jambo_core::error::AppError;
+
+    #[test]
+    fn classify_app_error_is_transient_for_internal() {
+        assert!(matches!(
+            classify_app_error(AppError::Internal("boom".to_string())),
+            WebhookError::Transient(_)
+        ));
+    }
+
+    #[test]
+    fn classify_app_error_is_permanent_for_not_found() {
+        assert!(matches!(
+            classify_app_error(AppError::NotFound("payment.profile_not_found")),
+            WebhookError::Permanent(_)
+        ));
     }
 }

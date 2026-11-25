@@ -205,7 +205,7 @@ async fn stripe_webhook_completes_topup_checkout() {
 }
 
 #[actix_web::test]
-async fn stripe_webhook_missing_client_reference_returns_500() {
+async fn stripe_webhook_missing_client_reference_returns_200() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
     let app = make_app(config_with_secret(), db).await;
     let payload = serde_json::json!({
@@ -225,7 +225,7 @@ async fn stripe_webhook_missing_client_reference_returns_500() {
         .set_payload(payload)
         .to_request();
     let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 500);
+    assert_eq!(resp.status(), 200);
 }
 
 #[actix_web::test]
