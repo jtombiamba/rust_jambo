@@ -305,8 +305,15 @@ impl CashoutRepository {
         note: &str,
         processed_by: &str,
     ) -> Result<(), DbErr> {
-        self.finalize_in_txn(txn, request, CashoutStatus::Approved, note, processed_by)
-            .await
+        self.finalize_in_txn(
+            txn,
+            request,
+            CashoutStatus::Approved,
+            note,
+            processed_by,
+            &[CashoutStatus::Requested],
+        )
+        .await
     }
 
     /// Reject a pending request, refund the reserved credits, and unlock the
@@ -321,8 +328,15 @@ impl CashoutRepository {
     ) -> Result<(), DbErr> {
         self.credit_user_in_txn(txn, request.user_id, request.credits)
             .await?;
-        self.finalize_in_txn(txn, request, CashoutStatus::Rejected, note, processed_by)
-            .await
+        self.finalize_in_txn(
+            txn,
+            request,
+            CashoutStatus::Rejected,
+            note,
+            processed_by,
+            &[CashoutStatus::Requested, CashoutStatus::Approved],
+        )
+        .await
     }
 
     /// Mark a request paid with the payout reference (PayPal batch id or Stripe
@@ -386,9 +400,10 @@ impl CashoutRepository {
         status: CashoutStatus,
         note: &str,
         processed_by: &str,
+        source_statuses: &[CashoutStatus],
     ) -> Result<(), DbErr> {
         let now = chrono::Utc::now();
-        cashout_request::Entity::update_many()
+        let result = cashout_request::Entity::update_many()
             .col_expr(
                 cashout_request::Column::Status,
                 Expr::cust_with_values(
@@ -413,12 +428,18 @@ impl CashoutRepository {
                 sea_orm::sea_query::Expr::value(now),
             )
             .filter(cashout_request::Column::Id.eq(request.id))
-            .filter(
-                cashout_request::Column::Status
-                    .is_in([CashoutStatus::Requested, CashoutStatus::Approved]),
-            )
+            .filter(cashout_request::Column::Status.is_in(source_statuses.iter().copied()))
             .exec(txn)
             .await?;
+        // Optimistic lock: the row must still be in one of the expected source
+        // statuses. If a concurrent transition moved it first, the refund (in
+        // reject/fail callers) must roll back, so we must not unlock or report
+        // success.
+        if result.rows_affected != 1 {
+            return Err(DbErr::Custom(
+                "request is not in an expected status for this transition".to_string(),
+            ));
+        }
         self.unlock_user_in_txn(txn, request.user_id).await?;
         Ok(())
     }

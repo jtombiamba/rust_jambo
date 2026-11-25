@@ -106,6 +106,7 @@ impl CashoutRepository {
             CashoutStatus::Rejected,
             note,
             "stripe-webhook",
+            &[CashoutStatus::Processing],
         )
         .await?;
         txn.commit().await?;
@@ -228,6 +229,63 @@ mod tests {
                 &make_request(CashoutStatus::Approved),
                 "tr_1",
                 "admin",
+            )
+            .await;
+
+        assert!(matches!(result, Err(DbErr::Custom(_))));
+    }
+
+    #[tokio::test]
+    async fn finalize_in_txn_succeeds_when_row_matches_source_status() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 1,
+                },
+                // unlock_user_in_txn
+                MockExecResult {
+                    last_insert_id: 0,
+                    rows_affected: 1,
+                },
+            ])
+            .into_connection();
+        let repo = CashoutRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .finalize_in_txn(
+                &txn,
+                &make_request(CashoutStatus::Processing),
+                CashoutStatus::Rejected,
+                "stripe transfer failed",
+                "stripe-webhook",
+                &[CashoutStatus::Processing],
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn finalize_in_txn_errors_when_row_does_not_match_source_status() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 0,
+            }])
+            .into_connection();
+        let repo = CashoutRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .finalize_in_txn(
+                &txn,
+                &make_request(CashoutStatus::Paid),
+                CashoutStatus::Rejected,
+                "stripe transfer failed",
+                "stripe-webhook",
+                &[CashoutStatus::Processing],
             )
             .await;
 
