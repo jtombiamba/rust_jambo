@@ -5,7 +5,7 @@ import './App.css'
 import GameTable from './components/GameTable'
 import AuthModal from './components/AuthModal'
 import GameRules from './components/GameRules'
-import UserDashboard from './components/UserDashboard'
+import UserDashboard from './components/dashboard/UserDashboard'
 import GameLobby from './components/GameLobby'
 import Footer from './components/Footer'
 import { ToastProvider } from './components/Toast'
@@ -19,7 +19,6 @@ import { extractApiError } from './utils/errors'
 import { generateIdempotencyKey } from './utils/idempotency'
 import LanguageSwitcher from './components/LanguageSwitcher'
 import ToggleSwitch from './components/ToggleSwitch'
-import RoomList from './components/RoomList'
 import RoomDashboard from './components/RoomDashboard'
 import CreateRoomModal from './components/CreateRoomModal'
 import JoinRoomForm from './components/JoinRoomForm'
@@ -785,18 +784,14 @@ function AppContent() {
             onStartMultiplayerGame={startMultiplayerGame}
             onResumeGame={handleResumeGame}
             onViewLobby={handleViewLobby}
+            onOpenRoom={handleOpenRoom}
+            onCreateRoom={() => setShowCreateRoom(true)}
+            onJoinRoom={() => setShowJoinRoom(true)}
             starting={startingGame}
             error={error}
             stepByStep={stepByStepToggle}
             onStepByStepChange={setStepByStepToggle}
           />
-          <div className="container mx-auto px-4 sm:px-8">
-            <RoomList
-              onSelectRoom={handleOpenRoom}
-              onCreateRoom={() => setShowCreateRoom(true)}
-              onJoinRoom={() => setShowJoinRoom(true)}
-            />
-          </div>
         </div>
         <Footer />
       </div>

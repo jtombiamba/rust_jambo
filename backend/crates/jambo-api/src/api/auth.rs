@@ -3,8 +3,10 @@ use std::sync::Arc;
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, ResponseError};
 
 use crate::api::dto::auth::{
-    AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, LogoutResponse,
-    RegisterRequest, ResetPasswordRequest, ResetPasswordResponse, UserInfo,
+    AuthResponse, ChangeEmailRequest, ChangeEmailResponse, ChangeLanguageRequest,
+    ChangeLanguageResponse, ChangePasswordRequest, ChangePasswordResponse, ForgotPasswordRequest,
+    ForgotPasswordResponse, LoginRequest, LogoutResponse, RegisterRequest, ResetPasswordRequest,
+    ResetPasswordResponse, UserInfo,
 };
 use crate::api::dto::responses::ApiErrorResponse;
 use crate::api::services::auth_service::AuthServiceTrait;
@@ -180,6 +182,99 @@ pub async fn me(
 ) -> HttpResponse {
     match service.me(auth_user.user_id).await {
         Ok(user_info) => HttpResponse::Ok().json(user_info),
+        Err(e) => e.error_response(),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/auth/change-password",
+    tag = "auth",
+    security(("cookie_auth" = [])),
+    request_body = ChangePasswordRequest,
+    responses(
+        (status = 200, description = "Password changed", body = ChangePasswordResponse),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+        (status = 401, description = "Invalid current password", body = ApiErrorResponse),
+    )
+)]
+pub async fn change_password(
+    auth_user: AuthenticatedUser,
+    body: web::Json<ChangePasswordRequest>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
+    i18n: I18n,
+) -> HttpResponse {
+    match service
+        .change_password(auth_user.user_id, body.into_inner(), i18n.lang)
+        .await
+    {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => e.error_response(),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/auth/change-email",
+    tag = "auth",
+    security(("cookie_auth" = [])),
+    request_body = ChangeEmailRequest,
+    responses(
+        (status = 200, description = "Email changed", body = ChangeEmailResponse),
+        (status = 400, description = "Validation error", body = ApiErrorResponse),
+        (status = 401, description = "Invalid current password", body = ApiErrorResponse),
+        (status = 409, description = "Email already in use", body = ApiErrorResponse),
+    )
+)]
+pub async fn change_email(
+    auth_user: AuthenticatedUser,
+    body: web::Json<ChangeEmailRequest>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
+    i18n: I18n,
+) -> HttpResponse {
+    match service
+        .change_email(auth_user.user_id, body.into_inner(), i18n.lang)
+        .await
+    {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => e.error_response(),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/auth/language",
+    tag = "auth",
+    security(("cookie_auth" = [])),
+    request_body = ChangeLanguageRequest,
+    responses(
+        (status = 200, description = "Language persisted", body = ChangeLanguageResponse),
+        (status = 400, description = "Invalid language", body = ApiErrorResponse),
+        (status = 401, description = "Authentication required", body = ApiErrorResponse),
+    )
+)]
+pub async fn set_language(
+    auth_user: AuthenticatedUser,
+    body: web::Json<ChangeLanguageRequest>,
+    service: web::Data<Arc<dyn AuthServiceTrait>>,
+    i18n: I18n,
+) -> HttpResponse {
+    let result = service
+        .set_language(auth_user.user_id, body.into_inner(), i18n.lang)
+        .await;
+
+    match result {
+        Ok(response) => {
+            let mut resp = HttpResponse::Ok();
+            let mut lang_cookie = actix_web::cookie::Cookie::new("lang", response.language.clone());
+            lang_cookie.set_path("/");
+            lang_cookie.set_http_only(false);
+            lang_cookie.set_secure(false);
+            lang_cookie.set_same_site(actix_web::cookie::SameSite::Strict);
+            lang_cookie.set_max_age(actix_web::cookie::time::Duration::days(365));
+            resp.cookie(lang_cookie);
+            resp.json(response)
+        }
         Err(e) => e.error_response(),
     }
 }

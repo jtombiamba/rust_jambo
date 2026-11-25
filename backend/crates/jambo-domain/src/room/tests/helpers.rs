@@ -415,6 +415,13 @@ impl UserRepoTrait for StubUserRepo {
     ) -> Result<jambo_db::models::User, sea_orm::DbErr> {
         Err(sea_orm::DbErr::Custom("stub".into()))
     }
+    async fn update_email(
+        &self,
+        _id: Uuid,
+        _email: &str,
+    ) -> Result<jambo_db::models::User, sea_orm::DbErr> {
+        Err(sea_orm::DbErr::Custom("stub".into()))
+    }
 }
 
 pub(super) struct StubEventPublisher;

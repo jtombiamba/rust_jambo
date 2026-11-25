@@ -17,6 +17,40 @@
     "slot": "Slot",
     "turn": "Turn: Player {player}"
   },
+  "nav": {
+    "dashboard": "Dashboard",
+    "play": "Play",
+    "rooms": "Rooms",
+    "leaderboard": "Leaderboard",
+    "history": "History"
+  },
+  "account": {
+    "accountSettings": "Account Settings",
+    "notifications": "Notifications",
+    "themeCustomization": "Theme & Customization",
+    "security2fa": "Security & 2FA",
+    "transactionHistory": "Transaction History",
+    "withdrawCashout": "Withdraw / Cashout",
+    "helpSupport": "Help & Support",
+    "language": "Language",
+    "changeEmail": "Change Email",
+    "changePassword": "Change Password",
+    "currentPassword": "Current Password",
+    "newEmail": "New Email",
+    "newPassword": "New Password",
+    "confirmNewPassword": "Confirm New Password",
+    "save": "Save",
+    "saving": "Saving...",
+    "emailChanged": "Email changed successfully",
+    "passwordChanged": "Password changed successfully",
+    "languageChanged": "Language updated",
+    "currentPasswordRequired": "Current password is required",
+    "newEmailInvalid": "Enter a valid email",
+    "newPasswordTooShort": "New password must be at least 8 characters",
+    "newPasswordsDontMatch": "New passwords do not match",
+    "failedChangeEmail": "Failed to change email",
+    "failedChangePassword": "Failed to change password"
+  },
   "auth": {
     "welcome": "Welcome",
     "backToLogin": "Back to login",
@@ -64,7 +98,7 @@
     "soloGame": "Solo Game",
     "multiplayerGame": "Multiplayer Game",
     "topUp": "Top Up",
-    "topUpAmount": "Top Up €{{amount}}",
+    "topUpAmount": "Top Up €{amount}",
     "games": "Games",
     "hideGames": "Hide Games",
     "leaderboard": "Leaderboard",
@@ -143,7 +177,13 @@
     "cashoutHideHistory": "Hide Cashout History",
     "cashoutNoHistory": "No cashout requests yet.",
     "cashoutAmount": "Amount",
-    "cashoutEmail": "Destination"
+    "cashoutEmail": "Destination",
+    "winRate": "Win Rate",
+    "statsOverview": "Stats Overview",
+    "quickPlay": "Quick Play",
+    "quickPlaySubtitle": "Jump into a game in seconds.",
+    "topUpTitle": "Top Up Credits",
+    "topUpChooseAmount": "Choose an amount to add credits to your account."
   },
   "game": {
     "gameTable": "Game Table",
@@ -297,7 +337,8 @@
     "you": "(you)",
     "youRow": "You",
     "topByStreak": "Top by Streak",
-    "streak": "Streak"
+    "streak": "Streak",
+    "yourRank": "Your rank"
   },
   "legal": {
     "title": "Legal mentions",

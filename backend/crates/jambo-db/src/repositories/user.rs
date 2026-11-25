@@ -190,6 +190,18 @@ impl UserRepository {
         active.update(&self.connection).await
     }
 
+    #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
+    pub async fn update_email(&self, id: Uuid, email: &str) -> Result<User, DbErr> {
+        let user_model = user::Entity::find_by_id(id)
+            .one(&self.connection)
+            .await?
+            .ok_or_else(|| DbErr::Custom("User not found".to_string()))?;
+        let mut active: user::ActiveModel = user_model.into();
+        active.email = Set(email.to_string());
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(&self.connection).await
+    }
+
     /// Persist the opaque Stripe Connect account id for a user after onboarding
     /// is initiated (or completed via webhook).
     #[tracing::instrument(skip(self), fields(db.statement, db.rows_affected))]
@@ -360,6 +372,10 @@ impl UserRepoTrait for UserRepository {
 
     async fn update_language(&self, id: Uuid, language: &str) -> Result<User, DbErr> {
         self.update_language(id, language).await
+    }
+
+    async fn update_email(&self, id: Uuid, email: &str) -> Result<User, DbErr> {
+        self.update_email(id, email).await
     }
 }
 

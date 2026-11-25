@@ -2,8 +2,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::api::dto::auth::{
-    AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, RegisterRequest,
-    ResetPasswordRequest, ResetPasswordResponse, UserInfo,
+    AuthResponse, ChangeEmailRequest, ChangeEmailResponse, ChangeLanguageRequest,
+    ChangeLanguageResponse, ChangePasswordRequest, ChangePasswordResponse, ForgotPasswordRequest,
+    ForgotPasswordResponse, LoginRequest, RegisterRequest, ResetPasswordRequest,
+    ResetPasswordResponse, UserInfo,
 };
 use crate::auth::config::AuthConfig;
 use crate::auth::jwt;
@@ -41,6 +43,27 @@ pub trait AuthServiceTrait: Send + Sync {
         lang: Lang,
     ) -> Result<ResetPasswordResponse, AuthError>;
 
+    async fn change_password(
+        &self,
+        user_id: Uuid,
+        body: ChangePasswordRequest,
+        lang: Lang,
+    ) -> Result<ChangePasswordResponse, AuthError>;
+
+    async fn change_email(
+        &self,
+        user_id: Uuid,
+        body: ChangeEmailRequest,
+        lang: Lang,
+    ) -> Result<ChangeEmailResponse, AuthError>;
+
+    async fn set_language(
+        &self,
+        user_id: Uuid,
+        body: ChangeLanguageRequest,
+        lang: Lang,
+    ) -> Result<ChangeLanguageResponse, AuthError>;
+
     async fn me(&self, user_id: Uuid) -> Result<UserInfo, AuthError>;
 }
 
@@ -57,10 +80,10 @@ pub struct LoginResult {
 }
 
 pub struct AuthService<R: UserRepoTrait> {
-    repo: Arc<R>,
+    pub(crate) repo: Arc<R>,
     config: AuthConfig,
     email_queue: EmailQueue,
-    translator: Arc<Translator>,
+    pub(crate) translator: Arc<Translator>,
 }
 
 impl<R: UserRepoTrait> AuthService<R> {
@@ -422,138 +445,34 @@ impl<R: UserRepoTrait> AuthServiceTrait for AuthService<R> {
         AuthService::reset_password(self, body, lang).await
     }
 
+    async fn change_password(
+        &self,
+        user_id: Uuid,
+        body: ChangePasswordRequest,
+        lang: Lang,
+    ) -> Result<ChangePasswordResponse, AuthError> {
+        AuthService::change_password(self, user_id, body, lang).await
+    }
+
+    async fn change_email(
+        &self,
+        user_id: Uuid,
+        body: ChangeEmailRequest,
+        lang: Lang,
+    ) -> Result<ChangeEmailResponse, AuthError> {
+        AuthService::change_email(self, user_id, body, lang).await
+    }
+
+    async fn set_language(
+        &self,
+        user_id: Uuid,
+        body: ChangeLanguageRequest,
+        lang: Lang,
+    ) -> Result<ChangeLanguageResponse, AuthError> {
+        AuthService::set_language(self, user_id, body, lang).await
+    }
+
     async fn me(&self, user_id: Uuid) -> Result<UserInfo, AuthError> {
         AuthService::me(self, user_id).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use jambo_db::models::{PlayerProfile, User};
-    use jambo_db::traits::UserRepoTrait;
-    use sea_orm::DbErr;
-
-    struct MockUserRepo {
-        user: Option<User>,
-    }
-
-    #[async_trait::async_trait]
-    impl UserRepoTrait for MockUserRepo {
-        async fn find_by_email(&self, _email: &str) -> Result<Option<User>, DbErr> {
-            Ok(self.user.clone())
-        }
-        async fn find_by_id(&self, _id: Uuid) -> Result<Option<User>, DbErr> {
-            Ok(self.user.clone())
-        }
-        async fn find_by_ids(&self, _ids: &[Uuid]) -> Result<Vec<User>, DbErr> {
-            Ok(vec![])
-        }
-        async fn find_by_pseudo(&self, _pseudo: &str) -> Result<Option<User>, DbErr> {
-            Ok(self.user.clone())
-        }
-        async fn find_by_pseudo_prefix(
-            &self,
-            _prefix: &str,
-            _limit: u64,
-        ) -> Result<Vec<User>, DbErr> {
-            Ok(vec![])
-        }
-        async fn create_user_with_profile(
-            &self,
-            _pseudo: &str,
-            _email: &str,
-            _password_hash: &str,
-            _ip_hash: Option<&str>,
-        ) -> Result<(User, PlayerProfile), DbErr> {
-            Err(DbErr::Custom("stub".into()))
-        }
-        async fn update_password_hash(&self, _id: Uuid, _hash: &str) -> Result<User, DbErr> {
-            Err(DbErr::Custom("stub".into()))
-        }
-        async fn update_last_ip_hash(&self, _id: Uuid, _hash: &str) -> Result<User, DbErr> {
-            Err(DbErr::Custom("stub".into()))
-        }
-        async fn update_language(&self, _id: Uuid, _language: &str) -> Result<User, DbErr> {
-            Err(DbErr::Custom("stub".into()))
-        }
-    }
-
-    fn auth_config() -> AuthConfig {
-        AuthConfig {
-            jwt_secret: "test-secret-key-for-testing-only-1234567890".to_string(),
-            jwt_expiry_hours: 24,
-            ip_hash_pepper: "test-pepper".to_string(),
-            frontend_url: "http://localhost".to_string(),
-        }
-    }
-
-    fn make_user(deleted_at: Option<chrono::DateTime<chrono::Utc>>) -> User {
-        let now = chrono::Utc::now();
-        User {
-            id: Uuid::now_v7(),
-            pseudo: "alice".to_string(),
-            email: "alice@example.com".to_string(),
-            password_hash: jambo_core::password::hash_password("password1").unwrap(),
-            last_ip_hash: None,
-            language: "en".to_string(),
-            stripe_connect_account_id: None,
-            stripe_connect_account_status: jambo_db::models::ConnectAccountStatus::NotCreated,
-            created_at: now,
-            updated_at: now,
-            deletion_requested_at: None,
-            deleted_at,
-        }
-    }
-
-    fn service(repo: Arc<MockUserRepo>) -> AuthService<MockUserRepo> {
-        AuthService::new(
-            repo,
-            auth_config(),
-            jambo_mailer::EmailQueue::channel().0,
-            Arc::new(Translator::new()),
-        )
-    }
-
-    #[tokio::test]
-    async fn login_rejects_soft_deleted_user() {
-        let user = make_user(Some(chrono::Utc::now()));
-        let service = service(Arc::new(MockUserRepo { user: Some(user) }));
-
-        let result = service
-            .login(
-                LoginRequest {
-                    email: "alice@example.com".to_string(),
-                    password: "password1".to_string(),
-                },
-                None,
-                Lang::En,
-            )
-            .await;
-
-        match result {
-            Err(AuthError::Unauthorized { key }) => assert_eq!(key, "auth.account_deleted"),
-            Err(other) => panic!("expected unauthorized account_deleted, got {other:?}"),
-            Ok(_) => panic!("expected soft-deleted user to be rejected"),
-        }
-    }
-
-    #[tokio::test]
-    async fn login_succeeds_for_active_user() {
-        let user = make_user(None);
-        let service = service(Arc::new(MockUserRepo { user: Some(user) }));
-
-        let result = service
-            .login(
-                LoginRequest {
-                    email: "alice@example.com".to_string(),
-                    password: "password1".to_string(),
-                },
-                None,
-                Lang::En,
-            )
-            .await
-            .expect("active user must log in");
-        assert!(result.response.user.is_some());
     }
 }

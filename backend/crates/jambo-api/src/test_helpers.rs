@@ -3,8 +3,10 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 
 use crate::api::dto::auth::{
-    AuthResponse, ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, RegisterRequest,
-    ResetPasswordRequest, ResetPasswordResponse, UserInfo,
+    AuthResponse, ChangeEmailRequest, ChangeEmailResponse, ChangeLanguageRequest,
+    ChangeLanguageResponse, ChangePasswordRequest, ChangePasswordResponse, ForgotPasswordRequest,
+    ForgotPasswordResponse, LoginRequest, RegisterRequest, ResetPasswordRequest,
+    ResetPasswordResponse, UserInfo,
 };
 use crate::api::dto::dashboard::{GameHistoryResponse, PaginationParams, PlayerProfileResponse};
 use crate::api::dto::requests::UserSearchQuery;
@@ -147,6 +149,44 @@ impl AuthServiceTrait for MockAuthService {
                 success: true,
                 message: "ok".into(),
             }))
+    }
+
+    async fn change_password(
+        &self,
+        _user_id: uuid::Uuid,
+        _body: ChangePasswordRequest,
+        _lang: Lang,
+    ) -> Result<ChangePasswordResponse, AuthError> {
+        Ok(ChangePasswordResponse {
+            success: true,
+            message: "ok".into(),
+        })
+    }
+
+    async fn change_email(
+        &self,
+        _user_id: uuid::Uuid,
+        _body: ChangeEmailRequest,
+        _lang: Lang,
+    ) -> Result<ChangeEmailResponse, AuthError> {
+        Ok(ChangeEmailResponse {
+            success: true,
+            message: "ok".into(),
+            user: None,
+        })
+    }
+
+    async fn set_language(
+        &self,
+        _user_id: uuid::Uuid,
+        body: ChangeLanguageRequest,
+        _lang: Lang,
+    ) -> Result<ChangeLanguageResponse, AuthError> {
+        Ok(ChangeLanguageResponse {
+            success: true,
+            message: "ok".into(),
+            language: body.language,
+        })
     }
 
     async fn me(&self, _user_id: uuid::Uuid) -> Result<UserInfo, AuthError> {

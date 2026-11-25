@@ -17,6 +17,40 @@
     "slot": "Emplacement",
     "turn": "Tour : Joueur {player}"
   },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "play": "Jouer",
+    "rooms": "Salons",
+    "leaderboard": "Classement",
+    "history": "Historique"
+  },
+  "account": {
+    "accountSettings": "Paramètres du compte",
+    "notifications": "Notifications",
+    "themeCustomization": "Thème et personnalisation",
+    "security2fa": "Sécurité & 2FA",
+    "transactionHistory": "Historique des transactions",
+    "withdrawCashout": "Retrait / Retirer",
+    "helpSupport": "Aide & Support",
+    "language": "Langue",
+    "changeEmail": "Changer l'email",
+    "changePassword": "Changer le mot de passe",
+    "currentPassword": "Mot de passe actuel",
+    "newEmail": "Nouvel email",
+    "newPassword": "Nouveau mot de passe",
+    "confirmNewPassword": "Confirmer le nouveau mot de passe",
+    "save": "Enregistrer",
+    "saving": "Enregistrement...",
+    "emailChanged": "Email modifié avec succès",
+    "passwordChanged": "Mot de passe modifié avec succès",
+    "languageChanged": "Langue mise à jour",
+    "currentPasswordRequired": "Le mot de passe actuel est requis",
+    "newEmailInvalid": "Saisissez un email valide",
+    "newPasswordTooShort": "Le nouveau mot de passe doit contenir au moins 8 caractères",
+    "newPasswordsDontMatch": "Les nouveaux mots de passe ne correspondent pas",
+    "failedChangeEmail": "Échec du changement d'email",
+    "failedChangePassword": "Échec du changement de mot de passe"
+  },
   "auth": {
     "welcome": "Bienvenue",
     "backToLogin": "Retour à la connexion",
@@ -64,7 +98,7 @@
     "soloGame": "Partie solo",
     "multiplayerGame": "Partie multijoueur",
     "topUp": "Recharger",
-    "topUpAmount": "Recharger €{{amount}}",
+    "topUpAmount": "Recharger €{amount}",
     "games": "Parties",
     "hideGames": "Masquer les parties",
     "leaderboard": "Classement",
@@ -143,7 +177,13 @@
     "cashoutHideHistory": "Masquer l'historique des retraits",
     "cashoutNoHistory": "Aucune demande de retrait pour le moment.",
     "cashoutAmount": "Montant",
-    "cashoutEmail": "Destination"
+    "cashoutEmail": "Destination",
+    "winRate": "Taux de victoire",
+    "statsOverview": "Aperçu des statistiques",
+    "quickPlay": "Partie rapide",
+    "quickPlaySubtitle": "Lancez une partie en quelques secondes.",
+    "topUpTitle": "Recharger des crédits",
+    "topUpChooseAmount": "Choisissez un montant pour ajouter des crédits à votre compte."
   },
   "game": {
     "gameTable": "Table de jeu",
@@ -297,7 +337,8 @@
     "you": "(vous)",
     "youRow": "Vous",
     "topByStreak": "Top par série",
-    "streak": "Série"
+    "streak": "Série",
+    "yourRank": "Votre classement"
   },
   "legal": {
     "title": "Mentions légales",

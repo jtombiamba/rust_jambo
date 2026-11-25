@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import axios from 'axios'
 import i18n from '../i18n/config'
+import { useAuthStore } from './useAuthStore'
 
 interface Language {
   code: string
@@ -58,7 +59,12 @@ export const useLanguageStore = create<LanguageState>((set, get) => ({
     set({ language: lang })
 
     try {
-      await axios.post('/api/lang', { lang })
+      const authenticated = useAuthStore.getState().isAuthenticated
+      if (authenticated) {
+        await axios.post('/api/auth/language', { language: lang })
+      } else {
+        await axios.post('/api/lang', { lang })
+      }
     } catch {
       i18n.changeLanguage(prevLanguage)
       set({ language: prevLanguage })

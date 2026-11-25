@@ -38,6 +38,7 @@ interface AuthState {
   setAuthView: (view: AuthView) => void
   clearPendingInvite: () => void
   setFrozenUntil: (frozenUntil: string | null) => void
+  setUserEmail: (email: string) => void
   checkAuth: () => Promise<void>
   register: (data: RegisterPayload) => Promise<boolean>
   login: (data: LoginPayload) => Promise<boolean>
@@ -60,6 +61,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   setAuthView: (view) => set({ authView: view, authError: null }),
   clearPendingInvite: () => set({ pendingInviteMessage: null }),
   setFrozenUntil: (frozenUntil) => set({ frozenUntil }),
+  setUserEmail: (email) =>
+    set((state) => ({ user: state.user ? { ...state.user, email } : state.user })),
 
   checkAuth: async () => {
     try {

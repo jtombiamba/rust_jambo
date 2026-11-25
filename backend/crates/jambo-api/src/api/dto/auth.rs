@@ -27,6 +27,24 @@ pub struct ResetPasswordRequest {
     pub password_confirm: String,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+    pub new_password_confirm: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ChangeEmailRequest {
+    pub new_email: String,
+    pub current_password: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ChangeLanguageRequest {
+    pub language: String,
+}
+
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct AuthResponse {
     pub success: bool,
@@ -58,4 +76,24 @@ pub struct ResetPasswordResponse {
 pub struct LogoutResponse {
     pub success: bool,
     pub message: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ChangePasswordResponse {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ChangeEmailResponse {
+    pub success: bool,
+    pub message: String,
+    pub user: Option<UserInfo>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct ChangeLanguageResponse {
+    pub success: bool,
+    pub message: String,
+    pub language: String,
 }

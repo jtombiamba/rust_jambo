@@ -8,6 +8,11 @@ vi.mock('axios', () => ({
   default: {
     get: vi.fn(),
     post: vi.fn().mockResolvedValue({ data: { success: true } }),
+    defaults: {},
+    interceptors: {
+      request: { use: vi.fn() },
+      response: { use: vi.fn() },
+    },
   },
 }));
 

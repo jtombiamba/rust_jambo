@@ -1,4 +1,7 @@
-use crate::api::auth::{forgot_password, login, logout, me, register, reset_password};
+use crate::api::auth::{
+    change_email, change_password, forgot_password, login, logout, me, register, reset_password,
+    set_language,
+};
 use crate::api::services::auth_service::AuthServiceTrait;
 use crate::auth::config::AuthConfig;
 use crate::auth::extractors::AuthenticatedUser;
@@ -44,7 +47,10 @@ async fn make_auth_app(
             .service(web::resource("/forgot-password").route(web::post().to(forgot_password)))
             .service(web::resource("/reset-password").route(web::post().to(reset_password)))
             .service(web::resource("/logout").route(web::post().to(logout)))
-            .service(web::resource("/me").route(web::get().to(me))),
+            .service(web::resource("/me").route(web::get().to(me)))
+            .service(web::resource("/change-password").route(web::post().to(change_password)))
+            .service(web::resource("/change-email").route(web::post().to(change_email)))
+            .service(web::resource("/language").route(web::post().to(set_language))),
     )
     .await
 }
@@ -222,4 +228,57 @@ async fn me_not_found_returns_404() {
     req.extensions_mut().insert(user);
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 404);
+}
+
+#[actix_web::test]
+async fn change_password_success() {
+    let app = make_auth_app(Arc::new(MockAuthService::new())).await;
+    let user = authenticated_user();
+    let req = test::TestRequest::post()
+        .uri("/change-password")
+        .set_json(serde_json::json!({
+            "current_password": "password1",
+            "new_password": "newpassword2",
+            "new_password_confirm": "newpassword2"
+        }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["success"], true);
+}
+
+#[actix_web::test]
+async fn change_email_success() {
+    let app = make_auth_app(Arc::new(MockAuthService::new())).await;
+    let user = authenticated_user();
+    let req = test::TestRequest::post()
+        .uri("/change-email")
+        .set_json(serde_json::json!({
+            "new_email": "new@example.com",
+            "current_password": "password1"
+        }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["success"], true);
+}
+
+#[actix_web::test]
+async fn set_language_success_sets_cookie() {
+    let app = make_auth_app(Arc::new(MockAuthService::new())).await;
+    let user = authenticated_user();
+    let req = test::TestRequest::post()
+        .uri("/language")
+        .set_json(serde_json::json!({ "language": "fr" }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 200);
+    assert!(resp.headers().get("set-cookie").is_some());
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["language"], "fr");
 }

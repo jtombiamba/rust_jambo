@@ -28,8 +28,8 @@ pub trait UserRepoTrait: Send + Sync {
     ) -> Result<(User, PlayerProfile), DbErr>;
     async fn update_password_hash(&self, id: Uuid, hash: &str) -> Result<User, DbErr>;
     async fn update_last_ip_hash(&self, id: Uuid, hash: &str) -> Result<User, DbErr>;
-    #[allow(dead_code)]
     async fn update_language(&self, id: Uuid, language: &str) -> Result<User, DbErr>;
+    async fn update_email(&self, id: Uuid, email: &str) -> Result<User, DbErr>;
 }
 
 #[async_trait]

@@ -121,6 +121,21 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: &AppState) {
                                 .wrap(reset_pw_limiter.clone())
                                 .route(web::post().to(jambo_api::api::auth::reset_password)),
                         )
+                        .service(
+                            web::resource("/change-password")
+                                .wrap(auth_mw.clone())
+                                .route(web::post().to(jambo_api::api::auth::change_password)),
+                        )
+                        .service(
+                            web::resource("/change-email")
+                                .wrap(auth_mw.clone())
+                                .route(web::post().to(jambo_api::api::auth::change_email)),
+                        )
+                        .service(
+                            web::resource("/language")
+                                .wrap(auth_mw.clone())
+                                .route(web::post().to(jambo_api::api::auth::set_language)),
+                        )
                         .route("/logout", web::post().to(jambo_api::api::auth::logout))
                         .service(
                             web::resource("/me")

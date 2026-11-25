@@ -89,6 +89,19 @@ test.describe('Cashout request from profile', () => {
       }),
     );
 
+    await page.route('**/api/me/leaderboard', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          top_by_wins: [],
+          top_by_streak: [],
+          current_user_wins_rank: null,
+          current_user_streak_rank: null,
+        }),
+      }),
+    );
+
     await page.route(/\/api\/me\/cashout/, (route) => {
       if (route.request().method() === 'POST') {
         return route.fulfill({
@@ -113,10 +126,8 @@ test.describe('Cashout request from profile', () => {
   test('requests a cashout from the profile', async ({ page }) => {
     await page.goto('/');
 
-    await expect(
-      page.getByRole('button', { name: 'Request Cashout' }),
-    ).toBeVisible();
-    await page.getByRole('button', { name: 'Request Cashout' }).click();
+    await page.getByRole('button', { name: 'Menu' }).click();
+    await page.getByRole('button', { name: 'Withdraw / Cashout' }).click();
 
     await page.getByLabel('Credits to withdraw').fill('250');
     await page.getByLabel('PayPal email').fill('payer@example.com');
@@ -164,7 +175,8 @@ test.describe('Cashout request from profile', () => {
 
     await page.goto('/');
 
-    await page.getByRole('button', { name: 'Cashout History' }).click();
+    await page.getByRole('button', { name: 'Menu' }).click();
+    await page.getByRole('button', { name: 'Transaction History' }).click();
 
     await expect(page.getByText('1.00 EUR')).toBeVisible();
     await expect(page.getByText('requested')).toBeVisible();
