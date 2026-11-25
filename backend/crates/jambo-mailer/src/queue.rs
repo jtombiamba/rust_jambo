@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -7,6 +8,12 @@ use jambo_i18n::Lang;
 use jambo_metrics::metrics::EMAIL_SEND_ERRORS_TOTAL;
 
 const EMAIL_QUEUE_CAPACITY: usize = 256;
+
+const EMAIL_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(5),
+    Duration::from_secs(30),
+];
 
 /// A single outgoing email, fully resolved and ready to be dispatched by the
 /// background consumer. Keeping the payload resolved (no DB lookups inside the
@@ -143,8 +150,8 @@ impl EmailQueue {
         let (queue, mut rx) = Self::channel();
         tokio::spawn(async move {
             while let Some(job) = rx.recv().await {
-                if let Err(e) = dispatch(&*mailer, &job).await {
-                    tracing::error!(email_type = job.label(), error = %e, "failed to send email");
+                if let Err(e) = dispatch_with_retry(&*mailer, &job, &EMAIL_RETRY_DELAYS).await {
+                    tracing::error!(email_type = job.label(), error = %e, "failed to send email after retries");
                     EMAIL_SEND_ERRORS_TOTAL
                         .with_label_values(&[job.label()])
                         .inc();
@@ -317,218 +324,32 @@ async fn dispatch(mailer: &dyn Mailer, job: &EmailJob) -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct MockMailer;
-
-    #[async_trait::async_trait]
-    impl Mailer for MockMailer {
-        async fn send_password_reset(
-            &self,
-            _to_email: &str,
-            _reset_link: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_invitation(
-            &self,
-            _to_email: &str,
-            _inviter_name: &str,
-            _game_id: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_freeze_expired(
-            &self,
-            _to_email: &str,
-            _credit: i32,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_contact_form(
-            &self,
-            _name: &str,
-            _email: &str,
-            _subject: &str,
-            _message: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_stall_warning(
-            &self,
-            _to_email: &str,
-            _game_id: &str,
-            _inactive_minutes: i64,
-            _remaining_minutes: i64,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_stall_kicked(
-            &self,
-            _to_email: &str,
-            _game_id: &str,
-            _bet: i32,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_room_invitation(
-            &self,
-            _to_email: &str,
-            _inviter_name: &str,
-            _room_name: &str,
-            _invitation_code: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_cashout_requested(
-            &self,
-            _to_email: &str,
-            _credits: i32,
-            _amount_eur_cents: i32,
-            _payout_destination: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_cashout_rejected(
-            &self,
-            _to_email: &str,
-            _credits: i32,
-            _amount_eur_cents: i32,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-        async fn send_cashout_admin_alert(
-            &self,
-            _to_email: &str,
-            _pseudo: &str,
-            _email: &str,
-            _credits: i32,
-            _amount_eur_cents: i32,
-            _payout_destination: &str,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn send_cashout_paid(
-            &self,
-            _to_email: &str,
-            _amount_eur_cents: i32,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn send_cashout_failed(
-            &self,
-            _to_email: &str,
-            _amount_eur_cents: i32,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn send_connect_account_verified(
-            &self,
-            _to_email: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn send_connect_account_verification_failed(
-            &self,
-            _to_email: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn send_connect_account_onboarding_interrupted(
-            &self,
-            _to_email: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn send_deletion_confirmation(
-            &self,
-            _to_email: &str,
-            _confirm_link: &str,
-            _lang: Lang,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn email_job_labels_are_stable() {
-        assert_eq!(
-            EmailJob::Invitation {
-                to_email: "a@b.co".into(),
-                inviter_name: "p".into(),
-                game_id: "g".into(),
-                lang: Lang::En,
+async fn dispatch_with_retry(
+    mailer: &dyn Mailer,
+    job: &EmailJob,
+    retry_delays: &[Duration],
+) -> Result<(), String> {
+    let mut attempt = 0;
+    loop {
+        match dispatch(mailer, job).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if attempt < retry_delays.len() {
+                    tracing::warn!(
+                        email_type = job.label(),
+                        attempt = attempt + 1,
+                        error = %e,
+                        "email send failed, retrying"
+                    );
+                    tokio::time::sleep(retry_delays[attempt]).await;
+                    attempt += 1;
+                } else {
+                    return Err(e);
+                }
             }
-            .label(),
-            "invitation"
-        );
-        assert_eq!(
-            EmailJob::PasswordReset {
-                to_email: "a@b.co".into(),
-                reset_link: "r".into(),
-                lang: Lang::En,
-            }
-            .label(),
-            "password_reset"
-        );
-        assert_eq!(
-            EmailJob::StallWarning {
-                to_email: "a@b.co".into(),
-                game_id: "g".into(),
-                inactive_minutes: 10,
-                remaining_minutes: 5,
-                lang: Lang::En,
-            }
-            .label(),
-            "stall_warning"
-        );
-    }
-
-    #[tokio::test]
-    async fn enqueue_delivers_job_to_receiver() {
-        let (queue, mut rx) = EmailQueue::channel();
-        queue.enqueue(EmailJob::PasswordReset {
-            to_email: "a@b.co".into(),
-            reset_link: "r".into(),
-            lang: Lang::En,
-        });
-        let job = rx.try_recv().expect("job should be enqueued");
-        assert!(matches!(job, EmailJob::PasswordReset { .. }));
-    }
-
-    #[tokio::test]
-    async fn consumer_dispatches_job_to_mailer() {
-        let mailer: Arc<dyn Mailer> = Arc::new(MockMailer);
-        let queue = EmailQueue::start(mailer);
-        queue.enqueue(EmailJob::Invitation {
-            to_email: "a@b.co".into(),
-            inviter_name: "p".into(),
-            game_id: "g".into(),
-            lang: Lang::En,
-        });
-        // The consumer runs asynchronously; give it a tick to process the job.
-        tokio::task::yield_now().await;
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;
