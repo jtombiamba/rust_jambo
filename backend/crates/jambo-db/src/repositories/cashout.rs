@@ -284,8 +284,14 @@ impl CashoutRepository {
                 "request must be 'approved' before it can be paid".to_string(),
             ));
         }
-        self.mark_paid_in_txn(&txn, &request, payout_reference, by)
-            .await?;
+        self.mark_paid_in_txn(
+            &txn,
+            &request,
+            payout_reference,
+            by,
+            CashoutStatus::Approved,
+        )
+        .await?;
         txn.commit().await?;
         Ok(())
     }
@@ -320,7 +326,9 @@ impl CashoutRepository {
     }
 
     /// Mark a request paid with the payout reference (PayPal batch id or Stripe
-    /// transfer id).
+    /// transfer id). `expected_from` is the status the row must currently hold
+    /// for the transition to apply; it differs by caller (`Approved` for the
+    /// manual/PayPal path, `Processing` for the Stripe webhook path).
     #[tracing::instrument(skip(txn), fields(db.statement, db.rows_affected))]
     pub async fn mark_paid_in_txn(
         &self,
@@ -328,9 +336,10 @@ impl CashoutRepository {
         request: &CashoutRequest,
         payout_reference: &str,
         processed_by: &str,
+        expected_from: CashoutStatus,
     ) -> Result<(), DbErr> {
         let now = chrono::Utc::now();
-        cashout_request::Entity::update_many()
+        let result = cashout_request::Entity::update_many()
             .col_expr(
                 cashout_request::Column::Status,
                 Expr::cust_with_values(
@@ -357,8 +366,16 @@ impl CashoutRepository {
                 sea_orm::sea_query::Expr::value(now),
             )
             .filter(cashout_request::Column::Id.eq(request.id))
+            .filter(cashout_request::Column::Status.eq(expected_from))
             .exec(txn)
             .await?;
+        // Optimistic lock: if a concurrent transition (e.g. transfer.failed)
+        // already moved the row, the update matches no rows and must not run.
+        if result.rows_affected != 1 {
+            return Err(DbErr::Custom(
+                "request is not in the expected status to be marked paid".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -476,5 +493,77 @@ impl CashoutRepoTrait for CashoutRepository {
             payout_destination,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult, TransactionTrait};
+
+    fn make_request(status: CashoutStatus) -> CashoutRequest {
+        CashoutRequest {
+            id: Uuid::now_v7(),
+            user_id: Uuid::now_v7(),
+            credits: 100,
+            amount_eur_cents: 1_000,
+            status,
+            payout_method: PayoutMethod::StripeConnect,
+            payout_destination: "acct_123".to_string(),
+            payout_reference: None,
+            admin_note: None,
+            processed_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            processed_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_paid_in_txn_succeeds_when_row_matches_expected_status() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+        let repo = CashoutRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .mark_paid_in_txn(
+                &txn,
+                &make_request(CashoutStatus::Approved),
+                "batch_1",
+                "admin",
+                CashoutStatus::Approved,
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn mark_paid_in_txn_errors_when_row_does_not_match_expected_status() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results(vec![MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 0,
+            }])
+            .into_connection();
+        let repo = CashoutRepository::new(db.clone());
+        let txn = db.begin().await.unwrap();
+
+        let result = repo
+            .mark_paid_in_txn(
+                &txn,
+                &make_request(CashoutStatus::Processing),
+                "batch_1",
+                "stripe-webhook",
+                CashoutStatus::Processing,
+            )
+            .await;
+
+        assert!(matches!(result, Err(DbErr::Custom(_))));
     }
 }

@@ -63,8 +63,14 @@ impl CashoutRepository {
             }
         }
         let reference = request.payout_reference.clone().unwrap_or_default();
-        self.mark_paid_in_txn(&txn, &request, &reference, "stripe-webhook")
-            .await?;
+        self.mark_paid_in_txn(
+            &txn,
+            &request,
+            &reference,
+            "stripe-webhook",
+            CashoutStatus::Processing,
+        )
+        .await?;
         txn.commit().await?;
         Ok(())
     }
