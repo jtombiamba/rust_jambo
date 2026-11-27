@@ -87,6 +87,7 @@ where
                 let error_msg = serde_json::to_string(&ApiErrorResponse {
                     success: false,
                     error: translator.t("auth.auth_required", lang),
+                    code: None,
                     field: None,
                     source: "auth:middleware".to_string(),
                     request_id: jambo_core::observability::CORRELATION_ID
@@ -120,6 +121,7 @@ where
                     let error_msg = serde_json::to_string(&ApiErrorResponse {
                         success: false,
                         error: translator.t("auth.token_revoked", lang),
+                        code: None,
                         field: None,
                         source: "auth:middleware".to_string(),
                         request_id: jambo_core::observability::CORRELATION_ID

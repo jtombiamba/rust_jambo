@@ -88,6 +88,7 @@ impl actix_web::ResponseError for AuthError {
         actix_web::HttpResponse::build(status).json(ApiErrorResponse {
             success: false,
             error: error_msg,
+            code: Some(self.message_key().to_string()),
             field,
             source: self.source().to_string(),
             request_id,

@@ -40,6 +40,7 @@ pub async fn send_contact(
         return HttpResponse::BadRequest().json(ApiErrorResponse {
             success: false,
             error: i18n.t("contact.all_fields_required"),
+            code: None,
             field: None,
             source: "contact:validation".to_string(),
             request_id: jambo_core::observability::CORRELATION_ID

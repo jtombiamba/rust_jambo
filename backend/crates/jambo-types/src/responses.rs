@@ -18,6 +18,10 @@ pub struct PlayerInfoDto {
 pub struct ApiErrorResponse {
     pub success: bool,
     pub error: String,
+    /// Stable, machine-readable error code (the i18n message key) so clients can
+    /// branch on it programmatically without parsing the localized message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
     pub source: String,

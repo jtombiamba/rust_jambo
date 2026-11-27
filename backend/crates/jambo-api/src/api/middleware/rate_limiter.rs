@@ -314,6 +314,7 @@ where
                     .json(ApiErrorResponse {
                         success: false,
                         error: translator.t("rate_limit.exceeded", lang),
+                        code: None,
                         field: None,
                         source: "rate_limiter".to_string(),
                         request_id: jambo_core::observability::CORRELATION_ID

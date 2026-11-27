@@ -212,6 +212,7 @@ impl ResponseError for AppError {
         HttpResponse::build(status).json(ApiErrorResponse {
             success: false,
             error: error_message,
+            code: Some(self.message_key().to_string()),
             field: None,
             source: self.source().to_string(),
             request_id,

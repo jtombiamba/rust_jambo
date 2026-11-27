@@ -168,6 +168,7 @@ pub(crate) async fn cashout_pay(
             let stripe = StripeService::new(
                 config.stripe_secret_key.clone(),
                 config.stripe_connect_client_id.clone(),
+                config.stripe_version.clone(),
             );
             let reference = stripe
                 .create_transfer(

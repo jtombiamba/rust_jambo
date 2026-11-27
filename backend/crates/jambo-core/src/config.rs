@@ -58,6 +58,7 @@ pub struct Config {
     pub stripe_connect_account_country: String,
     pub stripe_topup_bundles_eur_cents: String,
     pub stripe_unfreeze_amount_eur: String,
+    pub stripe_version: String,
     pub topup_credit_amount: i32,
     pub topup_monthly_limit_eur_cents: i32,
     pub benchmark_api_token: String,
@@ -211,6 +212,7 @@ impl std::fmt::Debug for Config {
                 "stripe_unfreeze_amount_eur",
                 &self.stripe_unfreeze_amount_eur,
             )
+            .field("stripe_version", &self.stripe_version)
             .field("topup_credit_amount", &self.topup_credit_amount)
             .field(
                 "topup_monthly_limit_eur_cents",
@@ -385,6 +387,7 @@ impl Config {
             .set_default("stripe_connect_account_country", "FR")?
             .set_default("stripe_topup_bundles_eur_cents", "500,1000")?
             .set_default("stripe_unfreeze_amount_eur", "1.25")?
+            .set_default("stripe_version", "2026-11-18.endive")?
             .set_default("topup_credit_amount", "250")?
             .set_default("topup_monthly_limit_eur_cents", "10000")?
             .set_default("benchmark_api_token", "")?
@@ -610,6 +613,8 @@ impl Config {
                 .unwrap_or_else(|_| "500,1000".to_string()),
             stripe_unfreeze_amount_eur: env::var("STRIPE_UNFREEZE_AMOUNT_EUR")
                 .unwrap_or_else(|_| "1.25".to_string()),
+            stripe_version: env::var("STRIPE_VERSION")
+                .unwrap_or_else(|_| "2026-11-18.endive".to_string()),
             topup_credit_amount: env::var("TOPUP_CREDIT_AMOUNT")
                 .unwrap_or_else(|_| "250".to_string())
                 .parse()

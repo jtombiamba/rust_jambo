@@ -139,6 +139,7 @@ pub fn payment_service_from_config(config: &Config) -> Arc<dyn PaymentServiceTra
         Arc::new(StripeService::new(
             config.stripe_secret_key.clone(),
             config.stripe_connect_client_id.clone(),
+            config.stripe_version.clone(),
         ))
     } else {
         tracing::info!("Using PayPal as payment provider");

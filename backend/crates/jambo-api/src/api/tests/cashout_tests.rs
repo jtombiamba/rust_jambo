@@ -36,6 +36,41 @@ fn make_user(user_id: Uuid) -> User {
     }
 }
 
+fn make_user_with_connect(
+    user_id: Uuid,
+    account_id: Option<&str>,
+    status: jambo_db::models::ConnectAccountStatus,
+) -> User {
+    let mut user = make_user(user_id);
+    user.stripe_connect_account_id = account_id.map(String::from);
+    user.stripe_connect_account_status = status;
+    user
+}
+
+async fn make_cashout_app_with_db(
+    mock: Arc<dyn CashoutServiceTrait>,
+    db: sea_orm::DatabaseConnection,
+) -> impl actix_web::dev::Service<
+    actix_http::Request,
+    Response = actix_web::dev::ServiceResponse,
+    Error = actix_web::Error,
+> {
+    let email_queue = EmailQueue::channel().0;
+    test::init_service(
+        App::new()
+            .app_data(web::Data::new(mock))
+            .app_data(web::Data::new(email_queue))
+            .app_data(web::Data::new(Config::default()))
+            .app_data(web::Data::new(db))
+            .service(
+                web::resource("/cashout")
+                    .route(web::post().to(request_cashout))
+                    .route(web::get().to(list_cashouts)),
+            ),
+    )
+    .await
+}
+
 async fn make_cashout_app(
     mock: Arc<dyn CashoutServiceTrait>,
 ) -> impl actix_web::dev::Service<
@@ -149,4 +184,60 @@ async fn request_cashout_success_enqueues_confirmation_email() {
         }
         other => panic!("expected CashoutRequested job, got {:?}", other),
     }
+}
+
+#[actix_web::test]
+async fn request_cashout_stripe_connect_without_account_fails_fast() {
+    let user = authenticated_user();
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results(vec![vec![make_user(user.user_id)]])
+        .into_connection();
+    let app = make_cashout_app_with_db(Arc::new(MockCashoutService::new()), db).await;
+
+    let req = test::TestRequest::post()
+        .uri("/cashout")
+        .set_json(serde_json::json!({
+            "credits": 250,
+            "payout_method": "stripe_connect",
+            "payout_destination": ""
+        }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["code"], "cashout.connect_bank_first");
+    assert_eq!(
+        body["error"],
+        "Please connect your bank account via Stripe before requesting a cashout"
+    );
+}
+
+#[actix_web::test]
+async fn request_cashout_stripe_connect_unverified_account_fails_fast() {
+    let user = authenticated_user();
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results(vec![vec![make_user_with_connect(
+            user.user_id,
+            Some("acct_123"),
+            jambo_db::models::ConnectAccountStatus::OnboardingStarted,
+        )]])
+        .into_connection();
+    let app = make_cashout_app_with_db(Arc::new(MockCashoutService::new()), db).await;
+
+    let req = test::TestRequest::post()
+        .uri("/cashout")
+        .set_json(serde_json::json!({
+            "credits": 250,
+            "payout_method": "stripe_connect",
+            "payout_destination": ""
+        }))
+        .to_request();
+    req.extensions_mut().insert(user);
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), 400);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body["code"], "cashout.connect_verification_pending");
 }

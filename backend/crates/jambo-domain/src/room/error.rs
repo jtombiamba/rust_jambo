@@ -133,6 +133,7 @@ impl actix_web::ResponseError for RoomServiceError {
         actix_web::HttpResponse::build(status).json(ApiErrorResponse {
             success: false,
             error: msg,
+            code: None,
             field: None,
             source: self.source().to_string(),
             request_id,

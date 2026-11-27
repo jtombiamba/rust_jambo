@@ -9,6 +9,7 @@ pub async fn not_found() -> HttpResponse {
     HttpResponse::NotFound().json(ApiErrorResponse {
         success: false,
         error: "Not found".to_string(),
+        code: None,
         field: None,
         source: "fallback:not_found".to_string(),
         request_id,
@@ -22,6 +23,7 @@ pub async fn method_not_allowed() -> HttpResponse {
     HttpResponse::MethodNotAllowed().json(ApiErrorResponse {
         success: false,
         error: "Method not allowed".to_string(),
+        code: None,
         field: None,
         source: "fallback:method_not_allowed".to_string(),
         request_id,

@@ -23,6 +23,7 @@ impl FromRequest for AuthenticatedUser {
                     serde_json::to_string(&ApiErrorResponse {
                         success: false,
                         error: "Authentication required".to_string(),
+                        code: None,
                         field: None,
                         source: "auth:extractor".to_string(),
                         request_id: jambo_core::observability::CORRELATION_ID
